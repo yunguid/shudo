@@ -51,6 +51,49 @@ create table if not exists public.entries (
 create index if not exists entries_user_day_idx on public.entries (user_id, local_day);
 create index if not exists entries_status_idx on public.entries (status);
 
+-- ENTRY ITEMS
+create table if not exists public.entry_items (
+	id bigserial primary key,
+	entry_id uuid references public.entries(id) on delete cascade,
+	label text,
+	qty numeric,
+	unit text,
+	calories_kcal integer,
+	protein_g integer,
+	carbs_g integer,
+	fat_g integer
+);
+
+create index if not exists entry_items_entry_id_idx on public.entry_items (entry_id);
+
+-- MACRO PLANS
+create table if not exists public.macro_plans (
+	id bigserial primary key,
+	user_id uuid not null references auth.users(id) on delete cascade,
+	effective_from date not null,
+	calories_kcal integer not null,
+	protein_g integer not null,
+	carbs_g integer not null,
+	fat_g integer not null,
+	notes text
+);
+
+create index if not exists macro_plans_user_effective_idx on public.macro_plans (user_id, effective_from);
+
+-- DAILY SUMMARIES
+create table if not exists public.daily_summaries (
+	id bigserial primary key,
+	user_id uuid not null references auth.users(id) on delete cascade,
+	local_date date not null,
+	calories_kcal integer not null default 0,
+	protein_g integer not null default 0,
+	carbs_g integer not null default 0,
+	fat_g integer not null default 0,
+	created_at timestamptz not null default now()
+);
+
+create unique index if not exists daily_summaries_user_date_idx on public.daily_summaries (user_id, local_date);
+
 -- VIEW: day_totals
 create or replace view public.day_totals as
 select
@@ -88,6 +131,9 @@ left join public.day_totals dt
 -- RLS
 alter table public.profiles enable row level security;
 alter table public.entries  enable row level security;
+alter table public.entry_items enable row level security;
+alter table public.macro_plans enable row level security;
+alter table public.daily_summaries enable row level security;
 
 create policy "select own profile" on public.profiles for select to authenticated using (auth.uid() = user_id);
 create policy "insert own profile" on public.profiles for insert to authenticated with check (auth.uid() = user_id);
@@ -97,5 +143,18 @@ create policy "select own entries" on public.entries for select to authenticated
 create policy "insert own entries" on public.entries for insert to authenticated with check (auth.uid() = user_id);
 
 revoke update on public.entries from authenticated;
+
+-- RLS policies for new tables
+create policy "select own entry_items" on public.entry_items for select to authenticated using (
+	exists (
+		select 1 from public.entries e where e.id = entry_id and e.user_id = auth.uid()
+	)
+);
+
+create policy "select own macro_plans" on public.macro_plans for select to authenticated using (auth.uid() = user_id);
+create policy "insert own macro_plans" on public.macro_plans for insert to authenticated with check (auth.uid() = user_id);
+create policy "update own macro_plans" on public.macro_plans for update to authenticated using (auth.uid() = user_id);
+
+create policy "select own daily_summaries" on public.daily_summaries for select to authenticated using (auth.uid() = user_id);
 
 
