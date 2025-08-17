@@ -1,17 +1,18 @@
 ## Next steps (product + implementation checklist)
 
 - [ ] Sign‑up and onboarding personalization
-  - [ ] Multi‑step `OnboardingFlowView` after account creation
-    - [ ] Collect height, weight, target weight, exercise level (sedentary → extra active)
-    - [ ] Optional cutoff time to stop eating (default 8:00 PM)
-    - [ ] Unit toggles (lb/kg, ft+in/cm), validation, accessibility
+  - [x] Multi‑step `OnboardingFlowView` after account creation
+    - [x] Collect height, weight, target weight, exercise level (sedentary → extra active)
+    - [x] Optional cutoff time to stop eating (default 8:00 PM)
+    - [x] Unit toggles (lb/kg, ft+in/cm), validation, accessibility
+  - [x] Gating in `RootView` to show onboarding when profile is incomplete
   - [ ] Persist to `profiles`
-    - [ ] Add columns: `height_cm` NUMERIC, `weight_kg` NUMERIC, `target_weight_kg` NUMERIC, `activity_level` TEXT, `cutoff_time_local` TIME, `updated_at` TIMESTAMPTZ
+    - [x] Add columns: `height_cm` NUMERIC, `weight_kg` NUMERIC, `target_weight_kg` NUMERIC, `activity_level` TEXT, `cutoff_time_local` TIME, `updated_at` TIMESTAMPTZ
     - [ ] RLS: user can read/update only own row
   - [ ] Compute daily target calories + macros
     - [ ] `CalorieEstimator` service: base × activity multiplier
-    - [ ] Defaults: protein ~1.8 g/kg target, fat ~0.8 g/kg target, carbs = remaining kcal/4 (with clamps)
-    - [ ] Save into `profiles.daily_macro_target`; refresh UI
+    - [x] Defaults: protein ~1.8 g/kg target, fat ~0.8 g/kg target, carbs = remaining kcal/4 (with clamps)
+    - [x] Save into `profiles.daily_macro_target`; refresh UI
   - [ ] Countdown UI in header/toolbar
     - [ ] Show “Stop in hh:mm” until cutoff; after cutoff show “Over by hh:mm” in red
     - [ ] Drive with `Timer.publish(every: 30, on: .main, in: .common).autoconnect()`
