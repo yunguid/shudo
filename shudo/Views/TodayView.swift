@@ -12,9 +12,9 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
-                    macroSection
+                    SectionCard { macroSection }
                     Divider()
-                    entryList
+                    SectionCard { entryList }
                 }
                 .padding(20)
             }
@@ -50,7 +50,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(Date.now, style: .date).font(.title2.weight(.semibold))
                 Text(TimeZone.autoupdatingCurrent.identifier)
                     .font(.subheadline)
@@ -61,15 +61,15 @@ struct ContentView: View {
     }
 
     private var macroSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Today's Macros").font(.headline)
+        VStack(alignment: .leading, spacing: 18) {
+            SectionHeader("Today's Macros")
             if let p = vm.profile {
                 MacroRingsView(target: p.dailyMacroTarget, current: vm.todayTotals)
-                    .frame(height: 160)
+                    .frame(maxWidth: .infinity)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Macro progress")
             } else {
-                RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.1)).frame(height: 160)
+                RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.1)).frame(height: 200)
             }
             if let err = vm.errorMessage { Text(err).font(.caption).foregroundStyle(.red) }
         }
@@ -77,11 +77,13 @@ struct ContentView: View {
 
     private var entryList: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Meals so far").font(.headline)
+            SectionHeader("Meals so far")
             if vm.entries.isEmpty {
                 Text("No entries yet.").foregroundStyle(.secondary)
             } else {
-                ForEach(vm.entries) { entry in EntryCard(entry: entry) }
+                LazyVStack(spacing: 12) {
+                    ForEach(vm.entries) { entry in EntryCard(entry: entry) }
+                }
             }
         }
     }

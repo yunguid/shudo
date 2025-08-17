@@ -187,9 +187,11 @@ struct SupabaseService {
     }
 
     private func signImageURL(path: String, jwt: String) async -> URL? {
-        var url = supabaseUrl
-        url.appendPathComponent("/storage/v1/object/sign/entry-images")
-        url.appendPathComponent(path)
+        // Build path without encoding slashes in the object key
+        var url = supabaseUrl.appendingPathComponent("storage/v1/object/sign/entry-images")
+        for segment in path.split(separator: "/") {
+            url.appendPathComponent(String(segment))
+        }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -198,9 +200,31 @@ struct SupabaseService {
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["expiresIn": 600])
         guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let u = obj["signedURL"] as? String, let url = URL(string: u, relativeTo: supabaseUrl) { return url }
-            if let u = obj["signedUrl"] as? String, let url = URL(string: u, relativeTo: supabaseUrl) { return url }
-            if let u = obj["url"] as? String, let url = URL(string: u, relativeTo: supabaseUrl) { return url }
+            // Normalize possible response shapes from Storage REST
+            let strCandidates: [String] = [
+                obj["signedURL"] as? String,
+                obj["signedUrl"] as? String,
+                obj["url"] as? String
+            ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+            func absolutize(_ s: String) -> URL? {
+                if let u = URL(string: s), u.scheme != nil { return u }
+                // Build base https://host/storage/v1
+                var base = supabaseUrl.appendingPathComponent("storage/v1")
+                if s.hasPrefix("/") { return URL(string: base.absoluteString + s) }
+                if s.hasPrefix("object/") || s.hasPrefix("object/sign/") { return URL(string: base.appendingPathComponent(s).absoluteString) }
+                if s.hasPrefix("entry-images/") { return URL(string: base.appendingPathComponent("object/sign").appendingPathComponent(s).absoluteString) }
+                // Fallback: treat as already rooted
+                return URL(string: base.appendingPathComponent(s).absoluteString)
+            }
+
+            for s in strCandidates { if let u = absolutize(s) { return u } }
+
+            if let arr = obj["signedUrls"] as? [[String: Any]] {
+                if let s = (arr.first?["signedUrl"] as? String) ?? (arr.first?["signedURL"] as? String) {
+                    if let u = absolutize(s) { return u }
+                }
+            }
         }
         return nil
     }
