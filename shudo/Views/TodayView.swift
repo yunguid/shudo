@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct ContentView: View {
+struct TodayView: View {
     @StateObject private var vm = TodayViewModel(api: APIService(
         supabaseUrl: AppConfig.supabaseURL,
         supabaseAnonKey: AppConfig.supabaseAnonKey,
@@ -10,32 +10,63 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Design.Spacing.xl) {
                     header
+
                     SectionCard { macroSection }
-                    Divider()
-                    SectionCard { entryList }
+
+                    SectionCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            SectionHeader("Meals")
+                            if vm.entries.isEmpty {
+                                Text("No entries yet.")
+                                    .foregroundStyle(Design.Color.muted)
+                            } else {
+                                LazyVStack(spacing: 12) {
+                                    ForEach(vm.entries) { entry in
+                                        EntryCard(entry: entry)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 40)
             }
             .overlay(alignment: .bottom) {
                 if vm.isSubmitting {
                     HStack(spacing: 8) {
                         ProgressView()
                         Text("Analyzing…")
+                            .font(.subheadline)
                     }
-                    .padding(12)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .background(.ultraThinMaterial, in: Capsule())
                     .padding(.bottom, 16)
                 }
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Text("shudo")
+                        .font(.title3.weight(.semibold))
+                        .padding(.leading, 4)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Sign Out") { AuthSessionManager.shared.signOut() }
+                    Menu {
+                        Button("Sign Out") { AuthSessionManager.shared.signOut() }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
                 }
                 ToolbarItem(placement: .bottomBar) {
-                    Button(action: { vm.isPresentingComposer = true }) {
-                        Label("Add Entry", systemImage: "plus.circle.fill").labelStyle(.titleAndIcon)
+                    Button {
+                        vm.isPresentingComposer = true
+                    } label: {
+                        Label("Add Entry", systemImage: "plus.circle.fill")
+                            .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -49,44 +80,32 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(Date.now, style: .date).font(.title2.weight(.semibold))
-                Text(TimeZone.autoupdatingCurrent.identifier)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+        VStack(alignment: .leading, spacing: 2) {
+            Text(Date.now, style: .date).font(.title2.weight(.semibold))
+            Text(TimeZone.autoupdatingCurrent.identifier)
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.muted)
         }
     }
 
     private var macroSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            SectionHeader("Today's Macros")
-            if let p = vm.profile {
-                MacroRingsView(target: p.dailyMacroTarget, current: vm.todayTotals)
-                    .frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader("Today’s Macros")
+
+            if let profile = vm.profile {
+                MacroRingsView(target: profile.dailyMacroTarget, current: vm.todayTotals)
+                    .frame(height: 220)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Macro progress")
             } else {
-                RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.1)).frame(height: 200)
+                RoundedRectangle(cornerRadius: Design.Radius.l)
+                    .fill(Design.Color.fill)
+                    .frame(height: 220)
             }
-            if let err = vm.errorMessage { Text(err).font(.caption).foregroundStyle(.red) }
-        }
-    }
 
-    private var entryList: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Meals so far")
-            if vm.entries.isEmpty {
-                Text("No entries yet.").foregroundStyle(.secondary)
-            } else {
-                LazyVStack(spacing: 12) {
-                    ForEach(vm.entries) { entry in EntryCard(entry: entry) }
-                }
+            if let err = vm.errorMessage {
+                Text(err).font(.caption).foregroundStyle(.red)
             }
         }
     }
 }
-
-

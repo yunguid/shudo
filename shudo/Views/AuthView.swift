@@ -11,31 +11,36 @@ struct AuthView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: Design.Spacing.xl) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("shudo").font(.largeTitle.weight(.bold))
-                    Text("Sign in to continue").foregroundStyle(.secondary)
+                    Text("Sign in to continue").foregroundStyle(Design.Color.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                TextField("email", text: $email)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.username)
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(.secondarySystemBackground)))
+                VStack(spacing: Design.Spacing.m) {
+                    TextField("Email", text: $email)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.username)
+                        .autocorrectionDisabled()
+                        .fieldStyle()
 
-                SecureField("password", text: $password)
-                    .textContentType(.password)
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(.secondarySystemBackground)))
+                    SecureField("Password", text: $password)
+                        .textContentType(.password)
+                        .fieldStyle()
+                }
 
-                if let e = error { Text(e).font(.caption).foregroundStyle(.red) }
+                if let e = error {
+                    Text(e).font(.caption).foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 HStack {
                     Button("Sign In") { Task { await signIn() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(isLoading || email.isEmpty || password.isEmpty)
+
                     Button("Sign Up") { Task { await signUp() } }
                         .buttonStyle(.bordered)
                         .disabled(isLoading || email.isEmpty || password.isEmpty)
@@ -62,8 +67,9 @@ struct AuthView: View {
                 }
                 .signInWithAppleButtonStyle(.black)
                 .frame(height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
 
-                Spacer()
+                Spacer(minLength: 0)
             }
             .padding(20)
         }
@@ -90,6 +96,7 @@ struct AuthView: View {
         isLoading = false
     }
 
+    // MARK: - Nonce/Hash
     private func randomNonceString(length: Int = 32) -> String {
         let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
         var result = ""
