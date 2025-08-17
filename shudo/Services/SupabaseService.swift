@@ -38,6 +38,8 @@ struct SupabaseService {
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "user_id": userId,
             "timezone": timezone,
+            "units": "imperial",
+            "cutoff_time_local": "20:00",
             "daily_macro_target": target
         ])
         let (_, resp) = try await URLSession.shared.data(for: req)
@@ -56,16 +58,48 @@ struct SupabaseService {
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
         if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let obj = arr.first {
-            let tz = obj["timezone"] as? String ?? TimeZone.autoupdatingCurrent.identifier
-            if let target = obj["daily_macro_target"] as? [String: Any] {
-                let profile = Profile(userId: userId, timezone: tz, dailyMacroTarget: MacroTarget(
-                    caloriesKcal: (target["calories_kcal"] as? Double) ?? 2800,
-                    proteinG: (target["protein_g"] as? Double) ?? 180,
-                    carbsG: (target["carbs_g"] as? Double) ?? 360,
-                    fatG: (target["fat_g"] as? Double) ?? 72
-                ))
-                return profile
+            func toDouble(_ any: Any?) -> Double {
+                if let d = any as? Double { return d }
+                if let i = any as? Int { return Double(i) }
+                if let s = any as? String { return Double(s) ?? 0 }
+                return 0
             }
+            func parseJSONIfString(_ any: Any?) -> [String: Any]? {
+                if let dict = any as? [String: Any] { return dict }
+                if let s = any as? String, let d = s.data(using: .utf8),
+                   let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { return obj }
+                return nil
+            }
+            let tz = obj["timezone"] as? String ?? TimeZone.autoupdatingCurrent.identifier
+
+            var targetDict: [String: Any] = [:]
+            if let d = parseJSONIfString(obj["daily_macro_target"]) { targetDict = d }
+
+            let units = (obj["units"] as? String) ?? "imperial"
+            let activity = obj["activity_level"] as? String
+            let cutoffRaw = obj["cutoff_time_local"] as? String
+            let cutoff = cutoffRaw.flatMap { String($0.prefix(5)) }
+            let heightCM = toDouble(obj["height_cm"]) == 0 ? nil : toDouble(obj["height_cm"]) 
+            let weightKG = toDouble(obj["weight_kg"]) == 0 ? nil : toDouble(obj["weight_kg"]) 
+            let targetWeightKG = toDouble(obj["target_weight_kg"]) == 0 ? nil : toDouble(obj["target_weight_kg"]) 
+
+            let profile = Profile(
+                userId: userId,
+                timezone: tz,
+                dailyMacroTarget: MacroTarget(
+                    caloriesKcal: toDouble(targetDict["calories_kcal"]) != 0 ? toDouble(targetDict["calories_kcal"]) : 2800,
+                    proteinG: toDouble(targetDict["protein_g"]) != 0 ? toDouble(targetDict["protein_g"]) : 180,
+                    carbsG: toDouble(targetDict["carbs_g"]) != 0 ? toDouble(targetDict["carbs_g"]) : 360,
+                    fatG: toDouble(targetDict["fat_g"]) != 0 ? toDouble(targetDict["fat_g"]) : 72
+                ),
+                units: units,
+                heightCM: heightCM,
+                weightKG: weightKG,
+                targetWeightKG: targetWeightKG,
+                activityLevel: activity,
+                cutoffTimeLocal: cutoff
+            )
+            return profile
         }
         return nil
     }
@@ -227,6 +261,95 @@ struct SupabaseService {
             }
         }
         return nil
+    }
+
+    // MARK: - Onboarding persistence
+
+    /// Update user personalization fields. Only non-nil parameters are sent.
+    func updateProfilePersonalization(
+        units: String? = nil,
+        heightCM: Double? = nil,
+        weightKG: Double? = nil,
+        targetWeightKG: Double? = nil,
+        activityLevel: String? = nil,
+        cutoffTimeLocal: String? = nil
+    ) async throws {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+
+        var payload: [String: Any] = [:]
+        if let units = units { payload["units"] = units }
+        if let heightCM = heightCM { payload["height_cm"] = heightCM }
+        if let weightKG = weightKG { payload["weight_kg"] = weightKG }
+        if let targetWeightKG = targetWeightKG { payload["target_weight_kg"] = targetWeightKG }
+        if let activityLevel = activityLevel { payload["activity_level"] = activityLevel }
+        if let cutoffTimeLocal = cutoffTimeLocal { payload["cutoff_time_local"] = cutoffTimeLocal }
+
+        // Nothing to update
+        if payload.isEmpty { return }
+
+        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "user_id", value: "eq.\(userId)")]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "PATCH"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+    }
+
+    /// Compute daily macro targets and persist them to profiles.daily_macro_target.
+    /// - Returns: The computed MacroTarget
+    func computeAndSaveDailyTargets(
+        weightKG: Double,
+        targetWeightKG: Double,
+        activityLevel: String
+    ) async throws -> MacroTarget {
+        // Very simple energy model for now: BMR ~ 24 * weight (kcal), times activity multiplier
+        let multipliers: [String: Double] = [
+            "sedentary": 1.2,
+            "light": 1.375,
+            "moderate": 1.55,
+            "active": 1.725,
+            "extra_active": 1.9
+        ]
+        let activity = multipliers[activityLevel] ?? 1.55
+        let baseBMR = 24.0 * max(30.0, weightKG) // clamp to reasonable minimum weight
+        let maintenanceKcal = baseBMR * activity
+
+        // Macro allocations
+        let proteinG = 1.8 * max(0, targetWeightKG)
+        let fatG = 0.8 * max(0, targetWeightKG)
+        let kcalMinusPF = max(0, maintenanceKcal - (proteinG * 4 + fatG * 9))
+        let carbsG = max(0, kcalMinusPF / 4.0)
+
+        let target = MacroTarget(caloriesKcal: maintenanceKcal, proteinG: proteinG, carbsG: carbsG, fatG: fatG)
+
+        // Persist
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "user_id", value: "eq.\(userId)")]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "PATCH"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        let body: [String: Any] = [
+            "daily_macro_target": [
+                "calories_kcal": target.caloriesKcal,
+                "protein_g": target.proteinG,
+                "carbs_g": target.carbsG,
+                "fat_g": target.fatG
+            ]
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+
+        return target
     }
 }
 
