@@ -16,6 +16,9 @@
     - [ ] Show “Stop in hh:mm” until cutoff; after cutoff show “Over by hh:mm” in red
     - [ ] Drive with `Timer.publish(every: 30, on: .main, in: .common).autoconnect()`
     - [ ] Use `profile.timezone` + `cutoff_time_local` (fallback 20:00)
+- [ ] If a user does not provide an image for the food entry then the row in the Meals section will not show an outline of a blank image. 
+- [ ] Fix visibility issue with P,C,F in the Meals section.
+- [ ] Add < > arrows to the right and left of the Add Entry button to switch to previous days / future days.
 
 - [ ] Email sign‑up confirmation UX (friendly, non‑technical)
   - [ ] Do not auto‑sign‑in immediately after `signUp(email,password)` when email confirmation is enabled
