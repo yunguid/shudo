@@ -34,7 +34,11 @@ struct EntryComposerView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        Task { await onSubmit(text.isEmpty ? nil : text, audio.recordedFileURL, uiImage); dismiss() }
+                        let t = text.isEmpty ? nil : text
+                        let url = audio.recordedFileURL
+                        let img = uiImage
+                        dismiss()
+                        Task { await onSubmit(t, url, img) }
                     } label: { HStack(spacing: 6) { Image(systemName: "paperplane.fill"); Text("Submit") } }
                     .buttonStyle(.borderedProminent)
                     .disabled(uiImage == nil && (text.isEmpty && audio.recordedFileURL == nil))

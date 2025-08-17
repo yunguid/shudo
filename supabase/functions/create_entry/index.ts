@@ -177,7 +177,18 @@ serve(async (req) => {
 		if (!rr.ok) throw new Error(`openai responses ${rr.status}: ${await rr.text()}`);
 		const rrJson = await rr.json();
 		console.log("raw_responses_json", JSON.stringify(rrJson));
-		const maybeText = rrJson.output_text ?? (Array.isArray(rrJson.output) ? rrJson.output.map((x: any) => x.content?.[0]?.text?.value).filter(Boolean).join("\n") : null);
+		// Responses API often returns text under output[n].content[0].text (string)
+		const maybeText = rrJson.output_text ?? (
+			Array.isArray(rrJson.output)
+				? rrJson.output
+					.map((x: any) => {
+						const c = Array.isArray(x?.content) ? x.content[0] : null;
+						return typeof c?.text === "string" ? c.text : null;
+					})
+					.filter(Boolean)
+					.join("\n")
+				: null
+		);
 		let payload: any = extractJsonObject(maybeText);
 
 		// Debug log to function logs
@@ -216,20 +227,37 @@ serve(async (req) => {
 		let mKcal = toNum(macros.calories_kcal);
 
 		// If a top-level macros shape is returned (like in logs), map it
-		if ((mProtein + mCarbs + mFat + mKcal) === 0 && payload && payload.macros) {
-			const top = payload.macros as any;
-			mProtein = toNum(top.protein_g ?? top.protein);
-			mCarbs = toNum(top.carbohydrates_g ?? top.carbs_g ?? top.carb);
-			mFat = toNum(top.fat_g ?? top.fat);
-			mKcal = toNum(top.calories_kcal ?? payload.calories_kcal ?? top.kcal ?? top.calories);
+		if ((mProtein + mCarbs + mFat + mKcal) === 0 && payload) {
+			const candidates = [
+				(payload as any).entry_macros,
+				(payload as any).macros,
+				(payload as any).macros_g, // frequently seen in responses
+				(payload as any).nutrition,
+				(payload as any).nutrients,
+				(payload as any).total, // observed shape in multi-item outputs
+			];
+			for (const top of candidates) {
+				if (!top) continue;
+				mProtein = toNum(top.protein_g ?? top.protein);
+				mCarbs = toNum(top.carbohydrates_g ?? top.carbs_g ?? top.carb ?? top.carbohydrates);
+				mFat = toNum(top.fat_g ?? top.fat);
+				mKcal = toNum(
+					top.calories_kcal ??
+					(payload as any).calories_kcal ??
+					(payload as any).estimated_calories_kcal ??
+					top.kcal ?? top.calories
+				);
+				if ((mProtein + mCarbs + mFat + mKcal) > 0) break;
+			}
 		}
 		if ((mProtein + mCarbs + mFat + mKcal) === 0 && Array.isArray(payload.items)) {
 			for (const it of payload.items) {
-				const mm = it?.macros || {};
-				mProtein += toNum(mm.protein_g);
-				mCarbs += toNum(mm.carbs_g);
-				mFat += toNum(mm.fat_g);
-				mKcal += toNum(mm.calories_kcal);
+				// Items may contain nested macros or flattened nutrient keys
+				const mm = it?.macros || it || {};
+				mProtein += toNum(mm.protein_g ?? mm.protein);
+				mCarbs += toNum(mm.carbs_g ?? mm.carbohydrates_g ?? mm.carbohydrates ?? mm.carb);
+				mFat += toNum(mm.fat_g ?? mm.fat);
+				mKcal += toNum(mm.calories_kcal ?? mm.kcal ?? mm.calories);
 			}
 		}
 		if ((mProtein + mCarbs + mFat + mKcal) === 0 && (calcProtein + calcCarb + calcFat + calcKcal) > 0) {
@@ -239,6 +267,7 @@ serve(async (req) => {
 			? payload.items.reduce((acc: number, it: any) => acc + (it.confidence ?? 0), 0) / payload.items.length
 			: null;
 
+		console.log("Macro Totals for entry:", entry.id, "mProtein:", mProtein, "mCarbs:", mCarbs, "mFat:", mFat, "mKcal:", mKcal);
 		const storedOutput = { parsed: payload, raw_text: maybeText, raw_json: rrJson } as Record<string, unknown>;
 		const { error: e2 } = await admin
 			.from("entries")

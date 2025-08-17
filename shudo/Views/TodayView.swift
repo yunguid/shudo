@@ -18,6 +18,17 @@ struct ContentView: View {
                 }
                 .padding(20)
             }
+            .overlay(alignment: .bottom) {
+                if vm.isSubmitting {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Analyzing…")
+                    }
+                    .padding(12)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 16)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Sign Out") { AuthSessionManager.shared.signOut() }

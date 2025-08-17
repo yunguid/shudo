@@ -8,6 +8,7 @@ final class TodayViewModel: ObservableObject {
     @Published var entries: [Entry] = []
     @Published var isPresentingComposer = false
     @Published var isSubmitting = false
+    @Published var submittingEntryId: UUID?
     @Published var errorMessage: String?
 
     let api: APIService
@@ -37,12 +38,45 @@ final class TodayViewModel: ObservableObject {
         guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
         isSubmitting = true; errorMessage = nil
         do {
-            try await api.createEntry(text: text, audioURL: audioURL, image: image, timezone: tz)
+            let newId = try await api.createEntry(text: text, audioURL: audioURL, image: image, timezone: tz)
+            submittingEntryId = newId
+            // Optimistically add a placeholder pending entry to the list
+            let placeholder = Entry(id: newId, createdAt: Date(), summary: text?.components(separatedBy: "\n").first ?? "Processing…", imageURL: nil, proteinG: 0, carbsG: 0, fatG: 0, caloriesKcal: 0)
+            entries.insert(placeholder, at: 0)
+            // Poll for completion for up to ~20 seconds
+            try await pollUntilComplete(entryId: newId, timeoutSeconds: 20)
             await loadInitial()
         } catch {
             errorMessage = (error as NSError).userInfo["body"] as? String ?? error.localizedDescription
         }
         isSubmitting = false
+    }
+
+    private func pollUntilComplete(entryId: UUID, timeoutSeconds: Int) async throws {
+        let jwt = try await sb.currentJWT()
+        var comps = URLComponents(url: sb.supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "select", value: "id,status,protein_g,carbs_g,fat_g,calories_kcal,raw_text"),
+            URLQueryItem(name: "id", value: "eq.\(entryId.uuidString)")
+        ]
+        let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
+        while Date() < deadline {
+            var req = URLRequest(url: comps.url!)
+            req.httpMethod = "GET"
+            req.setValue(sb.anonKey, forHTTPHeaderField: "apikey")
+            req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                   let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                   let obj = arr.first, let status = obj["status"] as? String {
+                    if status == "complete" || status == "error" {
+                        return
+                    }
+                }
+            } catch { }
+            try? await Task.sleep(nanoseconds: 600_000_000) // 0.6s
+        }
     }
 }
 

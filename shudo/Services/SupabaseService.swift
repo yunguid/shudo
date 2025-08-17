@@ -1,7 +1,7 @@
 import Foundation
 
 struct SupabaseService {
-    struct TodayStatusDTO: Decodable {
+    struct TodayStatusDTO: Decodable { /* unused; keeping for reference */
         let user_id: String
         let target_protein_g: Double
         let target_carbs_g: Double
@@ -84,19 +84,21 @@ struct SupabaseService {
         req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        let arr = try JSONDecoder().decode([TodayStatusDTO].self, from: data)
-        let row = arr.first
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let row = arr.first else {
+            return (MacroTarget(caloriesKcal: 2800, proteinG: 180, carbsG: 360, fatG: 72), .empty)
+        }
+        func toDouble(_ any: Any?) -> Double { if let d = any as? Double { return d }; if let s = any as? String { return Double(s) ?? 0 }; return 0 }
         let target = MacroTarget(
-            caloriesKcal: row?.target_calories_kcal ?? 2800,
-            proteinG: row?.target_protein_g ?? 180,
-            carbsG: row?.target_carbs_g ?? 360,
-            fatG: row?.target_fat_g ?? 72
+            caloriesKcal: toDouble(row["target_calories_kcal"]) != 0 ? toDouble(row["target_calories_kcal"]) : 2800,
+            proteinG: toDouble(row["target_protein_g"]) != 0 ? toDouble(row["target_protein_g"]) : 180,
+            carbsG: toDouble(row["target_carbs_g"]) != 0 ? toDouble(row["target_carbs_g"]) : 360,
+            fatG: toDouble(row["target_fat_g"]) != 0 ? toDouble(row["target_fat_g"]) : 72
         )
         let totals = DayTotals(
-            proteinG: row?.consumed_protein_g ?? 0,
-            carbsG: row?.consumed_carbs_g ?? 0,
-            fatG: row?.consumed_fat_g ?? 0,
-            caloriesKcal: row?.consumed_calories_kcal ?? 0,
+            proteinG: toDouble(row["consumed_protein_g"]),
+            carbsG: toDouble(row["consumed_carbs_g"]),
+            fatG: toDouble(row["consumed_fat_g"]),
+            caloriesKcal: toDouble(row["consumed_calories_kcal"]),
             entryCount: 0
         )
         return (target, totals)
@@ -108,7 +110,7 @@ struct SupabaseService {
         let localDay = localDayString(timezone: timezone)
         var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
-            URLQueryItem(name: "select", value: "id,created_at,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path"),
+            URLQueryItem(name: "select", value: "id,created_at,raw_text,model_output,protein_g,carbs_g,fat_g,calories_kcal,image_path"),
             URLQueryItem(name: "user_id", value: "eq.\(userId)"),
             URLQueryItem(name: "local_day", value: "eq.\(localDay)"),
             URLQueryItem(name: "status", value: "eq.complete"),
@@ -121,17 +123,55 @@ struct SupabaseService {
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return [] }
         guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-        return arr.compactMap { obj in
-            guard let idStr = obj["id"] as? String, let id = UUID(uuidString: idStr) else { return nil }
+        func toDouble(_ any: Any?) -> Double { if let d = any as? Double { return d }; if let s = any as? String { return Double(s) ?? 0 }; return 0 }
+        func parseJSONIfString(_ any: Any?) -> Any? {
+            if let dict = any as? [String: Any] { return dict }
+            if let s = any as? String, let data = s.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { return obj }
+            return nil
+        }
+        func summarize(from modelOutput: Any?, rawText: String?) -> String {
+            if let mo = parseJSONIfString(modelOutput) as? [String: Any] {
+                let parsed = (mo["parsed"] as? [String: Any]) ?? mo
+                if let name = parsed["food_name"] as? String, !name.isEmpty { return name }
+                if let name = parsed["name"] as? String, !name.isEmpty { return name }
+                if let item = parsed["item"] as? [String: Any], let n = item["name"] as? String, !n.isEmpty { return n }
+                if let items = parsed["items"] as? [[String: Any]], !items.isEmpty {
+                    let names = items.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
+                    if names.isEmpty == false {
+                        if names.count <= 2 { return names.joined(separator: ", ") }
+                        return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
+                    }
+                }
+                if let raw = parsed["raw_text"] as? String, let nested = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
+                    if let nestedItems = nested["items"] as? [[String: Any]] {
+                        let names: [String] = nestedItems.compactMap { $0["name"] as? String }
+                        if !names.isEmpty {
+                            if names.count <= 2 { return names.joined(separator: ", ") }
+                            return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
+                        }
+                    }
+                    if let n = nested["food_name"] as? String, !n.isEmpty { return n }
+                }
+            }
+            return (rawText?.components(separatedBy: "\n").first ?? "Entry")
+        }
+
+        var results: [Entry] = []
+        for obj in arr {
+            guard let idStr = obj["id"] as? String, let id = UUID(uuidString: idStr) else { continue }
             let createdAtStr = obj["created_at"] as? String ?? ""
             let createdAt = ISO8601DateFormatter().date(from: createdAtStr) ?? Date()
-            let summary = (obj["raw_text"] as? String)?.components(separatedBy: "\n").first ?? "Entry"
-            let protein = (obj["protein_g"] as? Double) ?? 0
-            let carbs = (obj["carbs_g"] as? Double) ?? 0
-            let fat = (obj["fat_g"] as? Double) ?? 0
-            let kcal = (obj["calories_kcal"] as? Double) ?? 0
-            return Entry(id: id, createdAt: createdAt, summary: summary, imageURL: nil, proteinG: protein, carbsG: carbs, fatG: fat, caloriesKcal: kcal)
+            let summary = summarize(from: obj["model_output"], rawText: obj["raw_text"] as? String)
+            let protein = toDouble(obj["protein_g"]) 
+            let carbs = toDouble(obj["carbs_g"]) 
+            let fat = toDouble(obj["fat_g"]) 
+            let kcal = toDouble(obj["calories_kcal"]) 
+            var imageURL: URL? = nil
+            if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
+            results.append(Entry(id: id, createdAt: createdAt, summary: summary, imageURL: imageURL, proteinG: protein, carbsG: carbs, fatG: fat, caloriesKcal: kcal))
         }
+        return results
     }
 
     private func localDayString(timezone: String) -> String {
@@ -144,6 +184,25 @@ struct SupabaseService {
         formatter.dateFormat = "yyyy-MM-dd"
         let date = calendar.date(from: comps) ?? Date()
         return formatter.string(from: date)
+    }
+
+    private func signImageURL(path: String, jwt: String) async -> URL? {
+        var url = supabaseUrl
+        url.appendPathComponent("/storage/v1/object/sign/entry-images")
+        url.appendPathComponent(path)
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["expiresIn": 600])
+        guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let u = obj["signedURL"] as? String, let url = URL(string: u, relativeTo: supabaseUrl) { return url }
+            if let u = obj["signedUrl"] as? String, let url = URL(string: u, relativeTo: supabaseUrl) { return url }
+            if let u = obj["url"] as? String, let url = URL(string: u, relativeTo: supabaseUrl) { return url }
+        }
+        return nil
     }
 }
 

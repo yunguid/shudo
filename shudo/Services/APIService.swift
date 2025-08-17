@@ -12,7 +12,7 @@ public struct APIService {
         self.sessionJWTProvider = sessionJWTProvider
     }
 
-    public func createEntry(text: String?, audioURL: URL?, image: UIImage?, timezone: String) async throws {
+    public func createEntry(text: String?, audioURL: URL?, image: UIImage?, timezone: String) async throws -> UUID {
         var req = URLRequest(url: supabaseUrl.appendingPathComponent("/functions/v1/create_entry"))
         req.httpMethod = "POST"
         let jwt = try await sessionJWTProvider()
@@ -27,6 +27,12 @@ public struct APIService {
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
             throw NSError(domain: "API", code: (resp as? HTTPURLResponse)?.statusCode ?? -1, userInfo: ["body": String(data: data, encoding: .utf8) ?? ""]) 
         }
+        // Response from edge function: { entry_id, image_path?, audio_path? }
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let idStr = obj["entry_id"] as? String, let id = UUID(uuidString: idStr) {
+            return id
+        }
+        throw URLError(.cannotParseResponse)
     }
 
     private func makeMultipart(boundary: String, text: String?, audioURL: URL?, image: UIImage?, timezone: String) throws -> Data {
