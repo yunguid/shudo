@@ -5,6 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -59,8 +60,9 @@ const RESULT_SCHEMA = {
 serve(async (req) => {
 	try {
 		const authHeader = req.headers.get("Authorization") ?? "";
-		const supa = createClient(SUPABASE_URL, authHeader.replace("Bearer ", ""));
-		const { data: authUser } = await supa.auth.getUser();
+		const jwt = authHeader.replace("Bearer ", "");
+		const supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+		const { data: authUser } = await supa.auth.getUser(jwt);
 		if (!authUser?.user) return new Response("Unauthorized", { status: 401 });
 		const user_id = authUser.user.id;
 

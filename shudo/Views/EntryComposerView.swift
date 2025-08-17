@@ -1,0 +1,55 @@
+import SwiftUI
+import PhotosUI
+import UIKit
+
+struct EntryComposerView: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var audio = AudioRecorder()
+    @State private var text: String = ""
+    @State private var pickedImage: PhotosPickerItem?
+    @State private var uiImage: UIImage?
+
+    let onSubmit: (String?, URL?, UIImage?) async -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Notes") { TextEditor(text: $text).frame(minHeight: 100) }
+                Section("Image") {
+                    PhotosPicker("Choose Photo", selection: $pickedImage, matching: .images)
+                    if let img = uiImage { Image(uiImage: img).resizable().scaledToFit().frame(maxHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12)) }
+                }
+                Section("Voice") {
+                    HStack {
+                        Button(action: toggleRecord) {
+                            Label(audio.isRecording ? "Stop" : "Record", systemImage: audio.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                        }
+                        Spacer()
+                        if let url = audio.recordedFileURL { Text(url.lastPathComponent).font(.footnote).foregroundStyle(.secondary) }
+                    }
+                }
+            }
+            .navigationTitle("New Entry")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task { await onSubmit(text.isEmpty ? nil : text, audio.recordedFileURL, uiImage); dismiss() }
+                    } label: { HStack(spacing: 6) { Image(systemName: "paperplane.fill"); Text("Submit") } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(uiImage == nil && (text.isEmpty && audio.recordedFileURL == nil))
+                }
+            }
+        }
+        .onChange(of: pickedImage) { _, newValue in
+            Task { @MainActor in
+                guard let item = newValue else { return }
+                if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) { uiImage = img }
+            }
+        }
+    }
+
+    private func toggleRecord() { if audio.isRecording { audio.stopRecording() } else { audio.startRecording() } }
+}
+
+
