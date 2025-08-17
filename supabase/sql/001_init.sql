@@ -29,7 +29,7 @@ create table if not exists public.entries (
 	processed_at timestamptz,
 	status text not null default 'pending',
 	client_submitted_at timestamptz,
-	timezone_snapshot text not null,
+	timezone_snapshot text not null default 'UTC',
 	local_day date generated always as (date(timezone(timezone_snapshot, created_at))) stored,
 	has_audio boolean default false,
 	has_image boolean default false,
