@@ -3,6 +3,9 @@ import Foundation
 // AppConfig defined in AppConfig.swift
 
 struct SupabaseAuthService {
+    enum SignUpResult {
+        case confirmationSent
+    }
     struct Session: Codable, Equatable {
         let accessToken: String
         let refreshToken: String
@@ -12,12 +15,13 @@ struct SupabaseAuthService {
         let userId: String?
     }
 
-    func signUp(email: String, password: String) async throws -> Session {
+    func signUp(email: String, password: String) async throws -> SignUpResult {
         _ = try await makeRequest(path: "/auth/v1/signup", query: nil, body: [
             "email": email,
             "password": password
         ])
-        return try await signIn(email: email, password: password)
+        // If email confirmation is enabled, no session should be established here.
+        return .confirmationSent
     }
 
     func signIn(email: String, password: String) async throws -> Session {
@@ -62,6 +66,13 @@ struct SupabaseAuthService {
         let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
         let userId = try await fetchUserId(accessToken: accessToken)
         return Session(accessToken: accessToken, refreshToken: refreshToken, tokenType: tokenType, expiresIn: expiresIn, expiresAt: expiresAt, userId: userId)
+    }
+
+    func resendSignUpConfirmation(email: String) async throws {
+        _ = try await makeRequest(path: "/auth/v1/resend", query: nil, body: [
+            "type": "signup",
+            "email": email
+        ])
     }
 
     private func makeRequest(path: String, query: [URLQueryItem]?, body: [String: Any]) async throws -> [String: Any] {

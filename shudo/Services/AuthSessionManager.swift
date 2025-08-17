@@ -16,10 +16,10 @@ final class AuthSessionManager: ObservableObject {
         saveToKeychain(s)
     }
 
-    func signUp(email: String, password: String) async throws {
-        let s = try await service.signUp(email: email, password: password)
-        await MainActor.run { self.session = s }
-        saveToKeychain(s)
+    func signUp(email: String, password: String) async throws -> SupabaseAuthService.SignUpResult {
+        let result = try await service.signUp(email: email, password: password)
+        // Do not set a session here; user must confirm email first.
+        return result
     }
 
     func signOut() {

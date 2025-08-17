@@ -2,11 +2,20 @@ import SwiftUI
 import Combine
 
 struct TodayView: View {
-    @StateObject private var vm = TodayViewModel(api: APIService(
-        supabaseUrl: AppConfig.supabaseURL,
-        supabaseAnonKey: AppConfig.supabaseAnonKey,
-        sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
-    ))
+    let profile: Profile
+    @StateObject private var vm: TodayViewModel
+    
+    init(profile: Profile) {
+        self.profile = profile
+        _vm = StateObject(wrappedValue: TodayViewModel(
+            profile: profile,
+            api: APIService(
+                supabaseUrl: AppConfig.supabaseURL,
+                supabaseAnonKey: AppConfig.supabaseAnonKey,
+                sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
+            )
+        ))
+    }
     @State private var now = Date()
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 

@@ -15,22 +15,20 @@ final class TodayViewModel: ObservableObject {
     let api: APIService
     let sb = SupabaseService()
 
-    init(api: APIService) {
+    init(profile: Profile, api: APIService) {
         self.api = api
-        Task { await loadInitial() }
+        self.profile = profile
+        Task { await loadFor(profile: profile) }
     }
 
-    func loadInitial() async {
+    func loadFor(profile: Profile) async {
         do {
-            let prof = try await sb.ensureProfileDefaults()
-            self.profile = prof
             let (target, totals) = try await sb.fetchTodayStatus()
             self.profile?.dailyMacroTarget = target
             self.todayTotals = totals
-            let todayEntries = try await sb.fetchEntriesForToday(timezone: prof.timezone)
+            let todayEntries = try await sb.fetchEntriesForToday(timezone: profile.timezone)
             self.entries = todayEntries
         } catch {
-            self.profile = self.profile ?? Profile(userId: AuthSessionManager.shared.userId ?? "", timezone: TimeZone.autoupdatingCurrent.identifier, dailyMacroTarget: MacroTarget(caloriesKcal: 2800, proteinG: 180, carbsG: 360, fatG: 72))
             self.todayTotals = .empty
         }
     }
@@ -69,7 +67,7 @@ final class TodayViewModel: ObservableObject {
             entries.insert(placeholder, at: 0)
             // Poll for completion for up to ~20 seconds
             try await pollUntilComplete(entryId: newId, timeoutSeconds: 20)
-            await loadInitial()
+            if let p = profile { await loadFor(profile: p) }
         } catch {
             errorMessage = (error as NSError).userInfo["body"] as? String ?? error.localizedDescription
         }

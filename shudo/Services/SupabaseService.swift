@@ -30,11 +30,17 @@ struct SupabaseService {
             "carbs_g": 360,
             "fat_g": 72
         ] as [String : Any]
-        var req = URLRequest(url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"))
+        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "on_conflict", value: "user_id")
+        ]
+        var req = URLRequest(url: comps.url!)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
+        // If a row already exists, ignore duplicate and do not error
+        req.setValue("resolution=ignore-duplicates, return=minimal", forHTTPHeaderField: "Prefer")
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "user_id": userId,
             "timezone": timezone,
@@ -44,6 +50,11 @@ struct SupabaseService {
         ])
         let (_, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        // Fetch authoritative row to return consistent state
+        if let fetched = try await fetchProfile(userId: userId) {
+            return fetched
+        }
+        // Fallback to defaults if fetch somehow fails
         return Profile(userId: userId, timezone: timezone, dailyMacroTarget: MacroTarget(caloriesKcal: 2800, proteinG: 180, carbsG: 360, fatG: 72))
     }
 

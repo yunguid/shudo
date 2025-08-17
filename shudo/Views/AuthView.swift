@@ -8,6 +8,7 @@ struct AuthView: View {
     @State private var isLoading = false
     @State private var error: String?
     @State private var currentNonce: String?
+    @State private var confirmationSent: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -36,14 +37,31 @@ struct AuthView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                HStack {
-                    Button("Sign In") { Task { await signIn() } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isLoading || email.isEmpty || password.isEmpty)
+                if confirmationSent == false {
+                    HStack {
+                        Button("Sign In") { Task { await signIn() } }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isLoading || email.isEmpty || password.isEmpty)
 
-                    Button("Sign Up") { Task { await signUp() } }
-                        .buttonStyle(.bordered)
-                        .disabled(isLoading || email.isEmpty || password.isEmpty)
+                        Button("Sign Up") { Task { await signUp() } }
+                            .buttonStyle(.bordered)
+                            .disabled(isLoading || email.isEmpty || password.isEmpty)
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        Text("Check your email to confirm your account.")
+                            .font(.callout)
+                            .foregroundStyle(Design.Color.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack {
+                            Button("Resend Email") { Task { await resendConfirmation() } }
+                                .buttonStyle(.bordered)
+                                .disabled(isLoading || email.isEmpty)
+                            Button("Back") { confirmationSent = false }
+                                .buttonStyle(.plain)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 SignInWithAppleButton(.signIn) { request in
@@ -79,7 +97,17 @@ struct AuthView: View {
         await authCall { try await AuthSessionManager.shared.signIn(email: email, password: password) }
     }
     private func signUp() async {
-        await authCall { try await AuthSessionManager.shared.signUp(email: email, password: password) }
+        isLoading = true; error = nil
+        do {
+            let result = try await AuthSessionManager.shared.signUp(email: email, password: password)
+            switch result {
+            case .confirmationSent:
+                confirmationSent = true
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isLoading = false
     }
     private func authCall(_ block: () async throws -> Void) async {
         isLoading = true; error = nil
@@ -94,6 +122,12 @@ struct AuthView: View {
             await MainActor.run { AuthSessionManager.shared.setSession(s) }
         } catch { self.error = error.localizedDescription }
         isLoading = false
+    }
+
+    private func resendConfirmation() async {
+        await authCall {
+            try await SupabaseAuthService().resendSignUpConfirmation(email: email)
+        }
     }
 
     // MARK: - Nonce/Hash

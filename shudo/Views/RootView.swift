@@ -17,7 +17,7 @@ struct RootView: View {
                         reloadProfile()
                     }
                 } else {
-                    TodayView()
+                    TodayView(profile: p)
                 }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
