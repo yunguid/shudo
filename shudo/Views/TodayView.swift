@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct TodayView: View {
     @StateObject private var vm = TodayViewModel(api: APIService(
@@ -6,6 +7,8 @@ struct TodayView: View {
         supabaseAnonKey: AppConfig.supabaseAnonKey,
         sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
     ))
+    @State private var now = Date()
+    private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
@@ -62,13 +65,41 @@ struct TodayView: View {
                     }
                 }
                 ToolbarItem(placement: .bottomBar) {
-                    Button {
-                        vm.isPresentingComposer = true
-                    } label: {
-                        Label("Add Entry", systemImage: "plus.circle.fill")
-                            .labelStyle(.titleAndIcon)
+                    HStack(spacing: 0) {
+                        Button { shiftDay(-1) } label: {
+                            Text("<")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(Design.Color.ink)
+                                .contentShape(Rectangle())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .accessibilityLabel("Previous day")
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer(minLength: 12)
+
+                        Button {
+                            vm.isPresentingComposer = true
+                        } label: {
+                            Label("Add Entry", systemImage: "plus.circle.fill")
+                                .labelStyle(.titleAndIcon)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Spacer(minLength: 12)
+
+                        Button { shiftDay(1) } label: {
+                            Text(">")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(Design.Color.ink)
+                                .contentShape(Rectangle())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .accessibilityLabel("Next day")
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.borderedProminent)
                 }
             }
         }
@@ -77,14 +108,20 @@ struct TodayView: View {
                 await vm.submitEntry(text: text, audioURL: audioURL, image: image)
             }
         }
+        .onReceive(countdownTimer) { d in
+            now = d
+        }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(Date.now, style: .date).font(.title2.weight(.semibold))
-            Text(TimeZone.autoupdatingCurrent.identifier)
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.muted)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(vm.currentDay, style: .date).font(.title2.weight(.semibold))
+            HStack(spacing: 8) {
+                Text(timezoneLabel)
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.muted)
+                countdownPill
+            }
         }
     }
 
@@ -107,5 +144,73 @@ struct TodayView: View {
                 Text(err).font(.caption).foregroundStyle(.red)
             }
         }
+    }
+
+    // MARK: - Countdown
+
+    private var timezoneLabel: String {
+        vm.profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier
+    }
+
+    private var countdownPill: some View {
+        let info = cutoffLabel(now: now,
+                               tzId: vm.profile?.timezone,
+                               cutoffLocal: vm.profile?.cutoffTimeLocal)
+        return Group {
+            if let info = info {
+                Label(info.text, systemImage: "clock")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(info.isOver ? Design.Color.danger : Design.Color.ink)
+                    .monospacedDigit()
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: Design.Radius.pill, style: .continuous)
+                            .fill(Design.Color.fill)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Design.Radius.pill, style: .continuous)
+                            .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                    )
+                    .accessibilityLabel(info.isOver ? "Over by \(info.accessible)" : "Stop eating in \(info.accessible)")
+            }
+        }
+    }
+
+    private func cutoffLabel(now: Date, tzId: String?, cutoffLocal: String?) -> (text: String, accessible: String, isOver: Bool)? {
+        let tz = TimeZone(identifier: tzId ?? "") ?? .autoupdatingCurrent
+        let (h, m) = parseHourMinute(from: cutoffLocal)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = tz
+        guard let cutoffToday = cal.date(bySettingHour: h, minute: m, second: 0, of: now) else { return nil }
+
+        let beforeCutoff = now <= cutoffToday
+        let interval = beforeCutoff ? cutoffToday.timeIntervalSince(now) : now.timeIntervalSince(cutoffToday)
+        let hhmm = formatHoursMinutes(interval: interval)
+        let text = beforeCutoff ? "Stop in \(hhmm)" : "Over by \(hhmm)"
+        return (text, hhmm, !beforeCutoff)
+    }
+
+    private func parseHourMinute(from cutoff: String?) -> (Int, Int) {
+        let trimmed = (cutoff?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "20:00"
+        let parts = trimmed.split(separator: ":")
+        guard parts.count >= 2, let hh = Int(parts[0]), let mm = Int(parts[1]), (0..<24).contains(hh), (0..<60).contains(mm) else {
+            return (20, 0)
+        }
+        return (hh, mm)
+    }
+
+    private func formatHoursMinutes(interval: TimeInterval) -> String {
+        let f = DateComponentsFormatter()
+        f.allowedUnits = [.hour, .minute]
+        f.unitsStyle = .positional
+        f.zeroFormattingBehavior = [.pad]
+        return f.string(from: max(0, interval)) ?? "0:00"
+    }
+
+    private func shiftDay(_ delta: Int) {
+        guard let day = Calendar.current.date(byAdding: .day, value: delta, to: vm.currentDay) else { return }
+        Task { await vm.load(day: day) }
     }
 }

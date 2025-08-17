@@ -13,13 +13,13 @@
     - [ ] `CalorieEstimator` service: base × activity multiplier
     - [x] Defaults: protein ~1.8 g/kg target, fat ~0.8 g/kg target, carbs = remaining kcal/4 (with clamps)
     - [x] Save into `profiles.daily_macro_target`; refresh UI
-  - [ ] Countdown UI in header/toolbar
-    - [ ] Show “Stop in hh:mm” until cutoff; after cutoff show “Over by hh:mm” in red
-    - [ ] Drive with `Timer.publish(every: 30, on: .main, in: .common).autoconnect()`
-    - [ ] Use `profile.timezone` + `cutoff_time_local` (fallback 20:00)
-- [ ] If a user does not provide an image for the food entry then the row in the Meals section will not show an outline of a blank image. 
-- [ ] Fix visibility issue with P,C,F in the Meals section.
-- [ ] Add < > arrows to the right and left of the Add Entry button to switch to previous days / future days.
+  - [x] Countdown UI in header/toolbar
+    - [x] Show “Stop in hh:mm” until cutoff; after cutoff show “Over by hh:mm” in red
+    - [x] Driven by a live timer (1s cadence) using `Timer.publish(every: 1, on: .main, in: .common).autoconnect()`
+    - [x] Uses `profile.timezone` + `cutoff_time_local` (fallback 20:00)
+- [x] If a user does not provide an image for the food entry then the row in the Meals section will not show an outline of a blank image. 
+- [x] Fix visibility issue with P,C,F in the Meals section.
+- [x] Add < > arrows to the right and left of the Add Entry button to switch to previous days / future days.
 
 - [ ] Email sign‑up confirmation UX (friendly, non‑technical)
   - [ ] Do not auto‑sign‑in immediately after `signUp(email,password)` when email confirmation is enabled

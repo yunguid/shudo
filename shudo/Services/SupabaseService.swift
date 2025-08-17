@@ -141,7 +141,7 @@ struct SupabaseService {
     func fetchEntriesForToday(timezone: String) async throws -> [Entry] {
         let jwt = try await currentJWT()
         let userId = try currentUserId()
-        let localDay = localDayString(timezone: timezone)
+        let localDay = localDayString(for: Date(), timezone: timezone)
         var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
             URLQueryItem(name: "select", value: "id,created_at,raw_text,model_output,protein_g,carbs_g,fat_g,calories_kcal,image_path"),
@@ -208,16 +208,87 @@ struct SupabaseService {
         return results
     }
 
-    private func localDayString(timezone: String) -> String {
+    func localDayString(for date: Date, timezone: String) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timezone) ?? .current
-        let comps = calendar.dateComponents([.year, .month, .day], from: Date())
+        let comps = calendar.dateComponents([.year, .month, .day], from: date)
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM-dd"
-        let date = calendar.date(from: comps) ?? Date()
-        return formatter.string(from: date)
+        let day = calendar.date(from: comps) ?? date
+        return formatter.string(from: day)
+    }
+
+    func fetchEntries(for date: Date, timezone: String) async throws -> [Entry] {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        let localDay = localDayString(for: date, timezone: timezone)
+        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "select", value: "id,created_at,raw_text,model_output,protein_g,carbs_g,fat_g,calories_kcal,image_path"),
+            URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+            URLQueryItem(name: "local_day", value: "eq.\(localDay)"),
+            URLQueryItem(name: "status", value: "eq.complete"),
+            URLQueryItem(name: "order", value: "created_at.desc")
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "GET"
+        req.setValue(anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return [] }
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+
+        func toDouble(_ any: Any?) -> Double { if let d = any as? Double { return d }; if let s = any as? String { return Double(s) ?? 0 }; return 0 }
+        func parseJSONIfString(_ any: Any?) -> Any? {
+            if let dict = any as? [String: Any] { return dict }
+            if let s = any as? String, let data = s.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { return obj }
+            return nil
+        }
+        func summarize(from modelOutput: Any?, rawText: String?) -> String {
+            if let mo = parseJSONIfString(modelOutput) as? [String: Any] {
+                let parsed = (mo["parsed"] as? [String: Any]) ?? mo
+                if let name = parsed["food_name"] as? String, !name.isEmpty { return name }
+                if let name = parsed["name"] as? String, !name.isEmpty { return name }
+                if let item = parsed["item"] as? [String: Any], let n = item["name"] as? String, !n.isEmpty { return n }
+                if let items = parsed["items"] as? [[String: Any]], !items.isEmpty {
+                    let names = items.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
+                    if names.isEmpty == false {
+                        if names.count <= 2 { return names.joined(separator: ", ") }
+                        return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
+                    }
+                }
+                if let raw = parsed["raw_text"] as? String, let nested = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
+                    if let nestedItems = nested["items"] as? [[String: Any]] {
+                        let names: [String] = nestedItems.compactMap { $0["name"] as? String }
+                        if !names.isEmpty {
+                            if names.count <= 2 { return names.joined(separator: ", ") }
+                            return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
+                        }
+                    }
+                    if let n = nested["food_name"] as? String, !n.isEmpty { return n }
+                }
+            }
+            return (rawText?.components(separatedBy: "\n").first ?? "Entry")
+        }
+
+        var results: [Entry] = []
+        for obj in arr {
+            guard let idStr = obj["id"] as? String, let id = UUID(uuidString: idStr) else { continue }
+            let createdAtStr = obj["created_at"] as? String ?? ""
+            let createdAt = ISO8601DateFormatter().date(from: createdAtStr) ?? Date()
+            let summary = summarize(from: obj["model_output"], rawText: obj["raw_text"] as? String)
+            let protein = toDouble(obj["protein_g"]) 
+            let carbs = toDouble(obj["carbs_g"]) 
+            let fat = toDouble(obj["fat_g"]) 
+            let kcal = toDouble(obj["calories_kcal"]) 
+            var imageURL: URL? = nil
+            if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
+            results.append(Entry(id: id, createdAt: createdAt, summary: summary, imageURL: imageURL, proteinG: protein, carbsG: carbs, fatG: fat, caloriesKcal: kcal))
+        }
+        return results
     }
 
     private func signImageURL(path: String, jwt: String) async -> URL? {

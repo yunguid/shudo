@@ -6,6 +6,7 @@ final class TodayViewModel: ObservableObject {
     @Published var profile: Profile?
     @Published var todayTotals: DayTotals = .empty
     @Published var entries: [Entry] = []
+    @Published var currentDay: Date = Date()
     @Published var isPresentingComposer = false
     @Published var isSubmitting = false
     @Published var submittingEntryId: UUID?
@@ -31,6 +32,29 @@ final class TodayViewModel: ObservableObject {
         } catch {
             self.profile = self.profile ?? Profile(userId: AuthSessionManager.shared.userId ?? "", timezone: TimeZone.autoupdatingCurrent.identifier, dailyMacroTarget: MacroTarget(caloriesKcal: 2800, proteinG: 180, carbsG: 360, fatG: 72))
             self.todayTotals = .empty
+        }
+    }
+
+    func load(day: Date) async {
+        guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
+        do {
+            currentDay = day
+            let items = try await sb.fetchEntries(for: day, timezone: tz)
+            let totals = items.reduce(DayTotals.empty) { acc, e in
+                DayTotals(
+                    proteinG: acc.proteinG + e.proteinG,
+                    carbsG: acc.carbsG + e.carbsG,
+                    fatG: acc.fatG + e.fatG,
+                    caloriesKcal: acc.caloriesKcal + e.caloriesKcal,
+                    entryCount: acc.entryCount + 1
+                )
+            }
+            await MainActor.run {
+                self.entries = items
+                self.todayTotals = totals
+            }
+        } catch {
+            await MainActor.run { self.entries = [] }
         }
     }
 

@@ -168,9 +168,13 @@ serve(async (req) => {
 			headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
 			body: JSON.stringify({
 				model: "gpt-5",
-				reasoning: { effort: "minimal" },
+				reasoning: { effort: "medium" },
 				input,
-				text: { verbosity: "low" },
+				response_format: {
+					type: "json_schema",
+					json_schema: { name: "NutritionExtraction", schema: RESULT_SCHEMA, strict: true }
+				},
+				text: { verbosity: "medium" },
 				max_output_tokens: 800
 			}),
 		});
@@ -218,13 +222,77 @@ serve(async (req) => {
 			}
 		}
 
+		// Map alternative "meals" structure into expected shape
+		if (payload && Array.isArray(payload.meals) && payload.meals.length > 0) {
+			const meals: any[] = payload.meals;
+			const normalizedItems: any[] = [];
+			let tProtein = 0, tCarbs = 0, tFat = 0, tKcal = 0;
+
+			for (const meal of meals) {
+				const mealMacros = (meal?.macros_g || meal?.macros || {}) as any;
+				tProtein += Number(mealMacros.protein_g ?? mealMacros.protein ?? 0) || 0;
+				tCarbs += Number(mealMacros.carbs_g ?? mealMacros.carbohydrates_g ?? mealMacros.carbohydrates ?? mealMacros.carb ?? 0) || 0;
+				tFat += Number(mealMacros.fat_g ?? mealMacros.fat ?? 0) || 0;
+				tKcal += Number(meal?.calories ?? mealMacros.calories_kcal ?? 0) || 0;
+
+				const items: any[] = Array.isArray(meal?.items) ? meal.items : [];
+				for (const it of items) {
+					const mm = (it?.macros_g || it?.macros || {}) as any;
+					const protein_g = Number(mm.protein_g ?? mm.protein ?? 0) || 0;
+					const carbs_g = Number(mm.carbs_g ?? mm.carbohydrates_g ?? mm.carbohydrates ?? mm.carb ?? 0) || 0;
+					const fat_g = Number(mm.fat_g ?? mm.fat ?? 0) || 0;
+					const calories_kcal = Number(it?.calories ?? mm.calories_kcal ?? 0) || 0;
+					const quantity = Number(it?.quantity ?? it?.weight_grams ?? 0) || 0;
+					const unit = it?.unit ?? (it?.weight_grams != null ? "g" : (it?.pieces != null ? "piece" : "g"));
+
+					normalizedItems.push({
+						name: it?.name ?? "Item",
+						quantity,
+						unit,
+						macros: { protein_g, carbs_g, fat_g, calories_kcal },
+						confidence: it?.confidence ?? 0.6,
+					});
+				}
+			}
+
+			if (!Array.isArray(payload.items) || payload.items.length === 0) {
+				payload.items = normalizedItems;
+			}
+
+			const hasEntryMacros = payload.entry_macros && typeof payload.entry_macros === "object";
+			const entryTotalsZero = !hasEntryMacros || [
+				Number(payload.entry_macros?.protein_g ?? 0) || 0,
+				Number(payload.entry_macros?.carbs_g ?? 0) || 0,
+				Number(payload.entry_macros?.fat_g ?? 0) || 0,
+				Number(payload.entry_macros?.calories_kcal ?? 0) || 0,
+			].every((v) => v === 0);
+
+			if (entryTotalsZero) {
+				// If meal totals are missing, compute from items
+				if ((tProtein + tCarbs + tFat + tKcal) === 0 && normalizedItems.length > 0) {
+					for (const it of normalizedItems) {
+						tProtein += Number(it.macros?.protein_g ?? 0) || 0;
+						tCarbs += Number(it.macros?.carbs_g ?? 0) || 0;
+						tFat += Number(it.macros?.fat_g ?? 0) || 0;
+						tKcal += Number(it.macros?.calories_kcal ?? 0) || 0;
+					}
+				}
+				payload.entry_macros = {
+					protein_g: tProtein,
+					carbs_g: tCarbs,
+					fat_g: tFat,
+					calories_kcal: tKcal,
+				};
+			}
+		}
+
 		// Coerce/repair macros if missing by summing items or using calc totals
 		const toNum = (v: any) => (typeof v === "number" && isFinite(v)) ? v : parseFloat(String(v ?? "")) || 0;
 		let macros = payload.entry_macros || {};
 		let mProtein = toNum(macros.protein_g);
 		let mCarbs = toNum((macros as any).carbs_g);
 		let mFat = toNum(macros.fat_g);
-		let mKcal = toNum(macros.calories_kcal);
+		let mKcal = toNum(macros.calories_kcal ?? (payload.estimated_calories ?? payload.estimated_calories_kcal));
 
 		// If a top-level macros shape is returned (like in logs), map it
 		if ((mProtein + mCarbs + mFat + mKcal) === 0 && payload) {
@@ -238,14 +306,17 @@ serve(async (req) => {
 			];
 			for (const top of candidates) {
 				if (!top) continue;
-				mProtein = toNum(top.protein_g ?? top.protein);
-				mCarbs = toNum(top.carbohydrates_g ?? top.carbs_g ?? top.carb ?? top.carbohydrates);
-				mFat = toNum(top.fat_g ?? top.fat);
+				const nested = (top as any).macros_g || (top as any).macros || top;
+				mProtein = toNum(nested.protein_g ?? nested.protein);
+				mCarbs = toNum(nested.carbohydrates_g ?? nested.carbs_g ?? nested.carb ?? nested.carbohydrates);
+				mFat = toNum(nested.fat_g ?? nested.fat);
 				mKcal = toNum(
-					top.calories_kcal ??
+					nested.calories_kcal ??
+					(top as any).calories_kcal ??
 					(payload as any).calories_kcal ??
 					(payload as any).estimated_calories_kcal ??
-					top.kcal ?? top.calories
+					(payload as any).estimated_calories ??
+					(top as any).kcal ?? (top as any).calories
 				);
 				if ((mProtein + mCarbs + mFat + mKcal) > 0) break;
 			}
@@ -253,12 +324,17 @@ serve(async (req) => {
 		if ((mProtein + mCarbs + mFat + mKcal) === 0 && Array.isArray(payload.items)) {
 			for (const it of payload.items) {
 				// Items may contain nested macros or flattened nutrient keys
-				const mm = it?.macros || it || {};
+				const mm = it?.macros_g || it?.macros || it || {};
 				mProtein += toNum(mm.protein_g ?? mm.protein);
 				mCarbs += toNum(mm.carbs_g ?? mm.carbohydrates_g ?? mm.carbohydrates ?? mm.carb);
 				mFat += toNum(mm.fat_g ?? mm.fat);
 				mKcal += toNum(mm.calories_kcal ?? mm.kcal ?? mm.calories);
 			}
+		}
+
+		// If we have macros but no calories, derive kcal from macros
+		if (mKcal === 0 && (mProtein + mCarbs + mFat) > 0) {
+			mKcal = mProtein * 4 + mCarbs * 4 + mFat * 9;
 		}
 		if ((mProtein + mCarbs + mFat + mKcal) === 0 && (calcProtein + calcCarb + calcFat + calcKcal) > 0) {
 			mProtein = calcProtein; mCarbs = calcCarb; mFat = calcFat; mKcal = calcKcal;
