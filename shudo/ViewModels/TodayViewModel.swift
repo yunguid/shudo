@@ -11,6 +11,7 @@ final class TodayViewModel: ObservableObject {
     @Published var isSubmitting = false
     @Published var submittingEntryId: UUID?
     @Published var errorMessage: String?
+    @Published var isPinnedToToday: Bool = true
 
     let api: APIService
     let sb = SupabaseService()
@@ -28,6 +29,8 @@ final class TodayViewModel: ObservableObject {
             self.todayTotals = totals
             let todayEntries = try await sb.fetchEntriesForToday(timezone: profile.timezone)
             self.entries = todayEntries
+            self.currentDay = Date()
+            self.isPinnedToToday = true
         } catch {
             self.todayTotals = .empty
         }
@@ -56,6 +59,43 @@ final class TodayViewModel: ObservableObject {
         }
     }
 
+    func jumpToToday() async {
+        guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
+        isPinnedToToday = true
+        currentDay = Date()
+        await load(day: currentDay)
+    }
+
+    func deleteEntry(_ entry: Entry) async {
+        guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
+        // Optimistic UI: remove locally and adjust totals
+        let previous = entries
+        entries.removeAll { $0.id == entry.id }
+        todayTotals = DayTotals(
+            proteinG: todayTotals.proteinG - entry.proteinG,
+            carbsG: todayTotals.carbsG - entry.carbsG,
+            fatG: todayTotals.fatG - entry.fatG,
+            caloriesKcal: todayTotals.caloriesKcal - entry.caloriesKcal,
+            entryCount: max(0, todayTotals.entryCount - 1)
+        )
+        do {
+            let jwt = try await sb.currentJWT()
+            var comps = URLComponents(url: sb.supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+            comps.queryItems = [URLQueryItem(name: "id", value: "eq.\(entry.id.uuidString)")]
+            var req = URLRequest(url: comps.url!)
+            req.httpMethod = "DELETE"
+            req.setValue(sb.anonKey, forHTTPHeaderField: "apikey")
+            req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+            // Refresh authoritative entries/totals for the day
+            await load(day: currentDay)
+        } catch {
+            // Revert on failure
+            entries = previous
+        }
+    }
+
     func submitEntry(text: String?, audioURL: URL?, image: UIImage?) async {
         guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
         isSubmitting = true; errorMessage = nil
@@ -66,7 +106,7 @@ final class TodayViewModel: ObservableObject {
             let placeholder = Entry(id: newId, createdAt: Date(), summary: text?.components(separatedBy: "\n").first ?? "Processing…", imageURL: nil, proteinG: 0, carbsG: 0, fatG: 0, caloriesKcal: 0)
             entries.insert(placeholder, at: 0)
             // Poll for completion for up to ~20 seconds
-            try await pollUntilComplete(entryId: newId, timeoutSeconds: 20)
+            try await pollUntilComplete(entryId: newId, timeoutSeconds: 120)
             if let p = profile { await loadFor(profile: p) }
         } catch {
             errorMessage = (error as NSError).userInfo["body"] as? String ?? error.localizedDescription

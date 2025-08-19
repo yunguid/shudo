@@ -28,15 +28,17 @@ struct TodayView: View {
                     SectionCard { macroSection }
 
                     SectionCard {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: Design.Spacing.m) {
                             SectionHeader("Meals")
                             if vm.entries.isEmpty {
                                 Text("No entries yet.")
                                     .foregroundStyle(Design.Color.muted)
                             } else {
-                                LazyVStack(spacing: 12) {
+                                LazyVStack(spacing: 14) {
                                     ForEach(vm.entries) { entry in
-                                        EntryCard(entry: entry)
+                                        EntryCard(entry: entry) {
+                                            Task { await vm.deleteEntry(entry) }
+                                        }
                                     }
                                 }
                             }
@@ -44,8 +46,8 @@ struct TodayView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 40)
+                .padding(.top, 20)
+                .padding(.bottom, 44)
             }
             .overlay(alignment: .bottom) {
                 if vm.isSubmitting {
@@ -63,7 +65,7 @@ struct TodayView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Text("shudo")
-                        .font(.title3.weight(.semibold))
+                        .font(.title2.weight(.bold))
                         .padding(.leading, 4)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -71,18 +73,19 @@ struct TodayView: View {
                         Button("Sign Out") { AuthSessionManager.shared.signOut() }
                     } label: {
                         Image(systemName: "ellipsis.circle")
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(Design.Color.accentPrimary)
                     }
                 }
                 ToolbarItem(placement: .bottomBar) {
                     HStack(spacing: 0) {
                         Button { shiftDay(-1) } label: {
-                            Text("<")
-                                .font(.title2.weight(.bold))
+                            Image(systemName: "chevron.left")
+                                .font(.title3.weight(.bold))
                                 .foregroundStyle(Design.Color.ink)
                                 .contentShape(Rectangle())
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .accessibilityLabel("Previous day")
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
 
@@ -93,24 +96,30 @@ struct TodayView: View {
                         } label: {
                             Label("Add Entry", systemImage: "plus.circle.fill")
                                 .labelStyle(.titleAndIcon)
+                                .font(.headline.weight(.semibold))
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(Design.Color.accentPrimary)
 
                         Spacer(minLength: 12)
 
                         Button { shiftDay(1) } label: {
-                            Text(">")
-                                .font(.title2.weight(.bold))
+                            Image(systemName: "chevron.right")
+                                .font(.title3.weight(.bold))
                                 .foregroundStyle(Design.Color.ink)
                                 .contentShape(Rectangle())
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .accessibilityLabel("Next day")
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
         }
         .sheet(isPresented: $vm.isPresentingComposer) {
             EntryComposerView { text, audioURL, image in
@@ -119,6 +128,13 @@ struct TodayView: View {
         }
         .onReceive(countdownTimer) { d in
             now = d
+            // If user is pinned to "today", auto-advance when local date rolls over.
+            if vm.isPinnedToToday {
+                let cal = Calendar(identifier: .gregorian)
+                if cal.isDate(d, inSameDayAs: vm.currentDay) == false {
+                    Task { await vm.jumpToToday() }
+                }
+            }
         }
     }
 
@@ -182,7 +198,7 @@ struct TodayView: View {
                         RoundedRectangle(cornerRadius: Design.Radius.pill, style: .continuous)
                             .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
                     )
-                    .accessibilityLabel(info.isOver ? "Over by \(info.accessible)" : "Stop eating in \(info.accessible)")
+                    .accessibilityLabel(info.isOver ? "Fasting for improved sleep" : "Stop eating in \(info.accessible)")
             }
         }
     }

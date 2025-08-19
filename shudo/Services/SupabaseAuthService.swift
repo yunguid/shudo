@@ -5,6 +5,7 @@ import Foundation
 struct SupabaseAuthService {
     enum SignUpResult {
         case confirmationSent
+        case didSignIn(Session)
     }
     struct Session: Codable, Equatable {
         let accessToken: String
@@ -16,10 +17,24 @@ struct SupabaseAuthService {
     }
 
     func signUp(email: String, password: String) async throws -> SignUpResult {
-        _ = try await makeRequest(path: "/auth/v1/signup", query: nil, body: [
+        var body: [String: Any] = [
             "email": email,
             "password": password
-        ])
+        ]
+        if let redirect = emailRedirectTo() {
+            body["options"] = ["email_redirect_to": redirect]
+        }
+        let json = try await makeRequest(path: "/auth/v1/signup", query: nil, body: body)
+        // If email confirmation is disabled, GoTrue returns a session here. Detect and sign in.
+        if let accessToken = json["access_token"] as? String {
+            let refreshToken = json["refresh_token"] as? String ?? ""
+            let tokenType = json["token_type"] as? String ?? "bearer"
+            let expiresIn = json["expires_in"] as? Int ?? 3600
+            let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
+            let userId = try await fetchUserId(accessToken: accessToken)
+            let session = Session(accessToken: accessToken, refreshToken: refreshToken, tokenType: tokenType, expiresIn: expiresIn, expiresAt: expiresAt, userId: userId)
+            return .didSignIn(session)
+        }
         // If email confirmation is enabled, no session should be established here.
         return .confirmationSent
     }
@@ -69,10 +84,23 @@ struct SupabaseAuthService {
     }
 
     func resendSignUpConfirmation(email: String) async throws {
-        _ = try await makeRequest(path: "/auth/v1/resend", query: nil, body: [
+        var body: [String: Any] = [
             "type": "signup",
             "email": email
-        ])
+        ]
+        if let redirect = emailRedirectTo() {
+            body["options"] = ["email_redirect_to": redirect]
+        }
+        _ = try await makeRequest(path: "/auth/v1/resend", query: nil, body: body)
+    }
+
+    // MARK: - Helpers (Config)
+    private func emailRedirectTo() -> String? {
+        if let url = Bundle.main.object(forInfoDictionaryKey: "AuthEmailRedirectTo") as? String,
+           url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return url
+        }
+        return nil
     }
 
     private func makeRequest(path: String, query: [URLQueryItem]?, body: [String: Any]) async throws -> [String: Any] {

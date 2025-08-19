@@ -14,7 +14,7 @@ struct AuthView: View {
         NavigationStack {
             VStack(spacing: Design.Spacing.xl) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("shudo").font(.largeTitle.weight(.bold))
+                    Text("shudo").font(.largeTitle.weight(.bold)).foregroundStyle(Design.Color.ink)
                     Text("Sign in to continue").foregroundStyle(Design.Color.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -103,6 +103,9 @@ struct AuthView: View {
             switch result {
             case .confirmationSent:
                 confirmationSent = true
+            case .didSignIn:
+                // Session is set by AuthSessionManager when didSignIn.
+                break
             }
         } catch {
             self.error = error.localizedDescription

@@ -68,9 +68,9 @@ const RESULT_SCHEMA = {
 			},
 			required: ["protein_g", "carbs_g", "fat_g", "calories_kcal"],
 		},
-		notes: { type: "string" },
+		notes: { type: ["string", "null"] },
 	},
-	required: ["items", "entry_macros"],
+	required: ["items", "entry_macros", "notes"],
 } as const;
 
 serve(async (req) => {
@@ -146,12 +146,20 @@ serve(async (req) => {
 		// Build input for Responses API (GPT-5), using image + text parts
 		const input: any[] = [
 			{
+				role: "system",
+				content: [
+					{ type: "input_text", text: [
+						"You are a nutrition extraction model.",
+						"Respond ONLY with JSON that matches the provided schema.",
+						"Every required field must be present. Do not include extra keys.",
+					].join("\n") },
+				],
+			},
+			{
 				role: "user",
 				content: [
 					{ type: "input_text", text: [
-						"You are a nutrition estimation model.",
-						"Given the context, produce EXACT JSON that matches the provided schema strictly.",
-						"All macro values in grams (g) and calories in kcal. Output JSON only.",
+						"Extract nutrition info.",
 						`User-described context:\n${raw_text || "None"}`,
 					].join("\n") },
 				],
@@ -159,10 +167,11 @@ serve(async (req) => {
 		];
 		if (image_path) {
 			const { data: signed } = await admin.storage.from("entry-images").createSignedUrl(image_path, 600);
-			if (signed?.signedUrl) (input[0].content as any[]).push({ type: "input_image", image_url: signed.signedUrl });
+			// Attach image to the user message (index 1). 'system' messages cannot include images.
+			if (signed?.signedUrl) (input[1].content as any[]).push({ type: "input_image", image_url: signed.signedUrl });
 		}
 
-		// Call Responses API with gpt-5 (lower latency)
+		// Call Responses API with gpt-5 + Structured Outputs (text.format)
 		const rr = await fetch("https://api.openai.com/v1/responses", {
 			method: "POST",
 			headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
@@ -170,30 +179,61 @@ serve(async (req) => {
 				model: "gpt-5",
 				reasoning: { effort: "medium" },
 				input,
-				response_format: {
-					type: "json_schema",
-					json_schema: { name: "NutritionExtraction", schema: RESULT_SCHEMA, strict: true }
+				text: {
+					format: {
+						type: "json_schema",
+						name: "NutritionExtraction",
+						schema: RESULT_SCHEMA,
+						strict: true
+					},
+					verbosity: "low"
 				},
-				text: { verbosity: "medium" },
-				max_output_tokens: 800
 			}),
 		});
 		if (!rr.ok) throw new Error(`openai responses ${rr.status}: ${await rr.text()}`);
-		const rrJson = await rr.json();
+			const rrJson = await rr.json();
 		console.log("raw_responses_json", JSON.stringify(rrJson));
-		// Responses API often returns text under output[n].content[0].text (string)
-		const maybeText = rrJson.output_text ?? (
-			Array.isArray(rrJson.output)
-				? rrJson.output
-					.map((x: any) => {
-						const c = Array.isArray(x?.content) ? x.content[0] : null;
-						return typeof c?.text === "string" ? c.text : null;
-					})
-					.filter(Boolean)
-					.join("\n")
-				: null
-		);
-		let payload: any = extractJsonObject(maybeText);
+		// Prefer structured parsed output if present; otherwise fall back to output_text
+		let payload: any = rrJson.output_parsed ?? null;
+		if (!payload && Array.isArray(rrJson.output)) {
+			for (const x of rrJson.output) {
+				if (Array.isArray(x?.content)) {
+					for (const c of x.content) {
+						if (c?.parsed) { payload = c.parsed; break; }
+					}
+				}
+			}
+		}
+		let maybeText = rrJson.output_text as string | null | undefined;
+		if (!payload && !maybeText && Array.isArray(rrJson.output)) {
+			maybeText = rrJson.output
+				.map((x: any) => {
+					const c = Array.isArray(x?.content) ? x.content[0] : null;
+					return typeof c?.text === "string" ? c.text : null;
+				})
+				.filter(Boolean)
+				.join("\n");
+		}
+		if (!payload) payload = extractJsonObject(maybeText);
+
+		// Fallback: if payload missing required keys, retry with JSON mode
+		const hasValid = payload && typeof payload === "object" && Array.isArray(payload.items) && payload.entry_macros;
+		if (!hasValid) {
+			const rr2 = await fetch("https://api.openai.com/v1/responses", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+				body: JSON.stringify({
+					model: "gpt-5",
+					input,
+					text: { format: { type: "json_object" }, verbosity: "low" },
+					max_output_tokens: 1600
+				})
+			});
+			if (rr2.ok) {
+				const j2 = await rr2.json();
+				payload = j2.output_parsed ?? extractJsonObject(j2.output_text);
+			}
+		}
 
 		// Debug log to function logs
 		console.log("model_output", JSON.stringify(payload));

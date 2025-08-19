@@ -20,11 +20,11 @@ struct MacroRingsView: View {
     var body: some View {
         VStack(spacing: Design.Spacing.l) {
 
-            HStack(spacing: Design.Spacing.l) {
+            HStack(spacing: Design.Spacing.xl) {
                 Dial(
                     title: "Protein",
                     short: "P",
-                    color: .pink,
+                    color: Design.Color.ringProtein,
                     value: current.proteinG,
                     goal: max(target.proteinG, 1)
                 )
@@ -32,7 +32,7 @@ struct MacroRingsView: View {
                 Dial(
                     title: "Carbs",
                     short: "C",
-                    color: .blue,
+                    color: Design.Color.ringCarb,
                     value: current.carbsG,
                     goal: max(target.carbsG, 1)
                 )
@@ -40,7 +40,7 @@ struct MacroRingsView: View {
                 Dial(
                     title: "Fat",
                     short: "F",
-                    color: .orange,
+                    color: Design.Color.ringFat,
                     value: current.fatG,
                     goal: max(target.fatG, 1)
                 )
@@ -63,9 +63,11 @@ struct MacroRingsView: View {
 
                 GaugeCapsule(
                     progress: max(0, min(calorieProgress, 1)),
-                    height: 10,
+                    height: 12,
                     gradient: LinearGradient(
-                        colors: estimatedCalories > target.caloriesKcal ? [.orange, .red] : [.green, .blue],
+                        colors: estimatedCalories > target.caloriesKcal
+                            ? [Design.Color.ringFat, Design.Color.danger]
+                            : [Design.Color.accentSecondary, Design.Color.accentPrimary],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
@@ -95,12 +97,12 @@ private struct Dial: View {
     private var overflow: Double { max(progress - 1, 0) } // up to 1 => 200%
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Canvas { context, size in
                 let w = size.width
                 let h = size.height
                 let side = min(w, h)
-                let line = max(side * 0.10, 8)
+                let line = max(side * 0.12, 10)
                 let radius = side/2 - line/2
                 let center = CGPoint(x: w/2, y: h/2)
 
@@ -109,7 +111,7 @@ private struct Dial: View {
                 track.addArc(center: center, radius: radius, startAngle: .degrees(0), endAngle: .degrees(360), clockwise: false)
                 context.stroke(
                     track,
-                    with: .color(Design.Color.rule),
+                    with: .color(Design.Color.rule.opacity(0.9)), // clearer track on dark
                     style: StrokeStyle(lineWidth: line)
                 )
 
@@ -140,15 +142,20 @@ private struct Dial: View {
                                 clockwise: false)
                     context.stroke(
                         arc2,
-                        with: .color(.red.opacity(0.85)),
+                        with: .linearGradient(
+                            Gradient(colors: [Design.Color.danger.opacity(0.9), Design.Color.ringFat.opacity(0.9)]),
+                            startPoint: .init(x: 0, y: 0),
+                            endPoint: .init(x: 1, y: 1)
+                        ),
                         style: StrokeStyle(lineWidth: line, lineCap: .round)
                     )
                 }
 
-                // Ticks (every 25%)
-                let ticks = 4
-                let tickLen = line * 0.48
+                // Ticks (every 20%) to better differentiate
+                let ticks = 5
+                let tickLen = line * 0.50
                 let tickWidth = max(line * 0.18, 1)
+                let tickAlpha: CGFloat = 0.55  // slightly dimmer than content but still visible
                 for i in 0...ticks {
                     let frac = Double(i)/Double(ticks)
                     let angle = Angle.degrees(-90 + 360*frac).radians
@@ -158,27 +165,27 @@ private struct Dial: View {
                                         y: center.y + (radius + tickLen) * sin(angle))
                     var tick = Path()
                     tick.move(to: inner); tick.addLine(to: outer)
-                    context.stroke(tick, with: .color(Design.Color.rule.opacity(0.9)), lineWidth: tickWidth)
+                    context.stroke(tick, with: .color(Design.Color.rule.opacity(tickAlpha)), lineWidth: tickWidth)
                 }
             }
             .aspectRatio(1, contentMode: .fit)
 
             VStack(spacing: 2) {
                 Text(short)
-                    .font(.caption2)
-                    .foregroundStyle(Design.Color.muted)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(color)
                 Text("\(Int(value))")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.headline.weight(.semibold))
                     .monospacedDigit()
                 Text("/ \(Int(goal))")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(Design.Color.muted)
                     .monospacedDigit()
             }
             .frame(maxWidth: .infinity, alignment: .center)
 
             Text(title)
-                .font(.caption.weight(.medium))
+                .font(.footnote.weight(.medium))
                 .foregroundStyle(Design.Color.muted)
                 .frame(maxWidth: .infinity)
         }

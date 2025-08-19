@@ -11,8 +11,12 @@ import SwiftUI
 struct shudoApp: App {
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .tint(.blue) // global accent; align with Design.Color.accent or your brand color
+            ZStack {
+                AppBackground()
+                RootView()
+            }
+            .tint(Design.Color.accentPrimary)
+            .preferredColorScheme(.dark)
         }
     }
 }
