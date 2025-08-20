@@ -389,7 +389,7 @@ struct SupabaseService {
         targetWeightKG: Double,
         activityLevel: String
     ) async throws -> MacroTarget {
-        // Very simple energy model for now: BMR ~ 24 * weight (kcal), times activity multiplier
+        // Energy model: BMR ~ 24 * weight (kcal), times activity multiplier, then a modest surplus for bulking
         let multipliers: [String: Double] = [
             "sedentary": 1.2,
             "light": 1.375,
@@ -400,14 +400,20 @@ struct SupabaseService {
         let activity = multipliers[activityLevel] ?? 1.55
         let baseBMR = 24.0 * max(30.0, weightKG) // clamp to reasonable minimum weight
         let maintenanceKcal = baseBMR * activity
+        let surplusFactor = 1.10 // ~10% surplus for lean gaining
+        let targetKcal = maintenanceKcal * surplusFactor
 
-        // Macro allocations
-        let proteinG = 1.8 * max(0, targetWeightKG)
-        let fatG = 0.8 * max(0, targetWeightKG)
-        let kcalMinusPF = max(0, maintenanceKcal - (proteinG * 4 + fatG * 9))
+        // Macro allocations (bulking-lean):
+        // - Protein: 1.8 g per lb of target weight (explicitly use lbs as requested)
+        // - Fat: ~0.4 g per lb of target weight
+        // - Carbs: remainder of calories after protein and fat
+        let targetWeightLBS = max(0, targetWeightKG) * 2.20462
+        let proteinG = 1.8 * targetWeightLBS
+        let fatG = 0.4 * targetWeightLBS
+        let kcalMinusPF = max(0, targetKcal - (proteinG * 4 + fatG * 9))
         let carbsG = max(0, kcalMinusPF / 4.0)
 
-        let target = MacroTarget(caloriesKcal: maintenanceKcal, proteinG: proteinG, carbsG: carbsG, fatG: fatG)
+        let target = MacroTarget(caloriesKcal: targetKcal, proteinG: proteinG, carbsG: carbsG, fatG: fatG)
 
         // Persist
         let jwt = try await currentJWT()
@@ -432,6 +438,48 @@ struct SupabaseService {
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
 
         return target
+    }
+
+    // MARK: - Entry detail fetch
+    struct EntryDetail {
+        let id: UUID
+        let createdAt: Date
+        let imageURL: URL?
+        let rawText: String?
+        let modelOutput: [String: Any]
+    }
+
+    func fetchEntryDetail(id: UUID, timezone: String) async throws -> EntryDetail? {
+        let jwt = try await currentJWT()
+        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "select", value: "id,created_at,raw_text,model_output,image_path"),
+            URLQueryItem(name: "id", value: "eq.\(id.uuidString)")
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "GET"
+        req.setValue(anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let obj = arr.first else { return nil }
+
+        let idStr = obj["id"] as? String ?? id.uuidString
+        let createdAtStr = obj["created_at"] as? String ?? ""
+        let createdAt = ISO8601DateFormatter().date(from: createdAtStr) ?? Date()
+        let rawText = obj["raw_text"] as? String
+        var imageURL: URL? = nil
+        if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
+
+        var model: [String: Any] = [:]
+        if let dict = obj["model_output"] as? [String: Any] {
+            model = dict
+        } else if let s = obj["model_output"] as? String, let d = s.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            model = json
+        }
+
+        return EntryDetail(id: UUID(uuidString: idStr) ?? id, createdAt: createdAt, imageURL: imageURL, rawText: rawText, modelOutput: model)
     }
 }
 

@@ -9,6 +9,7 @@ struct AuthView: View {
     @State private var error: String?
     @State private var currentNonce: String?
     @State private var confirmationSent: Bool = false
+    @ObservedObject private var session = AuthSessionManager.shared
 
     var body: some View {
         NavigationStack {
@@ -39,24 +40,41 @@ struct AuthView: View {
 
                 if confirmationSent == false {
                     HStack {
-                        Button("Sign In") { Task { await signIn() } }
+                        Button(isLoading ? "Signing In…" : "Sign In") { Task { await signIn() } }
                             .buttonStyle(.borderedProminent)
-                            .disabled(isLoading || email.isEmpty || password.isEmpty)
+                            .disabled(isLoading || !isEmailValid || password.isEmpty)
 
-                        Button("Sign Up") { Task { await signUp() } }
+                        Button(isLoading ? "Signing Up…" : "Sign Up") { Task { await signUp() } }
                             .buttonStyle(.bordered)
-                            .disabled(isLoading || email.isEmpty || password.isEmpty)
+                            .disabled(isLoading || !isEmailValid || password.isEmpty || session.session != nil)
                     }
+                    .overlay(alignment: .bottomLeading) {
+                        if session.session != nil {
+                            Text("You're already signed in.")
+                                .font(.caption)
+                                .foregroundStyle(Design.Color.muted)
+                                .padding(.top, 6)
+                        }
+                    }
+                    HStack(spacing: 16) {
+                        Button("Forgot password?") { Task { await forgotPassword() } }
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Design.Color.accentPrimary)
+                            .buttonStyle(.plain)
+                            .disabled(isLoading || !isEmailValid)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
                 } else {
                     VStack(spacing: 8) {
                         Text("Check your email to confirm your account.")
                             .font(.callout)
                             .foregroundStyle(Design.Color.muted)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        HStack {
+                        HStack(spacing: 12) {
                             Button("Resend Email") { Task { await resendConfirmation() } }
                                 .buttonStyle(.bordered)
-                                .disabled(isLoading || email.isEmpty)
+                                .disabled(isLoading || !isEmailValid)
                             Button("Back") { confirmationSent = false }
                                 .buttonStyle(.plain)
                         }
@@ -90,16 +108,30 @@ struct AuthView: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
+            .onChange(of: email) { _ in
+                if confirmationSent { confirmationSent = false; error = nil }
+            }
         }
     }
 
+    private var isEmailValid: Bool {
+        let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let at = e.firstIndex(of: "@") else { return false }
+        let domain = e[e.index(after: at)...]
+        return e.count >= 5 && domain.contains(".")
+    }
+
     private func signIn() async {
-        await authCall { try await AuthSessionManager.shared.signIn(email: email, password: password) }
+        await authCall {
+            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            try await AuthSessionManager.shared.signIn(email: e, password: password)
+        }
     }
     private func signUp() async {
         isLoading = true; error = nil
         do {
-            let result = try await AuthSessionManager.shared.signUp(email: email, password: password)
+            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let result = try await AuthSessionManager.shared.signUp(email: e, password: password)
             switch result {
             case .confirmationSent:
                 confirmationSent = true
@@ -108,13 +140,29 @@ struct AuthView: View {
                 break
             }
         } catch {
-            self.error = error.localizedDescription
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         isLoading = false
     }
     private func authCall(_ block: () async throws -> Void) async {
         isLoading = true; error = nil
-        do { try await block() } catch { self.error = error.localizedDescription }
+        do {
+            try await block()
+        } catch {
+            if let fe = error as? SupabaseAuthService.FriendlyAuthError {
+                let code = fe.supabaseErrorCode?.lowercased() ?? ""
+                let msg = fe.serverMessage?.lowercased() ?? ""
+                if code.contains("email_not_confirmed") || msg.contains("email not confirmed") {
+                    // Guide user into resend-confirmation UI
+                    confirmationSent = true
+                    self.error = nil
+                } else {
+                    self.error = fe.friendlyMessage
+                }
+            } else {
+                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
         isLoading = false
     }
 
@@ -129,7 +177,15 @@ struct AuthView: View {
 
     private func resendConfirmation() async {
         await authCall {
-            try await SupabaseAuthService().resendSignUpConfirmation(email: email)
+            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            try await SupabaseAuthService().resendSignUpConfirmation(email: e)
+        }
+    }
+
+    private func forgotPassword() async {
+        await authCall {
+            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            try await SupabaseAuthService().sendPasswordReset(email: e)
         }
     }
 

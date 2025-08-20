@@ -17,6 +17,7 @@ struct shudoApp: App {
             }
             .tint(Design.Color.accentPrimary)
             .preferredColorScheme(.dark)
+            .onOpenURL { _ in }
         }
     }
 }

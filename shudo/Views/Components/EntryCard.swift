@@ -36,10 +36,12 @@ struct EntryCard: View {
                     "Protein \(Int(entry.proteinG.rounded()))g, Carbs \(Int(entry.carbsG.rounded()))g, Fat \(Int(entry.fatG.rounded()))g, Calories \(Int(entry.caloriesKcal.rounded()))kcal"
                 )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            menuButton
         }
         .padding(pad)
         .cardStyle()
-        .overlay(alignment: .topTrailing) { menuButton }
         .dynamicTypeSize(.xSmall ... .large)
     }
 

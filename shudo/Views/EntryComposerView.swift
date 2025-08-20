@@ -35,7 +35,10 @@ struct EntryComposerView: View {
                     HStack {
                         Button(action: toggleRecord) {
                             Label(audio.isRecording ? "Stop" : "Record", systemImage: audio.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                                .labelStyle(.titleAndIcon)
                         }
+                        .tint(Design.Color.accentPrimary)
+                        .foregroundStyle(audio.isRecording ? Design.Color.danger : Design.Color.accentPrimary)
                         Spacer()
                         if let url = audio.recordedFileURL {
                             Text(url.lastPathComponent)

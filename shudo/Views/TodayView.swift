@@ -17,6 +17,7 @@ struct TodayView: View {
         ))
     }
     @State private var now = Date()
+    @State private var isShowingAccount = false
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -36,9 +37,14 @@ struct TodayView: View {
                             } else {
                                 LazyVStack(spacing: 14) {
                                     ForEach(vm.entries) { entry in
-                                        EntryCard(entry: entry) {
-                                            Task { await vm.deleteEntry(entry) }
+                                        NavigationLink {
+                                            EntryDetailView(entryId: entry.id)
+                                        } label: {
+                                            EntryCard(entry: entry) {
+                                                Task { await vm.deleteEntry(entry) }
+                                            }
                                         }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                             }
@@ -70,6 +76,7 @@ struct TodayView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button("Account") { isShowingAccount = true }
                         Button("Sign Out") { AuthSessionManager.shared.signOut() }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -106,12 +113,13 @@ struct TodayView: View {
                         Button { shiftDay(1) } label: {
                             Image(systemName: "chevron.right")
                                 .font(.title3.weight(.bold))
-                                .foregroundStyle(Design.Color.ink)
+                                .foregroundStyle(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()) ? Design.Color.muted : Design.Color.ink)
                                 .contentShape(Rectangle())
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
+                        .disabled(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()))
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -124,6 +132,11 @@ struct TodayView: View {
         .sheet(isPresented: $vm.isPresentingComposer) {
             EntryComposerView { text, audioURL, image in
                 await vm.submitEntry(text: text, audioURL: audioURL, image: image)
+            }
+        }
+        .sheet(isPresented: $isShowingAccount) {
+            NavigationStack {
+                AccountView()
             }
         }
         .onReceive(countdownTimer) { d in
@@ -235,7 +248,14 @@ struct TodayView: View {
     }
 
     private func shiftDay(_ delta: Int) {
-        guard let day = Calendar.current.date(byAdding: .day, value: delta, to: vm.currentDay) else { return }
-        Task { await vm.load(day: day) }
+        let cal = Calendar(identifier: .gregorian)
+        guard let candidate = cal.date(byAdding: .day, value: delta, to: vm.currentDay) else { return }
+        // Prevent traveling into the future
+        let today = Date()
+        if cal.compare(candidate, to: today, toGranularity: .day) == .orderedDescending { return }
+        Task {
+            vm.isPinnedToToday = cal.isDate(candidate, inSameDayAs: today)
+            await vm.load(day: candidate)
+        }
     }
 }

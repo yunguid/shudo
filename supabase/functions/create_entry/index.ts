@@ -9,6 +9,13 @@ const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
 
+// Upload constraints
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;  // 6MB
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // 25MB
+
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+const ALLOWED_AUDIO_TYPES = new Set(["audio/m4a", "audio/aac", "audio/mp4", "audio/mpeg", "audio/mp3", "audio/wav"]);
+
 function extractJsonObject(text: string | null | undefined): any {
     if (!text) return {};
     // Try fenced block first
@@ -86,6 +93,27 @@ serve(async (req) => {
 		const text = (form.get("text") as string) || "";
 		const timezone = (form.get("timezone") as string) || "UTC";
 
+		// Validate optional uploads early to avoid creating orphan entries
+		const audio = form.get("audio") as File | null;
+		if (audio) {
+			if (audio.size > MAX_AUDIO_BYTES) {
+				return new Response(JSON.stringify({ error: "Audio too large (max 25MB)" }), { status: 413, headers: { "content-type": "application/json" } });
+			}
+			if (audio.type && !ALLOWED_AUDIO_TYPES.has(audio.type)) {
+				return new Response(JSON.stringify({ error: `Unsupported audio type: ${audio.type}` }), { status: 415, headers: { "content-type": "application/json" } });
+			}
+		}
+
+		const image = form.get("image") as File | null;
+		if (image) {
+			if (image.size > MAX_IMAGE_BYTES) {
+				return new Response(JSON.stringify({ error: "Image too large (max 6MB)" }), { status: 413, headers: { "content-type": "application/json" } });
+			}
+			if (image.type && !ALLOWED_IMAGE_TYPES.has(image.type)) {
+				return new Response(JSON.stringify({ error: `Unsupported image type: ${image.type}` }), { status: 415, headers: { "content-type": "application/json" } });
+			}
+		}
+
 		// Insert a new entry in processing state
 		const { data: entry, error: e1 } = await admin
 			.from("entries")
@@ -104,7 +132,6 @@ serve(async (req) => {
 		let audio_path: string | null = null;
 
 		// Optional audio
-		const audio = form.get("audio") as File | null;
 		if (audio) {
 			const ap = `u_${user_id}/e_${entry.id}/audio_${Date.now()}.m4a`;
 			const up = await admin.storage.from("entry-audio").upload(ap, audio.stream(), {
@@ -131,7 +158,6 @@ serve(async (req) => {
 		}
 
 		// Optional image
-		const image = form.get("image") as File | null;
 		if (image) {
 			const ip = `u_${user_id}/e_${entry.id}/img_${Date.now()}.jpg`;
 			const up = await admin.storage.from("entry-images").upload(ip, image.stream(), {

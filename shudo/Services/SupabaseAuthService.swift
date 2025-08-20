@@ -3,6 +3,13 @@ import Foundation
 // AppConfig defined in AppConfig.swift
 
 struct SupabaseAuthService {
+    struct FriendlyAuthError: LocalizedError {
+        let httpStatus: Int
+        let supabaseErrorCode: String?
+        let serverMessage: String?
+        let friendlyMessage: String
+        var errorDescription: String? { friendlyMessage }
+    }
     enum SignUpResult {
         case confirmationSent
         case didSignIn(Session)
@@ -94,6 +101,16 @@ struct SupabaseAuthService {
         _ = try await makeRequest(path: "/auth/v1/resend", query: nil, body: body)
     }
 
+    func sendPasswordReset(email: String) async throws {
+        var body: [String: Any] = [
+            "email": email
+        ]
+        if let redirect = emailRedirectTo() {
+            body["redirect_to"] = redirect
+        }
+        _ = try await makeRequest(path: "/auth/v1/recover", query: nil, body: body)
+    }
+
     // MARK: - Helpers (Config)
     private func emailRedirectTo() -> String? {
         if let url = Bundle.main.object(forInfoDictionaryKey: "AuthEmailRedirectTo") as? String,
@@ -116,8 +133,12 @@ struct SupabaseAuthService {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await URLSession.shared.data(for: req)
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let str = String(data: data, encoding: .utf8) ?? ""
-            throw NSError(domain: "Auth", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: str])
+            var obj: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { obj = json }
+            let supaCode = (obj["error_code"] as? String) ?? (obj["error"] as? String)
+            let rawMsg = (obj["msg"] as? String) ?? (obj["error_description"] as? String) ?? (obj["message"] as? String)
+            let friendly = mapFriendlyMessage(httpStatus: http.statusCode, supabaseErrorCode: supaCode, serverMessage: rawMsg)
+            throw FriendlyAuthError(httpStatus: http.statusCode, supabaseErrorCode: supaCode, serverMessage: rawMsg, friendlyMessage: friendly)
         }
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         return obj
@@ -132,6 +153,29 @@ struct SupabaseAuthService {
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let id = obj["id"] as? String { return id }
         return nil
+    }
+
+    private func mapFriendlyMessage(httpStatus: Int, supabaseErrorCode: String?, serverMessage: String?) -> String {
+        let code = (supabaseErrorCode ?? "").lowercased()
+        let msg = (serverMessage ?? "").lowercased()
+        // Supabase common error codes/messages
+        if code.contains("user_already_exists") || code.contains("email_exists") || msg.contains("already registered") {
+            return "This email is already registered. Try Sign In or tap Resend Email if you didn't receive a confirmation."
+        }
+        if code.contains("email_not_confirmed") || msg.contains("email not confirmed") {
+            return "Your email isn't confirmed yet. Check your inbox for the confirmation link, or resend it below."
+        }
+        if code.contains("invalid_grant") || code.contains("invalid_credentials") || msg.contains("invalid login") {
+            return "Incorrect email or password."
+        }
+        if code.contains("user_not_found") || msg.contains("user not found") {
+            return "No account found for this email."
+        }
+        if httpStatus == 429 || msg.contains("too many requests") {
+            return "Too many attempts. Please try again in a few minutes."
+        }
+        if msg.isEmpty == false { return serverMessage! }
+        return "Something went wrong. Please try again."
     }
 }
 
