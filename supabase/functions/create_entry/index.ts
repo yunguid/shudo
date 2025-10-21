@@ -205,9 +205,13 @@ serve(async (req) => {
 				model: "gpt-5",
 				background: true,
 				input,
-				response_format: {
-					type: "json_schema",
-					json_schema: { name: "NutritionExtraction", schema: RESULT_SCHEMA, strict: true }
+				text: { 
+					format: { 
+						type: "json_schema",
+						name: "NutritionExtraction",
+						schema: RESULT_SCHEMA,
+						strict: true
+					} 
 				},
 				metadata: { entry_id: entry.id, user_id },
 			}),

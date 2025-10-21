@@ -118,19 +118,26 @@ function extractJsonObject(text: string | null | undefined): any {
 // Main handler -------------------------------------------------------
 serve(async (req) => {
 	try {
+		console.log("Webhook received, method:", req.method);
+		console.log("Headers:", Object.fromEntries(req.headers.entries()));
+		
 		if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
 		// We need the raw text for signature verification
 		const rawBody = await req.text();
+		console.log("Raw body received, length:", rawBody.length);
 		let event: any;
-		try {
-			// Prefer SDK helper per OpenAI docs; falls back to manual verify if needed
-			event = await oai.webhooks.unwrap(rawBody, Object.fromEntries(req.headers.entries()), { secret: OPENAI_WEBHOOK_SECRET });
-		} catch (err) {
-			// Allow local testing without a secret
-			const ok = await verifyStandardWebhook(rawBody, req.headers);
-			if (!ok) return new Response("Invalid signature", { status: 400 });
-			try { event = JSON.parse(rawBody); } catch { return new Response("Bad Request", { status: 400 }); }
+		
+		const ok = await verifyStandardWebhook(rawBody, req.headers);
+		console.log("Signature verification result:", ok);
+		if (!ok) {
+			console.warn("Invalid webhook signature");
+			return new Response("Unauthorized", { status: 401 });
+		}
+		try { 
+			event = JSON.parse(rawBody); 
+		} catch { 
+			return new Response("Bad Request", { status: 400 }); 
 		}
 
 		// We expect response.completed events; obtain the response id robustly
@@ -250,5 +257,4 @@ serve(async (req) => {
 		return new Response(null, { status: 500 });
 	}
 });
-
 
