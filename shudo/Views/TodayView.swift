@@ -55,19 +55,7 @@ struct TodayView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 44)
             }
-            .overlay(alignment: .bottom) {
-                if vm.isSubmitting {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Analyzing…")
-                            .font(.subheadline)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(.bottom, 16)
-                }
-            }
+            .overlay(alignment: .bottom) { EmptyView() }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Text("shudo")

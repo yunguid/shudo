@@ -10,6 +10,8 @@ struct AuthView: View {
     @State private var currentNonce: String?
     @State private var confirmationSent: Bool = false
     @ObservedObject private var session = AuthSessionManager.shared
+    private enum CurrentAction { case signIn, signUp }
+    @State private var currentAction: CurrentAction? = nil
 
     var body: some View {
         NavigationStack {
@@ -40,11 +42,11 @@ struct AuthView: View {
 
                 if confirmationSent == false {
                     HStack {
-                        Button(isLoading ? "Signing In…" : "Sign In") { Task { await signIn() } }
+                        Button(currentAction == .signIn ? "Signing In…" : "Sign In") { Task { await signIn() } }
                             .buttonStyle(.borderedProminent)
                             .disabled(isLoading || !isEmailValid || password.isEmpty)
 
-                        Button(isLoading ? "Signing Up…" : "Sign Up") { Task { await signUp() } }
+                        Button(currentAction == .signUp ? "Signing Up…" : "Sign Up") { Task { await signUp() } }
                             .buttonStyle(.bordered)
                             .disabled(isLoading || !isEmailValid || password.isEmpty || session.session != nil)
                     }
@@ -110,6 +112,7 @@ struct AuthView: View {
             .padding(20)
             .onChange(of: email) { _ in
                 if confirmationSent { confirmationSent = false; error = nil }
+                if currentAction != nil { currentAction = nil }
             }
         }
     }
@@ -122,12 +125,15 @@ struct AuthView: View {
     }
 
     private func signIn() async {
+        currentAction = .signIn
         await authCall {
             let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             try await AuthSessionManager.shared.signIn(email: e, password: password)
         }
+        currentAction = nil
     }
     private func signUp() async {
+        currentAction = .signUp
         isLoading = true; error = nil
         do {
             let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -143,6 +149,7 @@ struct AuthView: View {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         isLoading = false
+        currentAction = nil
     }
     private func authCall(_ block: () async throws -> Void) async {
         isLoading = true; error = nil

@@ -3,6 +3,12 @@ import SwiftUI
 struct EntryCard: View {
     let entry: Entry
     var onDelete: (() -> Void)? = nil
+    var dailyFatTarget: Double? = nil
+    var currentTotalFat: Double = 0
+
+    private var isProcessing: Bool {
+        entry.proteinG == 0 && entry.carbsG == 0 && entry.fatG == 0 && entry.caloriesKcal == 0
+    }
 
     @ScaledMetric(relativeTo: .body) private var thumb: CGFloat = 60
     @ScaledMetric(relativeTo: .body) private var pad: CGFloat = 12
@@ -11,26 +17,33 @@ struct EntryCard: View {
             thumbnail
 
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(spacing: 6) {
                     Text(entry.summary)
                         .font(.system(size: 12, weight: .regular, design: .rounded))
                         .foregroundStyle(Design.Color.ink)
                         .lineLimit(2)
                         .truncationMode(.tail)
                         .textSelection(.disabled)
-                        .layoutPriority(1)
+                    if isProcessing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .scaleEffect(0.7)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 12) {
-                    macro("P", entry.proteinG, unit: "g")
-                    macro("C", entry.carbsG, unit: "g")
-                    macro("F", entry.fatG, unit: "g")
-                    Spacer(minLength: 0)
-                    macro(nil, entry.caloriesKcal, unit: "kcal")
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 12) {
+                        macro("P", entry.proteinG, unit: "g")
+                        macro("C", entry.carbsG, unit: "g")
+                        macro("F", entry.fatG, unit: "g")
+                    }
+                    
+                    Text("\(Int(entry.caloriesKcal.rounded())) kcal")
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(Design.Color.ink)
+                        .monospacedDigit()
                 }
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(Design.Color.ink)
-                .monospacedDigit()
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
                     "Protein \(Int(entry.proteinG.rounded()))g, Carbs \(Int(entry.carbsG.rounded()))g, Fat \(Int(entry.fatG.rounded()))g, Calories \(Int(entry.caloriesKcal.rounded()))kcal"
@@ -68,7 +81,7 @@ struct EntryCard: View {
                     Image(systemName: "ellipsis")
                         .imageScale(.medium)
                         .foregroundStyle(Design.Color.muted)
-                        .padding(8)
+                        .frame(width: 32, height: 32)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
@@ -76,7 +89,6 @@ struct EntryCard: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .padding(6)
                 .accessibilityLabel("More actions")
             }
         }
