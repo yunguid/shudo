@@ -18,6 +18,7 @@ struct TodayView: View {
     }
     @State private var now = Date()
     @State private var isShowingAccount = false
+    @State private var showErrorAlert = false
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -118,8 +119,8 @@ struct TodayView: View {
             .background(Color.clear)
         }
         .sheet(isPresented: $vm.isPresentingComposer) {
-            EntryComposerView { text, audioURL, image in
-                await vm.submitEntry(text: text, audioURL: audioURL, image: image)
+            EntryComposerView { text, audioData, image in
+                await vm.submitEntry(text: text, audioData: audioData, image: image)
             }
         }
         .sheet(isPresented: $isShowingAccount) {
@@ -135,6 +136,36 @@ struct TodayView: View {
                 if cal.isDate(d, inSameDayAs: vm.currentDay) == false {
                     Task { await vm.jumpToToday() }
                 }
+            }
+        }
+        .overlay {
+            if vm.isSubmitting {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .controlSize(.large)
+                            .tint(.white)
+                        Text("Processing entry…")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(24)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Design.Radius.l))
+                }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.2), value: vm.isSubmitting)
+            }
+        }
+        .alert("Error", isPresented: $showErrorAlert, presenting: vm.errorMessage) { _ in
+            Button("OK") { vm.errorMessage = nil }
+        } message: { error in
+            Text(error)
+        }
+        .onChange(of: vm.errorMessage) { _, newValue in
+            if newValue != nil {
+                showErrorAlert = true
             }
         }
     }
@@ -166,9 +197,6 @@ struct TodayView: View {
                     .frame(height: 220)
             }
 
-            if let err = vm.errorMessage {
-                Text(err).font(.caption).foregroundStyle(.red)
-            }
         }
     }
 

@@ -12,7 +12,7 @@ public struct APIService {
         self.sessionJWTProvider = sessionJWTProvider
     }
 
-    public func createEntry(text: String?, audioURL: URL?, image: UIImage?, timezone: String) async throws -> UUID {
+    public func createEntry(text: String?, audioData: Data?, image: UIImage?, timezone: String) async throws -> UUID {
         var req = URLRequest(url: supabaseUrl.appendingPathComponent("/functions/v1/create_entry"))
         req.httpMethod = "POST"
         let jwt = try await sessionJWTProvider()
@@ -21,7 +21,7 @@ public struct APIService {
 
         let boundary = UUID().uuidString
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try makeMultipart(boundary: boundary, text: text, audioURL: audioURL, image: image, timezone: timezone)
+        req.httpBody = try makeMultipart(boundary: boundary, text: text, audioData: audioData, image: image, timezone: timezone)
 
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
@@ -35,7 +35,7 @@ public struct APIService {
         throw URLError(.cannotParseResponse)
     }
 
-    private func makeMultipart(boundary: String, text: String?, audioURL: URL?, image: UIImage?, timezone: String) throws -> Data {
+    private func makeMultipart(boundary: String, text: String?, audioData: Data?, image: UIImage?, timezone: String) throws -> Data {
         var data = Data()
         func part(_ name: String, _ value: String) {
             data.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -44,7 +44,7 @@ public struct APIService {
         }
         part("timezone", timezone)
         if let t = text, !t.isEmpty { part("text", t) }
-        if let url = audioURL, let raw = try? Data(contentsOf: url) {
+        if let raw = audioData {
             data.append("--\(boundary)\r\n".data(using: .utf8)!)
             data.append("Content-Disposition: form-data; name=\"audio\"; filename=\"voice.m4a\"\r\n".data(using: .utf8)!)
             data.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)

@@ -18,6 +18,49 @@ struct SupabaseService {
 
     func currentJWT() async throws -> String { try await AuthSessionManager.shared.getAccessToken() }
     func currentUserId() throws -> String { guard let id = AuthSessionManager.shared.userId else { throw NSError(domain: "Auth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Missing user id"]) }; return id }
+    
+    // MARK: - Shared Helpers
+    
+    private static func toDouble(_ any: Any?) -> Double {
+        if let d = any as? Double { return d }
+        if let i = any as? Int { return Double(i) }
+        if let s = any as? String { return Double(s) ?? 0 }
+        return 0
+    }
+    
+    private static func parseJSONIfString(_ any: Any?) -> [String: Any]? {
+        if let dict = any as? [String: Any] { return dict }
+        if let s = any as? String, let d = s.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { return obj }
+        return nil
+    }
+    
+    private static func summarize(from modelOutput: Any?, rawText: String?) -> String {
+        if let mo = parseJSONIfString(modelOutput) {
+            let parsed = (mo["parsed"] as? [String: Any]) ?? mo
+            if let name = parsed["food_name"] as? String, !name.isEmpty { return name }
+            if let name = parsed["name"] as? String, !name.isEmpty { return name }
+            if let item = parsed["item"] as? [String: Any], let n = item["name"] as? String, !n.isEmpty { return n }
+            if let items = parsed["items"] as? [[String: Any]], !items.isEmpty {
+                let names = items.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
+                if !names.isEmpty {
+                    if names.count <= 2 { return names.joined(separator: ", ") }
+                    return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
+                }
+            }
+            if let raw = parsed["raw_text"] as? String, let nested = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
+                if let nestedItems = nested["items"] as? [[String: Any]] {
+                    let names: [String] = nestedItems.compactMap { $0["name"] as? String }
+                    if !names.isEmpty {
+                        if names.count <= 2 { return names.joined(separator: ", ") }
+                        return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
+                    }
+                }
+                if let n = nested["food_name"] as? String, !n.isEmpty { return n }
+            }
+        }
+        return rawText?.components(separatedBy: "\n").first ?? "Entry"
+    }
 
     func ensureProfileDefaults() async throws -> Profile {
         let jwt = try await currentJWT()
@@ -68,51 +111,35 @@ struct SupabaseService {
         req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
-        if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let obj = arr.first {
-            func toDouble(_ any: Any?) -> Double {
-                if let d = any as? Double { return d }
-                if let i = any as? Int { return Double(i) }
-                if let s = any as? String { return Double(s) ?? 0 }
-                return 0
-            }
-            func parseJSONIfString(_ any: Any?) -> [String: Any]? {
-                if let dict = any as? [String: Any] { return dict }
-                if let s = any as? String, let d = s.data(using: .utf8),
-                   let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { return obj }
-                return nil
-            }
-            let tz = obj["timezone"] as? String ?? TimeZone.autoupdatingCurrent.identifier
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let obj = arr.first else { return nil }
+        
+        let tz = obj["timezone"] as? String ?? TimeZone.autoupdatingCurrent.identifier
+        let targetDict = Self.parseJSONIfString(obj["daily_macro_target"]) ?? [:]
 
-            var targetDict: [String: Any] = [:]
-            if let d = parseJSONIfString(obj["daily_macro_target"]) { targetDict = d }
+        let units = (obj["units"] as? String) ?? "imperial"
+        let activity = obj["activity_level"] as? String
+        let cutoffRaw = obj["cutoff_time_local"] as? String
+        let cutoff = cutoffRaw.flatMap { String($0.prefix(5)) }
+        let heightCM = Self.toDouble(obj["height_cm"]) == 0 ? nil : Self.toDouble(obj["height_cm"])
+        let weightKG = Self.toDouble(obj["weight_kg"]) == 0 ? nil : Self.toDouble(obj["weight_kg"])
+        let targetWeightKG = Self.toDouble(obj["target_weight_kg"]) == 0 ? nil : Self.toDouble(obj["target_weight_kg"])
 
-            let units = (obj["units"] as? String) ?? "imperial"
-            let activity = obj["activity_level"] as? String
-            let cutoffRaw = obj["cutoff_time_local"] as? String
-            let cutoff = cutoffRaw.flatMap { String($0.prefix(5)) }
-            let heightCM = toDouble(obj["height_cm"]) == 0 ? nil : toDouble(obj["height_cm"]) 
-            let weightKG = toDouble(obj["weight_kg"]) == 0 ? nil : toDouble(obj["weight_kg"]) 
-            let targetWeightKG = toDouble(obj["target_weight_kg"]) == 0 ? nil : toDouble(obj["target_weight_kg"]) 
-
-            let profile = Profile(
-                userId: userId,
-                timezone: tz,
-                dailyMacroTarget: MacroTarget(
-                    caloriesKcal: toDouble(targetDict["calories_kcal"]) != 0 ? toDouble(targetDict["calories_kcal"]) : 2800,
-                    proteinG: toDouble(targetDict["protein_g"]) != 0 ? toDouble(targetDict["protein_g"]) : 180,
-                    carbsG: toDouble(targetDict["carbs_g"]) != 0 ? toDouble(targetDict["carbs_g"]) : 360,
-                    fatG: toDouble(targetDict["fat_g"]) != 0 ? toDouble(targetDict["fat_g"]) : 72
-                ),
-                units: units,
-                heightCM: heightCM,
-                weightKG: weightKG,
-                targetWeightKG: targetWeightKG,
-                activityLevel: activity,
-                cutoffTimeLocal: cutoff
-            )
-            return profile
-        }
-        return nil
+        return Profile(
+            userId: userId,
+            timezone: tz,
+            dailyMacroTarget: MacroTarget(
+                caloriesKcal: Self.toDouble(targetDict["calories_kcal"]) != 0 ? Self.toDouble(targetDict["calories_kcal"]) : 2800,
+                proteinG: Self.toDouble(targetDict["protein_g"]) != 0 ? Self.toDouble(targetDict["protein_g"]) : 180,
+                carbsG: Self.toDouble(targetDict["carbs_g"]) != 0 ? Self.toDouble(targetDict["carbs_g"]) : 360,
+                fatG: Self.toDouble(targetDict["fat_g"]) != 0 ? Self.toDouble(targetDict["fat_g"]) : 72
+            ),
+            units: units,
+            heightCM: heightCM,
+            weightKG: weightKG,
+            targetWeightKG: targetWeightKG,
+            activityLevel: activity,
+            cutoffTimeLocal: cutoff
+        )
     }
 
     func fetchTodayStatus() async throws -> (MacroTarget, DayTotals) {
@@ -132,91 +159,24 @@ struct SupabaseService {
         guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let row = arr.first else {
             return (MacroTarget(caloriesKcal: 2800, proteinG: 180, carbsG: 360, fatG: 72), .empty)
         }
-        func toDouble(_ any: Any?) -> Double { if let d = any as? Double { return d }; if let s = any as? String { return Double(s) ?? 0 }; return 0 }
         let target = MacroTarget(
-            caloriesKcal: toDouble(row["target_calories_kcal"]) != 0 ? toDouble(row["target_calories_kcal"]) : 2800,
-            proteinG: toDouble(row["target_protein_g"]) != 0 ? toDouble(row["target_protein_g"]) : 180,
-            carbsG: toDouble(row["target_carbs_g"]) != 0 ? toDouble(row["target_carbs_g"]) : 360,
-            fatG: toDouble(row["target_fat_g"]) != 0 ? toDouble(row["target_fat_g"]) : 72
+            caloriesKcal: Self.toDouble(row["target_calories_kcal"]) != 0 ? Self.toDouble(row["target_calories_kcal"]) : 2800,
+            proteinG: Self.toDouble(row["target_protein_g"]) != 0 ? Self.toDouble(row["target_protein_g"]) : 180,
+            carbsG: Self.toDouble(row["target_carbs_g"]) != 0 ? Self.toDouble(row["target_carbs_g"]) : 360,
+            fatG: Self.toDouble(row["target_fat_g"]) != 0 ? Self.toDouble(row["target_fat_g"]) : 72
         )
         let totals = DayTotals(
-            proteinG: toDouble(row["consumed_protein_g"]),
-            carbsG: toDouble(row["consumed_carbs_g"]),
-            fatG: toDouble(row["consumed_fat_g"]),
-            caloriesKcal: toDouble(row["consumed_calories_kcal"]),
+            proteinG: Self.toDouble(row["consumed_protein_g"]),
+            carbsG: Self.toDouble(row["consumed_carbs_g"]),
+            fatG: Self.toDouble(row["consumed_fat_g"]),
+            caloriesKcal: Self.toDouble(row["consumed_calories_kcal"]),
             entryCount: 0
         )
         return (target, totals)
     }
 
     func fetchEntriesForToday(timezone: String) async throws -> [Entry] {
-        let jwt = try await currentJWT()
-        let userId = try currentUserId()
-        let localDay = localDayString(for: Date(), timezone: timezone)
-        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [
-            URLQueryItem(name: "select", value: "id,created_at,raw_text,model_output,protein_g,carbs_g,fat_g,calories_kcal,image_path"),
-            URLQueryItem(name: "user_id", value: "eq.\(userId)"),
-            URLQueryItem(name: "local_day", value: "eq.\(localDay)"),
-            URLQueryItem(name: "status", value: "eq.complete"),
-            URLQueryItem(name: "order", value: "created_at.desc")
-        ]
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = "GET"
-        req.setValue(anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return [] }
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-        func toDouble(_ any: Any?) -> Double { if let d = any as? Double { return d }; if let s = any as? String { return Double(s) ?? 0 }; return 0 }
-        func parseJSONIfString(_ any: Any?) -> Any? {
-            if let dict = any as? [String: Any] { return dict }
-            if let s = any as? String, let data = s.data(using: .utf8),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { return obj }
-            return nil
-        }
-        func summarize(from modelOutput: Any?, rawText: String?) -> String {
-            if let mo = parseJSONIfString(modelOutput) as? [String: Any] {
-                let parsed = (mo["parsed"] as? [String: Any]) ?? mo
-                if let name = parsed["food_name"] as? String, !name.isEmpty { return name }
-                if let name = parsed["name"] as? String, !name.isEmpty { return name }
-                if let item = parsed["item"] as? [String: Any], let n = item["name"] as? String, !n.isEmpty { return n }
-                if let items = parsed["items"] as? [[String: Any]], !items.isEmpty {
-                    let names = items.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
-                    if names.isEmpty == false {
-                        if names.count <= 2 { return names.joined(separator: ", ") }
-                        return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
-                    }
-                }
-                if let raw = parsed["raw_text"] as? String, let nested = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
-                    if let nestedItems = nested["items"] as? [[String: Any]] {
-                        let names: [String] = nestedItems.compactMap { $0["name"] as? String }
-                        if !names.isEmpty {
-                            if names.count <= 2 { return names.joined(separator: ", ") }
-                            return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
-                        }
-                    }
-                    if let n = nested["food_name"] as? String, !n.isEmpty { return n }
-                }
-            }
-            return (rawText?.components(separatedBy: "\n").first ?? "Entry")
-        }
-
-        var results: [Entry] = []
-        for obj in arr {
-            guard let idStr = obj["id"] as? String, let id = UUID(uuidString: idStr) else { continue }
-            let createdAtStr = obj["created_at"] as? String ?? ""
-            let createdAt = ISO8601DateFormatter().date(from: createdAtStr) ?? Date()
-            let summary = summarize(from: obj["model_output"], rawText: obj["raw_text"] as? String)
-            let protein = toDouble(obj["protein_g"]) 
-            let carbs = toDouble(obj["carbs_g"]) 
-            let fat = toDouble(obj["fat_g"]) 
-            let kcal = toDouble(obj["calories_kcal"]) 
-            var imageURL: URL? = nil
-            if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
-            results.append(Entry(id: id, createdAt: createdAt, summary: summary, imageURL: imageURL, proteinG: protein, carbsG: carbs, fatG: fat, caloriesKcal: kcal))
-        }
-        return results
+        try await fetchEntries(for: Date(), timezone: timezone)
     }
 
     func localDayString(for date: Date, timezone: String) -> String {
@@ -251,50 +211,16 @@ struct SupabaseService {
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return [] }
         guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
 
-        func toDouble(_ any: Any?) -> Double { if let d = any as? Double { return d }; if let s = any as? String { return Double(s) ?? 0 }; return 0 }
-        func parseJSONIfString(_ any: Any?) -> Any? {
-            if let dict = any as? [String: Any] { return dict }
-            if let s = any as? String, let data = s.data(using: .utf8),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { return obj }
-            return nil
-        }
-        func summarize(from modelOutput: Any?, rawText: String?) -> String {
-            if let mo = parseJSONIfString(modelOutput) as? [String: Any] {
-                let parsed = (mo["parsed"] as? [String: Any]) ?? mo
-                if let name = parsed["food_name"] as? String, !name.isEmpty { return name }
-                if let name = parsed["name"] as? String, !name.isEmpty { return name }
-                if let item = parsed["item"] as? [String: Any], let n = item["name"] as? String, !n.isEmpty { return n }
-                if let items = parsed["items"] as? [[String: Any]], !items.isEmpty {
-                    let names = items.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
-                    if names.isEmpty == false {
-                        if names.count <= 2 { return names.joined(separator: ", ") }
-                        return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
-                    }
-                }
-                if let raw = parsed["raw_text"] as? String, let nested = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
-                    if let nestedItems = nested["items"] as? [[String: Any]] {
-                        let names: [String] = nestedItems.compactMap { $0["name"] as? String }
-                        if !names.isEmpty {
-                            if names.count <= 2 { return names.joined(separator: ", ") }
-                            return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
-                        }
-                    }
-                    if let n = nested["food_name"] as? String, !n.isEmpty { return n }
-                }
-            }
-            return (rawText?.components(separatedBy: "\n").first ?? "Entry")
-        }
-
         var results: [Entry] = []
         for obj in arr {
             guard let idStr = obj["id"] as? String, let id = UUID(uuidString: idStr) else { continue }
             let createdAtStr = obj["created_at"] as? String ?? ""
             let createdAt = ISO8601DateFormatter().date(from: createdAtStr) ?? Date()
-            let summary = summarize(from: obj["model_output"], rawText: obj["raw_text"] as? String)
-            let protein = toDouble(obj["protein_g"]) 
-            let carbs = toDouble(obj["carbs_g"]) 
-            let fat = toDouble(obj["fat_g"]) 
-            let kcal = toDouble(obj["calories_kcal"]) 
+            let summary = Self.summarize(from: obj["model_output"], rawText: obj["raw_text"] as? String)
+            let protein = Self.toDouble(obj["protein_g"])
+            let carbs = Self.toDouble(obj["carbs_g"])
+            let fat = Self.toDouble(obj["fat_g"])
+            let kcal = Self.toDouble(obj["calories_kcal"])
             var imageURL: URL? = nil
             if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
             results.append(Entry(id: id, createdAt: createdAt, summary: summary, imageURL: imageURL, proteinG: protein, carbsG: carbs, fatG: fat, caloriesKcal: kcal))

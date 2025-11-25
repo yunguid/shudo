@@ -14,20 +14,21 @@ final class TodayViewModel: ObservableObject {
     @Published var isPinnedToToday: Bool = true
 
     let api: APIService
-    let sb = SupabaseService()
+    let supabase: SupabaseService
 
-    init(profile: Profile, api: APIService) {
+    init(profile: Profile, api: APIService, supabase: SupabaseService = SupabaseService()) {
         self.api = api
+        self.supabase = supabase
         self.profile = profile
         Task { await loadFor(profile: profile) }
     }
 
     func loadFor(profile: Profile) async {
         do {
-            let (target, totals) = try await sb.fetchTodayStatus()
+            let (target, totals) = try await supabase.fetchTodayStatus()
             self.profile?.dailyMacroTarget = target
             self.todayTotals = totals
-            let todayEntries = try await sb.fetchEntriesForToday(timezone: profile.timezone)
+            let todayEntries = try await supabase.fetchEntriesForToday(timezone: profile.timezone)
             self.entries = todayEntries
             self.currentDay = Date()
             self.isPinnedToToday = true
@@ -40,7 +41,7 @@ final class TodayViewModel: ObservableObject {
         guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
         do {
             currentDay = day
-            let items = try await sb.fetchEntries(for: day, timezone: tz)
+            let items = try await supabase.fetchEntries(for: day, timezone: tz)
             let totals = items.reduce(DayTotals.empty) { acc, e in
                 DayTotals(
                     proteinG: acc.proteinG + e.proteinG,
@@ -50,12 +51,10 @@ final class TodayViewModel: ObservableObject {
                     entryCount: acc.entryCount + 1
                 )
             }
-            await MainActor.run {
-                self.entries = items
-                self.todayTotals = totals
-            }
+            self.entries = items
+            self.todayTotals = totals
         } catch {
-            await MainActor.run { self.entries = [] }
+            self.entries = []
         }
     }
 
@@ -79,12 +78,12 @@ final class TodayViewModel: ObservableObject {
             entryCount: max(0, todayTotals.entryCount - 1)
         )
         do {
-            let jwt = try await sb.currentJWT()
-            var comps = URLComponents(url: sb.supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+            let jwt = try await supabase.currentJWT()
+            var comps = URLComponents(url: supabase.supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
             comps.queryItems = [URLQueryItem(name: "id", value: "eq.\(entry.id.uuidString)")]
             var req = URLRequest(url: comps.url!)
             req.httpMethod = "DELETE"
-            req.setValue(sb.anonKey, forHTTPHeaderField: "apikey")
+            req.setValue(supabase.anonKey, forHTTPHeaderField: "apikey")
             req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
             let (_, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
@@ -96,11 +95,11 @@ final class TodayViewModel: ObservableObject {
         }
     }
 
-    func submitEntry(text: String?, audioURL: URL?, image: UIImage?) async {
+    func submitEntry(text: String?, audioData: Data?, image: UIImage?) async {
         guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
         isSubmitting = true; errorMessage = nil
         do {
-            let newId = try await api.createEntry(text: text, audioURL: audioURL, image: image, timezone: tz)
+            let newId = try await api.createEntry(text: text, audioData: audioData, image: image, timezone: tz)
             submittingEntryId = newId
             // Optimistically add a placeholder pending entry to the list
             let placeholder = Entry(id: newId, createdAt: Date(), summary: text?.components(separatedBy: "\n").first ?? "Processing…", imageURL: nil, proteinG: 0, carbsG: 0, fatG: 0, caloriesKcal: 0)
@@ -115,30 +114,72 @@ final class TodayViewModel: ObservableObject {
     }
 
     private func pollUntilComplete(entryId: UUID, timeoutSeconds: Int) async throws {
-        let jwt = try await sb.currentJWT()
-        var comps = URLComponents(url: sb.supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+        var comps = URLComponents(url: supabase.supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
             URLQueryItem(name: "select", value: "id,status,protein_g,carbs_g,fat_g,calories_kcal,raw_text"),
             URLQueryItem(name: "id", value: "eq.\(entryId.uuidString)")
         ]
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
+        var pollInterval: UInt64 = 600_000_000 // Start at 0.6s
+        let maxInterval: UInt64 = 3_000_000_000 // Max 3s
+        var consecutiveErrors = 0
+        
         while Date() < deadline {
+            // Refresh JWT each iteration to prevent expiration during long polls
+            let jwt = try await supabase.currentJWT()
+            
             var req = URLRequest(url: comps.url!)
             req.httpMethod = "GET"
-            req.setValue(sb.anonKey, forHTTPHeaderField: "apikey")
+            req.setValue(supabase.anonKey, forHTTPHeaderField: "apikey")
             req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+            
             do {
                 let (data, resp) = try await URLSession.shared.data(for: req)
-                if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                   let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                   let obj = arr.first, let status = obj["status"] as? String {
-                    if status == "complete" || status == "error" {
-                        return
-                    }
+                consecutiveErrors = 0 // Reset on success
+                
+                guard let http = resp as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
                 }
-            } catch { }
-            try? await Task.sleep(nanoseconds: 600_000_000) // 0.6s
+                
+                guard (200..<300).contains(http.statusCode) else {
+                    throw NSError(domain: "API", code: http.statusCode, userInfo: [
+                        NSLocalizedDescriptionKey: "Server returned \(http.statusCode)"
+                    ])
+                }
+                
+                guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                      let obj = arr.first,
+                      let status = obj["status"] as? String else {
+                    throw URLError(.cannotParseResponse)
+                }
+                
+                switch status {
+                case "complete":
+                    return
+                case "error":
+                    throw NSError(domain: "Entry", code: -1, userInfo: [
+                        NSLocalizedDescriptionKey: "Failed to process entry. Please try again."
+                    ])
+                default:
+                    break // Still processing, continue polling
+                }
+            } catch {
+                consecutiveErrors += 1
+                // Allow a few transient failures before giving up
+                if consecutiveErrors >= 5 {
+                    throw error
+                }
+            }
+            
+            try await Task.sleep(nanoseconds: pollInterval)
+            // Exponential backoff: increase interval by 50% each iteration, up to max
+            pollInterval = min(pollInterval + pollInterval / 2, maxInterval)
         }
+        
+        // Timeout reached without completion
+        throw NSError(domain: "Entry", code: -2, userInfo: [
+            NSLocalizedDescriptionKey: "Entry processing timed out. It may still complete in the background."
+        ])
     }
 }
 

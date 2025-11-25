@@ -8,8 +8,13 @@ struct EntryComposerView: View {
     @State private var text: String = ""
     @State private var pickedImage: PhotosPickerItem?
     @State private var uiImage: UIImage?
+    @State private var isSubmitting = false
 
-    let onSubmit: (String?, URL?, UIImage?) async -> Void
+    let onSubmit: (String?, Data?, UIImage?) async -> Void
+
+    private var canSubmit: Bool {
+        !isSubmitting && (uiImage != nil || !text.isEmpty || audio.recordedFileURL != nil)
+    }
 
     var body: some View {
         NavigationStack {
@@ -39,6 +44,7 @@ struct EntryComposerView: View {
                         }
                         .tint(Design.Color.accentPrimary)
                         .foregroundStyle(audio.isRecording ? Design.Color.danger : Design.Color.accentPrimary)
+                        .disabled(isSubmitting)
                         Spacer()
                         if let url = audio.recordedFileURL {
                             Text(url.lastPathComponent)
@@ -51,21 +57,26 @@ struct EntryComposerView: View {
             }
             .navigationTitle("New Entry")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .disabled(isSubmitting)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        let t = text.isEmpty ? nil : text
-                        let url = audio.recordedFileURL
-                        let img = uiImage
-                        dismiss()
-                        Task { await onSubmit(t, url, img) }
+                        submit()
                     } label: {
-                        HStack(spacing: 6) { Image(systemName: "paperplane.fill"); Text("Submit") }
+                        if isSubmitting {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            HStack(spacing: 6) { Image(systemName: "paperplane.fill"); Text("Submit") }
+                        }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(uiImage == nil && (text.isEmpty && audio.recordedFileURL == nil))
+                    .disabled(!canSubmit)
                 }
             }
+            .interactiveDismissDisabled(isSubmitting)
         }
         .onChange(of: pickedImage) { _, newValue in
             Task { @MainActor in
@@ -80,6 +91,23 @@ struct EntryComposerView: View {
 
     private func toggleRecord() {
         if audio.isRecording { audio.stopRecording() } else { audio.startRecording() }
+    }
+
+    private func submit() {
+        // Capture all data BEFORE any async work to prevent race conditions
+        let t = text.isEmpty ? nil : text
+        let img = uiImage
+        // Read audio file into Data immediately to prevent temp file cleanup race
+        let audioData: Data? = audio.recordedFileURL.flatMap { try? Data(contentsOf: $0) }
+        
+        isSubmitting = true
+        Task {
+            await onSubmit(t, audioData, img)
+            await MainActor.run {
+                isSubmitting = false
+                dismiss()
+            }
+        }
     }
 }
 
