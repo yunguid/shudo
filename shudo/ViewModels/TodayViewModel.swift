@@ -8,8 +8,8 @@ final class TodayViewModel: ObservableObject {
     @Published var entries: [Entry] = []
     @Published var currentDay: Date = Date()
     @Published var isPresentingComposer = false
-    @Published var isSubmitting = false
-    @Published var submittingEntryId: UUID?
+    @Published var isShowingVoiceRecorder = false
+    @Published var processingEntryIds: Set<UUID> = []
     @Published var errorMessage: String?
     @Published var isPinnedToToday: Bool = true
 
@@ -21,6 +21,10 @@ final class TodayViewModel: ObservableObject {
         self.supabase = supabase
         self.profile = profile
         Task { await loadFor(profile: profile) }
+    }
+    
+    var hasProcessingEntries: Bool {
+        !processingEntryIds.isEmpty
     }
 
     func loadFor(profile: Profile) async {
@@ -95,22 +99,68 @@ final class TodayViewModel: ObservableObject {
         }
     }
 
+    /// Submit voice-only entry
+    func submitVoiceEntry(audioData: Data) async {
+        await submitEntry(text: nil, audioData: audioData, image: nil)
+    }
+    
+    /// Submit text/photo entry (no audio)
+    func submitTextEntry(text: String?, image: UIImage?) async {
+        await submitEntry(text: text, audioData: nil, image: image)
+    }
+    
+    /// Core submission - adds placeholder immediately, polls in background
     func submitEntry(text: String?, audioData: Data?, image: UIImage?) async {
         guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
-        isSubmitting = true; errorMessage = nil
+        errorMessage = nil
+        
         do {
             let newId = try await api.createEntry(text: text, audioData: audioData, image: image, timezone: tz)
-            submittingEntryId = newId
-            // Optimistically add a placeholder pending entry to the list
-            let placeholder = Entry(id: newId, createdAt: Date(), summary: text?.components(separatedBy: "\n").first ?? "Processing…", imageURL: nil, proteinG: 0, carbsG: 0, fatG: 0, caloriesKcal: 0)
+            
+            // Add placeholder and mark as processing
+            let summaryText: String
+            if let t = text, !t.isEmpty {
+                summaryText = t.components(separatedBy: "\n").first ?? "Processing…"
+            } else if audioData != nil {
+                summaryText = "Voice note"
+            } else {
+                summaryText = "Processing…"
+            }
+            
+            let placeholder = Entry(
+                id: newId,
+                createdAt: Date(),
+                summary: summaryText,
+                imageURL: nil,
+                proteinG: 0,
+                carbsG: 0,
+                fatG: 0,
+                caloriesKcal: 0
+            )
             entries.insert(placeholder, at: 0)
-            // Poll for completion for up to ~20 seconds
-            try await pollUntilComplete(entryId: newId, timeoutSeconds: 120)
-            if let p = profile { await loadFor(profile: p) }
+            processingEntryIds.insert(newId)
+            
+            // Poll in background - don't block the UI
+            Task {
+                await pollAndRefresh(entryId: newId, timeoutSeconds: 120)
+            }
         } catch {
             errorMessage = (error as NSError).userInfo["body"] as? String ?? error.localizedDescription
         }
-        isSubmitting = false
+    }
+    
+    /// Background polling that refreshes data when complete
+    private func pollAndRefresh(entryId: UUID, timeoutSeconds: Int) async {
+        do {
+            try await pollUntilComplete(entryId: entryId, timeoutSeconds: timeoutSeconds)
+            processingEntryIds.remove(entryId)
+            if let p = profile { await loadFor(profile: p) }
+        } catch {
+            processingEntryIds.remove(entryId)
+            errorMessage = (error as NSError).userInfo[NSLocalizedDescriptionKey] as? String ?? error.localizedDescription
+            // Still try to refresh in case it completed despite error
+            if let p = profile { await loadFor(profile: p) }
+        }
     }
 
     private func pollUntilComplete(entryId: UUID, timeoutSeconds: Int) async throws {

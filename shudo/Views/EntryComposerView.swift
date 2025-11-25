@@ -4,58 +4,93 @@ import UIKit
 
 struct EntryComposerView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var audio = AudioRecorder()
     @State private var text: String = ""
     @State private var pickedImage: PhotosPickerItem?
     @State private var uiImage: UIImage?
     @State private var isSubmitting = false
 
-    let onSubmit: (String?, Data?, UIImage?) async -> Void
+    let onSubmit: (String?, UIImage?) async -> Void
 
     private var canSubmit: Bool {
-        !isSubmitting && (uiImage != nil || !text.isEmpty || audio.recordedFileURL != nil)
+        !isSubmitting && (uiImage != nil || !text.isEmpty)
     }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Notes") {
-                    TextEditor(text: $text)
-                        .frame(minHeight: 120)
-                }
-
-                Section("Image") {
-                    PhotosPicker("Choose Photo", selection: $pickedImage, matching: .images)
-                    if let img = uiImage {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.l))
-                            .overlay(RoundedRectangle(cornerRadius: Design.Radius.l).stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline))
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Text input
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Notes", systemImage: "text.alignleft")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Design.Color.muted)
+                        
+                        TextField("What did you eat?", text: $text, axis: .vertical)
+                            .lineLimit(4...8)
+                            .textFieldStyle(.plain)
+                            .padding(14)
+                            .background(Design.Color.fill, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Design.Radius.m)
+                                    .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                            )
+                    }
+                    
+                    // Photo picker
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Photo", systemImage: "photo")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Design.Color.muted)
+                        
+                        if let img = uiImage {
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(maxHeight: 200)
+                                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.l))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: Design.Radius.l)
+                                            .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                                    )
+                                
+                                Button {
+                                    withAnimation { 
+                                        uiImage = nil
+                                        pickedImage = nil
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.title2)
+                                        .symbolRenderingMode(.palette)
+                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                }
+                                .padding(8)
+                            }
+                        } else {
+                            PhotosPicker(selection: $pickedImage, matching: .images) {
+                                HStack {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.title3)
+                                    Text("Add Photo")
+                                        .font(.subheadline.weight(.medium))
+                                }
+                                .foregroundStyle(Design.Color.accentPrimary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 100)
+                                .background(Design.Color.fill, in: RoundedRectangle(cornerRadius: Design.Radius.l))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Design.Radius.l)
+                                        .strokeBorder(Design.Color.accentPrimary.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [8]))
+                                )
+                            }
+                        }
                     }
                 }
-
-                Section("Voice") {
-                    HStack {
-                        Button(action: toggleRecord) {
-                            Label(audio.isRecording ? "Stop" : "Record", systemImage: audio.isRecording ? "stop.circle.fill" : "mic.circle.fill")
-                                .labelStyle(.titleAndIcon)
-                        }
-                        .tint(Design.Color.accentPrimary)
-                        .foregroundStyle(audio.isRecording ? Design.Color.danger : Design.Color.accentPrimary)
-                        .disabled(isSubmitting)
-                        Spacer()
-                        if let url = audio.recordedFileURL {
-                            Text(url.lastPathComponent)
-                                .font(.footnote)
-                                .foregroundStyle(Design.Color.muted)
-                                .lineLimit(1)
-                        }
-                    }
-                }
+                .padding(20)
             }
-            .navigationTitle("New Entry")
+            .navigationTitle("Log Entry")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -69,40 +104,35 @@ struct EntryComposerView: View {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            HStack(spacing: 6) { Image(systemName: "paperplane.fill"); Text("Submit") }
+                            Text("Submit")
+                                .fontWeight(.semibold)
                         }
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(!canSubmit)
                 }
             }
             .interactiveDismissDisabled(isSubmitting)
+            .scrollContentBackground(.hidden)
+            .background(Design.Color.paper)
         }
         .onChange(of: pickedImage) { _, newValue in
             Task { @MainActor in
                 guard let item = newValue else { return }
                 if let data = try? await item.loadTransferable(type: Data.self),
                    let img = UIImage(data: data) {
-                    uiImage = img
+                    withAnimation { uiImage = img }
                 }
             }
         }
     }
 
-    private func toggleRecord() {
-        if audio.isRecording { audio.stopRecording() } else { audio.startRecording() }
-    }
-
     private func submit() {
-        // Capture all data BEFORE any async work to prevent race conditions
         let t = text.isEmpty ? nil : text
         let img = uiImage
-        // Read audio file into Data immediately to prevent temp file cleanup race
-        let audioData: Data? = audio.recordedFileURL.flatMap { try? Data(contentsOf: $0) }
         
         isSubmitting = true
         Task {
-            await onSubmit(t, audioData, img)
+            await onSubmit(t, img)
             await MainActor.run {
                 isSubmitting = false
                 dismiss()
@@ -110,5 +140,3 @@ struct EntryComposerView: View {
         }
     }
 }
-
-

@@ -2,16 +2,12 @@ import SwiftUI
 
 struct EntryCard: View {
     let entry: Entry
+    var isProcessing: Bool = false
     var onDelete: (() -> Void)? = nil
-    var dailyFatTarget: Double? = nil
-    var currentTotalFat: Double = 0
-
-    private var isProcessing: Bool {
-        entry.proteinG == 0 && entry.carbsG == 0 && entry.fatG == 0 && entry.caloriesKcal == 0
-    }
 
     @ScaledMetric(relativeTo: .body) private var thumb: CGFloat = 60
     @ScaledMetric(relativeTo: .body) private var pad: CGFloat = 12
+    
     var body: some View {
         HStack(alignment: .top, spacing: Design.Spacing.m) {
             thumbnail
@@ -20,10 +16,11 @@ struct EntryCard: View {
                 HStack(spacing: 6) {
                     Text(entry.summary)
                         .font(.system(size: 12, weight: .regular, design: .rounded))
-                        .foregroundStyle(Design.Color.ink)
+                        .foregroundStyle(isProcessing ? Design.Color.muted : Design.Color.ink)
                         .lineLimit(2)
                         .truncationMode(.tail)
                         .textSelection(.disabled)
+                    
                     if isProcessing {
                         ProgressView()
                             .controlSize(.mini)
@@ -32,29 +29,38 @@ struct EntryCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 12) {
-                        macro("P", entry.proteinG, unit: "g")
-                        macro("C", entry.carbsG, unit: "g")
-                        macro("F", entry.fatG, unit: "g")
+                if isProcessing {
+                    Text("Analyzing…")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Design.Color.accentPrimary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 12) {
+                            macro("P", entry.proteinG, unit: "g")
+                            macro("C", entry.carbsG, unit: "g")
+                            macro("F", entry.fatG, unit: "g")
+                        }
+                        
+                        Text("\(Int(entry.caloriesKcal.rounded())) kcal")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(Design.Color.ink)
+                            .monospacedDigit()
                     }
-                    
-                    Text("\(Int(entry.caloriesKcal.rounded())) kcal")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(Design.Color.ink)
-                        .monospacedDigit()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        "Protein \(Int(entry.proteinG.rounded()))g, Carbs \(Int(entry.carbsG.rounded()))g, Fat \(Int(entry.fatG.rounded()))g, Calories \(Int(entry.caloriesKcal.rounded()))kcal"
+                    )
                 }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    "Protein \(Int(entry.proteinG.rounded()))g, Carbs \(Int(entry.carbsG.rounded()))g, Fat \(Int(entry.fatG.rounded()))g, Calories \(Int(entry.caloriesKcal.rounded()))kcal"
-                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            menuButton
+            if !isProcessing {
+                menuButton
+            }
         }
         .padding(pad)
         .cardStyle()
+        .opacity(isProcessing ? 0.7 : 1.0)
         .dynamicTypeSize(.xSmall ... .large)
     }
 

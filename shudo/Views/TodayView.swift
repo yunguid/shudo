@@ -19,6 +19,7 @@ struct TodayView: View {
     @State private var now = Date()
     @State private var isShowingAccount = false
     @State private var showErrorAlert = false
+    @State private var showEntryMenu = false
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -31,21 +32,25 @@ struct TodayView: View {
 
                     SectionCard {
                         VStack(alignment: .leading, spacing: Design.Spacing.m) {
-                            SectionHeader("Meals")
+                            mealsHeader
+                            
                             if vm.entries.isEmpty {
                                 Text("No entries yet.")
                                     .foregroundStyle(Design.Color.muted)
                             } else {
                                 LazyVStack(spacing: 14) {
                                     ForEach(vm.entries) { entry in
+                                        let isProcessing = vm.processingEntryIds.contains(entry.id)
+                                        
                                         NavigationLink {
                                             EntryDetailView(entryId: entry.id)
                                         } label: {
-                                            EntryCard(entry: entry) {
+                                            EntryCard(entry: entry, isProcessing: isProcessing) {
                                                 Task { await vm.deleteEntry(entry) }
                                             }
                                         }
                                         .buttonStyle(.plain)
+                                        .disabled(isProcessing)
                                     }
                                 }
                             }
@@ -56,7 +61,6 @@ struct TodayView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 44)
             }
-            .overlay(alignment: .bottom) { EmptyView() }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Text("shudo")
@@ -74,59 +78,31 @@ struct TodayView: View {
                     }
                 }
                 ToolbarItem(placement: .bottomBar) {
-                    HStack(spacing: 0) {
-                        Button { shiftDay(-1) } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(Design.Color.ink)
-                                .contentShape(Rectangle())
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-
-                        Spacer(minLength: 12)
-
-                        Button {
-                            vm.isPresentingComposer = true
-                        } label: {
-                            Label("Add Entry", systemImage: "plus.circle.fill")
-                                .labelStyle(.titleAndIcon)
-                                .font(.headline.weight(.semibold))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Design.Color.accentPrimary)
-
-                        Spacer(minLength: 12)
-
-                        Button { shiftDay(1) } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()) ? Design.Color.muted : Design.Color.ink)
-                                .contentShape(Rectangle())
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    bottomToolbar
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Color.clear)
         }
         .sheet(isPresented: $vm.isPresentingComposer) {
-            EntryComposerView { text, audioData, image in
-                await vm.submitEntry(text: text, audioData: audioData, image: image)
+            EntryComposerView { text, image in
+                await vm.submitTextEntry(text: text, image: image)
             }
         }
         .sheet(isPresented: $isShowingAccount) {
             NavigationStack {
                 AccountView()
             }
+        }
+        .fullScreenCover(isPresented: $vm.isShowingVoiceRecorder) {
+            VoiceRecorderOverlay(
+                onSubmit: { audioData in
+                    await vm.submitVoiceEntry(audioData: audioData)
+                },
+                onDismiss: {
+                    vm.isShowingVoiceRecorder = false
+                }
+            )
         }
         .onReceive(countdownTimer) { d in
             now = d
@@ -136,26 +112,6 @@ struct TodayView: View {
                 if cal.isDate(d, inSameDayAs: vm.currentDay) == false {
                     Task { await vm.jumpToToday() }
                 }
-            }
-        }
-        .overlay {
-            if vm.isSubmitting {
-                ZStack {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .controlSize(.large)
-                            .tint(.white)
-                        Text("Processing entry…")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.white)
-                    }
-                    .padding(24)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Design.Radius.l))
-                }
-                .transition(.opacity)
-                .animation(.easeInOut(duration: 0.2), value: vm.isSubmitting)
             }
         }
         .alert("Error", isPresented: $showErrorAlert, presenting: vm.errorMessage) { _ in
@@ -168,6 +124,92 @@ struct TodayView: View {
                 showErrorAlert = true
             }
         }
+    }
+    
+    // MARK: - Meals Header with Processing Indicator
+    
+    private var mealsHeader: some View {
+        HStack {
+            Text("Meals")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+            
+            Spacer()
+            
+            if vm.hasProcessingEntries {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Processing")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Design.Color.muted)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Design.Color.fill, in: Capsule())
+            }
+        }
+    }
+    
+    // MARK: - Bottom Toolbar
+    
+    private var bottomToolbar: some View {
+        HStack(spacing: 0) {
+            Button { shiftDay(-1) } label: {
+                Image(systemName: "chevron.left")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Design.Color.ink)
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 12)
+
+            // Entry creation buttons
+            HStack(spacing: 12) {
+                // Voice button
+                Button {
+                    vm.isShowingVoiceRecorder = true
+                } label: {
+                    Image(systemName: "mic.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Design.Color.danger, in: Circle())
+                }
+                .buttonStyle(.plain)
+                
+                // Text/Photo button
+                Button {
+                    vm.isPresentingComposer = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Design.Color.accentPrimary, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 12)
+
+            Button { shiftDay(1) } label: {
+                Image(systemName: "chevron.right")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()) ? Design.Color.muted : Design.Color.ink)
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+            .disabled(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: Capsule())
     }
 
     private var header: some View {
@@ -184,7 +226,7 @@ struct TodayView: View {
 
     private var macroSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionHeader("Today’s Macros")
+            SectionHeader("Today's Macros")
 
             if let profile = vm.profile {
                 MacroRingsView(target: profile.dailyMacroTarget, current: vm.todayTotals)
@@ -196,7 +238,6 @@ struct TodayView: View {
                     .fill(Design.Color.fill)
                     .frame(height: 220)
             }
-
         }
     }
 
