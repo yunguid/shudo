@@ -3,28 +3,33 @@ import SwiftUI
 struct AppBackground: View {
     var body: some View {
         ZStack {
-            RadialGradient(
-                colors: [
-                    Design.Color.paper,
-                    Design.Color.paper.opacity(0.96)
-                ],
-                center: .topLeading, startRadius: 80, endRadius: 900
-            )
-            .ignoresSafeArea()
+            // Base - deep dark
+            Design.Color.paper
+                .ignoresSafeArea()
 
-            // faint aurora wash for depth
+            // Subtle gradient overlay for depth
             LinearGradient(
                 colors: [
-                    Design.Color.accentPrimary.opacity(0.06),
+                    Design.Color.accentPrimary.opacity(0.03),
                     .clear,
-                    Design.Color.accentSecondary.opacity(0.05)
+                    Design.Color.success.opacity(0.02)
                 ],
-                startPoint: .topLeading, endPoint: .bottomTrailing
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
-            .blendMode(.plusLighter)
+            .ignoresSafeArea()
+            
+            // Vignette effect
+            RadialGradient(
+                colors: [
+                    .clear,
+                    Design.Color.paper.opacity(0.5)
+                ],
+                center: .center,
+                startRadius: 200,
+                endRadius: 600
+            )
             .ignoresSafeArea()
         }
     }
 }
-
-

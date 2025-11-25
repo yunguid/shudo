@@ -5,7 +5,7 @@ struct OnboardingFlowView: View {
     let profile: Profile
     let onComplete: () -> Void
 
-    @State private var step: Int = 0 // 0..6, 7=review
+    @State private var step: Int = 0
     @State private var units: String
     @State private var heightFeet: Int = 5
     @State private var heightInches: Int = 10
@@ -41,14 +41,78 @@ struct OnboardingFlowView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                content
-                if let e = error { Text(e).font(.caption).foregroundStyle(.red) }
-                footer
+            VStack(spacing: 0) {
+                // Progress indicator
+                HStack(spacing: 4) {
+                    ForEach(0..<7) { i in
+                        Capsule()
+                            .fill(i <= step ? Design.Color.accentPrimary : Design.Color.elevated)
+                            .frame(height: 3)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        content
+                        
+                        if let e = error {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Design.Color.danger)
+                                Text(e)
+                                    .font(.caption)
+                                    .foregroundStyle(Design.Color.danger)
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Design.Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                        }
+                    }
+                    .padding(20)
+                }
+                
+                // Footer
+                HStack {
+                    if step > 0 {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { step -= 1 }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.left")
+                                Text("Back")
+                            }
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                    }
+                    
+                    Spacer()
+                    
+                    Button {
+                        Task { await proceed() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isSaving {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(.white)
+                            }
+                            Text(step < 6 ? "Continue" : (isSaving ? "Saving…" : "Get Started"))
+                            if step < 6 {
+                                Image(systemName: "chevron.right")
+                            }
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(isSaving)
+                }
+                .padding(20)
+                .background(Design.Color.paper)
             }
-            .padding(20)
             .navigationTitle("Setup")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Design.Color.paper)
         }
     }
 
@@ -65,28 +129,20 @@ struct OnboardingFlowView: View {
         }
     }
 
-    @ViewBuilder private var footer: some View {
-        HStack {
-            if step > 0 { Button("Back") { step -= 1 } }
-            Spacer()
-            Button(step < 6 ? "Next" : (isSaving ? "Saving…" : "Save & Continue")) {
-                Task { await proceed() }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isSaving)
-        }
-    }
-
     // MARK: - Steps
 
     private var unitsStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Units")
-            Picker("Units", selection: $units) {
-                Text("Imperial (lb, ft/in)").tag("imperial")
-                Text("Metric (kg, cm)").tag("metric")
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                icon: "ruler",
+                title: "Measurement Units",
+                subtitle: "Choose your preferred units"
+            )
+            
+            VStack(spacing: 8) {
+                unitOption("imperial", "Imperial", "Pounds, feet & inches")
+                unitOption("metric", "Metric", "Kilograms & centimeters")
             }
-            .pickerStyle(.segmented)
             .onChange(of: units) { new in
                 if new == "imperial" {
                     let (ft, inch) = Self.feetInches(fromCM: heightCM)
@@ -97,126 +153,265 @@ struct OnboardingFlowView: View {
             }
         }
     }
+    
+    private func unitOption(_ value: String, _ title: String, _ subtitle: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { units = value }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Design.Color.ink)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(Design.Color.muted)
+                }
+                Spacer()
+                Circle()
+                    .fill(units == value ? Design.Color.accentPrimary : Design.Color.elevated)
+                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Circle()
+                            .fill(.white)
+                            .frame(width: 8, height: 8)
+                            .opacity(units == value ? 1 : 0)
+                    )
+            }
+            .padding(16)
+            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+            .overlay(
+                RoundedRectangle(cornerRadius: Design.Radius.m)
+                    .stroke(units == value ? Design.Color.accentPrimary : Design.Color.rule, lineWidth: units == value ? 2 : Design.Stroke.hairline)
+            )
+        }
+        .buttonStyle(.plain)
+    }
 
     private var heightStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Height")
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                icon: "arrow.up.and.down",
+                title: "Your Height",
+                subtitle: "This helps us calculate your targets"
+            )
+            
             if units == "imperial" {
-                HStack {
-                    Stepper(value: $heightFeet, in: 3...7) { Text("\(heightFeet) ft") }
-                    Stepper(value: $heightInches, in: 0...11) { Text("\(heightInches) in") }
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Feet")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Design.Color.muted)
+                        Stepper(value: $heightFeet, in: 3...7) {
+                            Text("\(heightFeet) ft")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(Design.Color.ink)
+                        }
+                        .padding(12)
+                        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Inches")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Design.Color.muted)
+                        Stepper(value: $heightInches, in: 0...11) {
+                            Text("\(heightInches) in")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(Design.Color.ink)
+                        }
+                        .padding(12)
+                        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                    }
                 }
             } else {
-                HStack {
-                    TextField("cm", value: $heightCM, formatter: NumberFormatter())
-                        .keyboardType(.decimalPad)
-                        .fieldStyle()
-                    Text("cm").foregroundStyle(Design.Color.muted)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Centimeters")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Design.Color.muted)
+                    HStack {
+                        TextField("cm", value: $heightCM, formatter: NumberFormatter())
+                            .keyboardType(.decimalPad)
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(Design.Color.ink)
+                        Text("cm")
+                            .foregroundStyle(Design.Color.muted)
+                    }
+                    .padding(16)
+                    .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
                 }
             }
         }
     }
 
     private var currentWeightStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Current weight")
-            if units == "imperial" {
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                icon: "scalemass",
+                title: "Current Weight",
+                subtitle: "Your starting point"
+            )
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text(units == "imperial" ? "Pounds" : "Kilograms")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Design.Color.muted)
                 HStack {
-                    TextField("lbs", value: $weightLBS, formatter: NumberFormatter())
+                    TextField(units == "imperial" ? "lbs" : "kg", value: units == "imperial" ? $weightLBS : $weightKG, formatter: NumberFormatter())
                         .keyboardType(.decimalPad)
-                        .fieldStyle()
-                    Text("lb").foregroundStyle(Design.Color.muted)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(Design.Color.ink)
+                    Text(units == "imperial" ? "lb" : "kg")
+                        .foregroundStyle(Design.Color.muted)
                 }
-            } else {
-                HStack {
-                    TextField("kg", value: $weightKG, formatter: NumberFormatter())
-                        .keyboardType(.decimalPad)
-                        .fieldStyle()
-                    Text("kg").foregroundStyle(Design.Color.muted)
-                }
+                .padding(16)
+                .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
             }
         }
     }
 
     private var targetWeightStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Target weight")
-            if units == "imperial" {
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                icon: "target",
+                title: "Goal Weight",
+                subtitle: "Where you want to be"
+            )
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text(units == "imperial" ? "Pounds" : "Kilograms")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Design.Color.muted)
                 HStack {
-                    TextField("lbs", value: $targetWeightLBS, formatter: NumberFormatter())
+                    TextField(units == "imperial" ? "lbs" : "kg", value: units == "imperial" ? $targetWeightLBS : $targetWeightKG, formatter: NumberFormatter())
                         .keyboardType(.decimalPad)
-                        .fieldStyle()
-                    Text("lb").foregroundStyle(Design.Color.muted)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(Design.Color.ink)
+                    Text(units == "imperial" ? "lb" : "kg")
+                        .foregroundStyle(Design.Color.muted)
                 }
-            } else {
-                HStack {
-                    TextField("kg", value: $targetWeightKG, formatter: NumberFormatter())
-                        .keyboardType(.decimalPad)
-                        .fieldStyle()
-                    Text("kg").foregroundStyle(Design.Color.muted)
-                }
+                .padding(16)
+                .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
             }
         }
     }
 
     private var activityStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Activity level", subtitle: "Typical daily activity")
-            let options: [(String, String)] = [
-                ("sedentary", "Desk job, little exercise"),
-                ("light", "Light exercise 1–3 days/week"),
-                ("moderate", "Moderate exercise 3–5 days/week"),
-                ("active", "Hard exercise 6–7 days/week"),
-                ("extra_active", "Very hard exercise/physical job")
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                icon: "figure.walk",
+                title: "Activity Level",
+                subtitle: "Your typical daily activity"
+            )
+            
+            let options: [(String, String, String)] = [
+                ("sedentary", "Sedentary", "Desk job, little exercise"),
+                ("light", "Light", "Light exercise 1–3 days/week"),
+                ("moderate", "Moderate", "Exercise 3–5 days/week"),
+                ("active", "Active", "Hard exercise 6–7 days/week"),
+                ("extra_active", "Very Active", "Physical job or intense training")
             ]
-            ForEach(options, id: \.0) { key, subtitle in
-                Button {
-                    activityLevel = key
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(key.replacingOccurrences(of: "_", with: " ").capitalized)
-                            Text(subtitle).font(.caption).foregroundStyle(Design.Color.muted)
+            
+            VStack(spacing: 8) {
+                ForEach(options, id: \.0) { key, title, subtitle in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { activityLevel = key }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Design.Color.ink)
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(Design.Color.muted)
+                            }
+                            Spacer()
+                            if activityLevel == key {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Design.Color.accentPrimary)
+                            }
                         }
-                        Spacer()
-                        if activityLevel == key { Image(systemName: "checkmark.circle.fill") }
+                        .padding(14)
+                        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Design.Radius.m)
+                                .stroke(activityLevel == key ? Design.Color.accentPrimary : Design.Color.rule, lineWidth: activityLevel == key ? 2 : Design.Stroke.hairline)
+                        )
                     }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
-                        .fill(Design.Color.fill)
-                )
             }
         }
     }
 
     private var cutoffStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Eating cutoff time")
-            DatePicker("Cutoff", selection: $cutoffTime, displayedComponents: .hourAndMinute)
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                icon: "moon.stars",
+                title: "Eating Cutoff",
+                subtitle: "When should you stop eating each day?"
+            )
+            
+            DatePicker("", selection: $cutoffTime, displayedComponents: .hourAndMinute)
                 .datePickerStyle(.wheel)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+                .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.l))
         }
     }
 
     private var reviewStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Review")
-            SectionCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Units: \(units)")
-                    let cm = currentHeightCM
-                    let kg = currentWeightKG
-                    let tkg = currentTargetWeightKG
-                    Text("Height: \(Int(cm)) cm (\(Self.feetInchesString(fromCM: cm)))")
-                    Text("Weight: \(String(format: "%.1f", kg)) kg (\(String(format: "%.0f", kg*2.20462)) lb)")
-                    Text("Target: \(String(format: "%.1f", tkg)) kg (\(String(format: "%.0f", tkg*2.20462)) lb)")
-                    Text("Activity: \(activityLevel)")
-                    Text("Cutoff: \(Self.hhmm(from: cutoffTime))")
-                }
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                icon: "checkmark.circle",
+                title: "Ready to Go!",
+                subtitle: "Review your settings"
+            )
+            
+            VStack(spacing: 12) {
+                let cm = currentHeightCM
+                let kg = currentWeightKG
+                let tkg = currentTargetWeightKG
+                
+                reviewRow("Units", units.capitalized)
+                reviewRow("Height", units == "imperial" ? Self.feetInchesString(fromCM: cm) : "\(Int(cm)) cm")
+                reviewRow("Current Weight", units == "imperial" ? "\(Int(kg * 2.20462)) lb" : "\(String(format: "%.1f", kg)) kg")
+                reviewRow("Goal Weight", units == "imperial" ? "\(Int(tkg * 2.20462)) lb" : "\(String(format: "%.1f", tkg)) kg")
+                reviewRow("Activity", activityLevel.replacingOccurrences(of: "_", with: " ").capitalized)
+                reviewRow("Eating Cutoff", Self.hhmm(from: cutoffTime))
             }
+            .padding(16)
+            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.l))
         }
+    }
+    
+    private func stepHeader(icon: String, title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .foregroundStyle(Design.Color.accentPrimary)
+                Text(title)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(Design.Color.ink)
+            }
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.muted)
+        }
+    }
+    
+    private func reviewRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.muted)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: - Actions
@@ -224,7 +419,6 @@ struct OnboardingFlowView: View {
     private func proceed() async {
         error = nil
         if step < 6 {
-            // Validate minimal constraints per step
             switch step {
             case 1:
                 let cm = currentHeightCM
@@ -238,16 +432,12 @@ struct OnboardingFlowView: View {
             case 4:
                 let valid = ["sedentary","light","moderate","active","extra_active"]
                 if valid.contains(activityLevel) == false { error = "Pick an activity level"; return }
-            case 5:
-                // Any time ok
-                break
             default: break
             }
-            step += 1
+            withAnimation(.easeInOut(duration: 0.2)) { step += 1 }
             return
         }
 
-        // Save
         isSaving = true
         let cm = currentHeightCM
         let kg = currentWeightKG
@@ -299,7 +489,7 @@ struct OnboardingFlowView: View {
     }
     private static func feetInchesString(fromCM cm: Double) -> String {
         let (f, i) = feetInches(fromCM: cm)
-        return "\(f) ft \(i) in"
+        return "\(f)' \(i)\""
     }
     private static func hhmm(from date: Date) -> String {
         let fmt = DateFormatter(); fmt.dateFormat = "HH:mm"; fmt.locale = Locale(identifier: "en_US_POSIX")
@@ -310,5 +500,3 @@ struct OnboardingFlowView: View {
         return fmt.date(from: s)
     }
 }
-
-

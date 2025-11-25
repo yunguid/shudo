@@ -35,10 +35,9 @@ struct TodayView: View {
                             mealsHeader
                             
                             if vm.entries.isEmpty {
-                                Text("No entries yet.")
-                                    .foregroundStyle(Design.Color.muted)
+                                emptyState
                             } else {
-                                LazyVStack(spacing: 14) {
+                                LazyVStack(spacing: 8) {
                                     ForEach(vm.entries) { entry in
                                         let isProcessing = vm.processingEntryIds.contains(entry.id)
                                         
@@ -58,31 +57,40 @@ struct TodayView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 44)
+                .padding(.top, 16)
+                .padding(.bottom, 100)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Text("shudo")
                         .font(.title2.weight(.bold))
+                        .foregroundStyle(Design.Color.ink)
                         .padding(.leading, 4)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("Account") { isShowingAccount = true }
-                        Button("Sign Out") { AuthSessionManager.shared.signOut() }
+                        Button { isShowingAccount = true } label: {
+                            Label("Account", systemImage: "person.circle")
+                        }
+                        Button(role: .destructive) { AuthSessionManager.shared.signOut() } label: {
+                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(Design.Color.accentPrimary)
+                        Image(systemName: "gearshape.fill")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(Design.Color.muted)
+                            .frame(width: 36, height: 36)
+                            .background(Design.Color.elevated, in: Circle())
                     }
-                }
-                ToolbarItem(placement: .bottomBar) {
-                    bottomToolbar
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Color.clear)
+            .safeAreaInset(edge: .bottom) {
+                bottomToolbar
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+            }
         }
         .sheet(isPresented: $vm.isPresentingComposer) {
             EntryComposerView { text, image in
@@ -106,7 +114,6 @@ struct TodayView: View {
         }
         .onReceive(countdownTimer) { d in
             now = d
-            // If user is pinned to "today", auto-advance when local date rolls over.
             if vm.isPinnedToToday {
                 let cal = Calendar(identifier: .gregorian)
                 if cal.isDate(d, inSameDayAs: vm.currentDay) == false {
@@ -126,13 +133,33 @@ struct TodayView: View {
         }
     }
     
+    // MARK: - Empty State
+    
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "fork.knife")
+                .font(.system(size: 32, weight: .light))
+                .foregroundStyle(Design.Color.subtle)
+            Text("No entries yet")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Design.Color.muted)
+            Text("Tap the buttons below to log your first meal")
+                .font(.caption)
+                .foregroundStyle(Design.Color.subtle)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 32)
+    }
+    
     // MARK: - Meals Header with Processing Indicator
     
     private var mealsHeader: some View {
         HStack {
-            Text("Meals")
-                .font(.headline.weight(.semibold))
+            Text("MEALS")
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Design.Color.ink)
+                .tracking(0.5)
             
             Spacer()
             
@@ -140,13 +167,14 @@ struct TodayView: View {
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.small)
+                        .tint(Design.Color.accentPrimary)
                     Text("Processing")
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(Design.Color.muted)
+                        .foregroundStyle(Design.Color.accentPrimary)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Design.Color.fill, in: Capsule())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Design.Color.accentPrimary.opacity(0.1), in: Capsule())
             }
         }
     }
@@ -155,70 +183,99 @@ struct TodayView: View {
     
     private var bottomToolbar: some View {
         HStack(spacing: 0) {
+            // Day navigation - left
             Button { shiftDay(-1) } label: {
                 Image(systemName: "chevron.left")
-                    .font(.title3.weight(.bold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Design.Color.ink)
-                    .contentShape(Rectangle())
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .frame(width: 44, height: 44)
+                    .background(Design.Color.elevated, in: Circle())
             }
             .buttonStyle(.plain)
 
-            Spacer(minLength: 12)
+            Spacer()
 
-            // Entry creation buttons
+            // Entry creation buttons - center
             HStack(spacing: 12) {
                 // Voice button
                 Button {
                     vm.isShowingVoiceRecorder = true
                 } label: {
-                    Image(systemName: "mic.fill")
-                        .font(.title3.weight(.semibold))
+                    Image(systemName: "waveform")
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(Design.Color.danger, in: Circle())
+                        .frame(width: 48, height: 48)
+                        .background(
+                            LinearGradient(
+                                colors: [Design.Color.accentPrimary, Design.Color.accentSecondary],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            in: Circle()
+                        )
                 }
                 .buttonStyle(.plain)
                 
-                // Text/Photo button
+                // Photo button
                 Button {
                     vm.isPresentingComposer = true
                 } label: {
-                    Image(systemName: "pencil")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(Design.Color.accentPrimary, in: Circle())
+                    Image(systemName: "camera.fill")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Design.Color.ink)
+                        .frame(width: 48, height: 48)
+                        .background(Design.Color.elevated, in: Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Design.Color.rule, lineWidth: Design.Stroke.thin)
+                        )
                 }
                 .buttonStyle(.plain)
             }
 
-            Spacer(minLength: 12)
+            Spacer()
 
+            // Day navigation - right
             Button { shiftDay(1) } label: {
                 Image(systemName: "chevron.right")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()) ? Design.Color.muted : Design.Color.ink)
-                    .contentShape(Rectangle())
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()) ? Design.Color.subtle : Design.Color.ink)
+                    .frame(width: 44, height: 44)
+                    .background(Design.Color.elevated, in: Circle())
             }
             .buttonStyle(.plain)
             .disabled(Calendar.current.isDate(vm.currentDay, inSameDayAs: Date()))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: Capsule())
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .background(
+            Capsule()
+                .fill(Design.Color.glassFill)
+                .background(
+                    Capsule()
+                        .fill(.ultraThinMaterial.opacity(0.5))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                )
+        )
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(vm.currentDay, style: .date).font(.title2.weight(.semibold))
-            HStack(spacing: 8) {
-                Text(timezoneLabel)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.muted)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(vm.currentDay, style: .date)
+                .font(.title.weight(.bold))
+                .foregroundStyle(Design.Color.ink)
+            HStack(spacing: 10) {
+                HStack(spacing: 4) {
+                    Image(systemName: "globe")
+                        .font(.caption)
+                    Text(timezoneLabel)
+                }
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.muted)
+                
                 countdownPill
             }
         }
@@ -226,7 +283,10 @@ struct TodayView: View {
 
     private var macroSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionHeader("Today's Macros")
+            Text("MACROS")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+                .tracking(0.5)
 
             if let profile = vm.profile {
                 MacroRingsView(target: profile.dailyMacroTarget, current: vm.todayTotals)
@@ -235,7 +295,7 @@ struct TodayView: View {
                     .accessibilityLabel("Macro progress")
             } else {
                 RoundedRectangle(cornerRadius: Design.Radius.l)
-                    .fill(Design.Color.fill)
+                    .fill(Design.Color.elevated)
                     .frame(height: 220)
             }
         }
@@ -253,22 +313,21 @@ struct TodayView: View {
                                cutoffLocal: vm.profile?.cutoffTimeLocal)
         return Group {
             if let info = info {
-                Label(info.text, systemImage: "clock")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(info.isOver ? Design.Color.danger : Design.Color.ink)
-                    .monospacedDigit()
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: Design.Radius.pill, style: .continuous)
-                            .fill(Design.Color.fill)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Design.Radius.pill, style: .continuous)
-                            .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                    )
-                    .accessibilityLabel(info.isOver ? "Fasting for improved sleep" : "Stop eating in \(info.accessible)")
+                HStack(spacing: 6) {
+                    Image(systemName: info.isOver ? "moon.fill" : "clock")
+                        .font(.caption)
+                    Text(info.text)
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(info.isOver ? Design.Color.warning : Design.Color.success)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill((info.isOver ? Design.Color.warning : Design.Color.success).opacity(0.12))
+                )
+                .accessibilityLabel(info.isOver ? "Fasting for improved sleep" : "Stop eating in \(info.accessible)")
             }
         }
     }
@@ -283,7 +342,7 @@ struct TodayView: View {
         let beforeCutoff = now <= cutoffToday
         let interval = beforeCutoff ? cutoffToday.timeIntervalSince(now) : now.timeIntervalSince(cutoffToday)
         let hhmm = formatHoursMinutes(interval: interval)
-        let text = beforeCutoff ? "Stop in \(hhmm)" : "Over by \(hhmm)"
+        let text = beforeCutoff ? "\(hhmm) left" : "Fasting"
         return (text, hhmm, !beforeCutoff)
     }
 
@@ -307,7 +366,6 @@ struct TodayView: View {
     private func shiftDay(_ delta: Int) {
         let cal = Calendar(identifier: .gregorian)
         guard let candidate = cal.date(byAdding: .day, value: delta, to: vm.currentDay) else { return }
-        // Prevent traveling into the future
         let today = Date()
         if cal.compare(candidate, to: today, toGranularity: .day) == .orderedDescending { return }
         Task {

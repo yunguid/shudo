@@ -20,8 +20,8 @@ struct VoiceRecorderOverlay: View {
     
     var body: some View {
         ZStack {
-            // Dimmed background
-            Color.black.opacity(0.7)
+            // Background
+            Design.Color.paper
                 .ignoresSafeArea()
                 .onTapGesture {
                     if recordingState == .idle {
@@ -29,33 +29,49 @@ struct VoiceRecorderOverlay: View {
                     }
                 }
             
-            VStack(spacing: 32) {
+            // Ambient glow when recording
+            if recordingState == .recording {
+                RadialGradient(
+                    colors: [
+                        Design.Color.accentPrimary.opacity(0.15),
+                        .clear
+                    ],
+                    center: .center,
+                    startRadius: 50,
+                    endRadius: 300
+                )
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: recordingState)
+            }
+            
+            VStack(spacing: 40) {
                 Spacer()
                 
-                // Status text
-                Text(statusText)
-                    .font(.title3.weight(.medium))
-                    .foregroundStyle(.white)
-                
-                // Timer display
-                if recordingState == .recording || recordingState == .recorded {
-                    Text(formatTime(elapsedTime))
-                        .font(.system(size: 48, weight: .light, design: .monospaced))
-                        .foregroundStyle(.white)
+                // Status
+                VStack(spacing: 12) {
+                    Text(statusText)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Design.Color.ink)
+                    
+                    if recordingState == .recording || recordingState == .recorded {
+                        Text(formatTime(elapsedTime))
+                            .font(.system(size: 56, weight: .light, design: .monospaced))
+                            .foregroundStyle(recordingState == .recording ? Design.Color.accentPrimary : Design.Color.ink)
+                    }
                 }
                 
-                // Waveform indicator when recording
+                // Waveform
                 if recordingState == .recording {
                     WaveformView()
-                        .frame(height: 60)
-                        .padding(.horizontal, 40)
+                        .frame(height: 80)
+                        .padding(.horizontal, 60)
                 }
                 
                 Spacer()
                 
                 // Controls
                 controlsView
-                    .padding(.bottom, 60)
+                    .padding(.bottom, 80)
             }
         }
         .onAppear {
@@ -72,9 +88,9 @@ struct VoiceRecorderOverlay: View {
     private var statusText: String {
         switch recordingState {
         case .idle: return "Tap to start"
-        case .recording: return "Recording..."
+        case .recording: return "Listening…"
         case .recorded: return "Ready to send"
-        case .submitting: return "Sending..."
+        case .submitting: return "Processing…"
         }
     }
     
@@ -89,9 +105,20 @@ struct VoiceRecorderOverlay: View {
         case .recording:
             Button(action: stopRecording) {
                 ZStack {
+                    // Pulsing ring
                     Circle()
-                        .fill(Design.Color.danger)
-                        .frame(width: 80, height: 80)
+                        .stroke(Design.Color.accentPrimary.opacity(0.3), lineWidth: 4)
+                        .frame(width: 100, height: 100)
+                    
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Design.Color.accentPrimary, Design.Color.accentSecondary],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 88, height: 88)
                     
                     RoundedRectangle(cornerRadius: 6)
                         .fill(.white)
@@ -100,51 +127,57 @@ struct VoiceRecorderOverlay: View {
             }
             
         case .recorded:
-            HStack(spacing: 40) {
-                // Re-record button
+            HStack(spacing: 32) {
+                // Re-record
                 Button(action: reRecord) {
                     VStack(spacing: 8) {
                         ZStack {
                             Circle()
-                                .fill(Design.Color.fill)
-                                .frame(width: 64, height: 64)
+                                .fill(Design.Color.elevated)
+                                .frame(width: 60, height: 60)
                             Image(systemName: "arrow.counterclockwise")
-                                .font(.title2.weight(.semibold))
-                                .foregroundStyle(.white)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(Design.Color.ink)
                         }
-                        Text("Re-record")
+                        Text("Redo")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(Design.Color.muted)
                     }
                 }
                 
-                // Send button
+                // Send
                 Button(action: submit) {
                     VStack(spacing: 8) {
                         ZStack {
                             Circle()
-                                .fill(Design.Color.accentPrimary)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Design.Color.accentPrimary, Design.Color.accentSecondary],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
                                 .frame(width: 80, height: 80)
-                            Image(systemName: "paperplane.fill")
-                                .font(.title.weight(.semibold))
+                            Image(systemName: "arrow.up")
+                                .font(.title2.weight(.bold))
                                 .foregroundStyle(.white)
                         }
                         Text("Send")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.white)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Design.Color.ink)
                     }
                 }
                 
-                // Cancel button
+                // Cancel
                 Button(action: onDismiss) {
                     VStack(spacing: 8) {
                         ZStack {
                             Circle()
-                                .fill(Design.Color.fill)
-                                .frame(width: 64, height: 64)
+                                .fill(Design.Color.elevated)
+                                .frame(width: 60, height: 60)
                             Image(systemName: "xmark")
-                                .font(.title2.weight(.semibold))
-                                .foregroundStyle(.white)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(Design.Color.ink)
                         }
                         Text("Cancel")
                             .font(.caption.weight(.medium))
@@ -154,21 +187,32 @@ struct VoiceRecorderOverlay: View {
             }
             
         case .submitting:
-            ProgressView()
-                .controlSize(.large)
-                .tint(.white)
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Design.Color.accentPrimary)
+                Text("Analyzing your meal…")
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.muted)
+            }
         }
     }
     
     private func recordButton(isRecording: Bool) -> some View {
         ZStack {
             Circle()
-                .fill(Design.Color.danger)
-                .frame(width: 80, height: 80)
+                .fill(
+                    LinearGradient(
+                        colors: [Design.Color.accentPrimary, Design.Color.accentSecondary],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 88, height: 88)
             
-            Circle()
-                .fill(.white)
-                .frame(width: 32, height: 32)
+            Image(systemName: "waveform")
+                .font(.title.weight(.semibold))
+                .foregroundStyle(.white)
         }
     }
     
@@ -183,13 +227,11 @@ struct VoiceRecorderOverlay: View {
         audio.stopRecording()
         stopTimer()
         
-        // Read the audio data immediately
         if let url = audio.recordedFileURL,
            let data = try? Data(contentsOf: url) {
             recordedData = data
             recordingState = .recorded
         } else {
-            // Failed to get audio, go back to idle
             recordingState = .idle
         }
     }
@@ -231,21 +273,27 @@ struct VoiceRecorderOverlay: View {
     }
 }
 
-// Simple animated waveform
+// Animated waveform
 struct WaveformView: View {
     @State private var animating = false
     
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<20, id: \.self) { i in
+        HStack(spacing: 3) {
+            ForEach(0..<24, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Design.Color.accentPrimary)
-                    .frame(width: 4)
-                    .frame(height: animating ? CGFloat.random(in: 10...50) : 10)
+                    .fill(
+                        LinearGradient(
+                            colors: [Design.Color.accentPrimary, Design.Color.accentSecondary],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        )
+                    )
+                    .frame(width: 3)
+                    .frame(height: animating ? CGFloat.random(in: 15...70) : 15)
                     .animation(
-                        .easeInOut(duration: 0.3)
+                        .easeInOut(duration: 0.25)
                         .repeatForever()
-                        .delay(Double(i) * 0.05),
+                        .delay(Double(i) * 0.04),
                         value: animating
                     )
             }

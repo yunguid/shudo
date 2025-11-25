@@ -15,101 +15,186 @@ struct AuthView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: Design.Spacing.xl) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("shudo").font(.largeTitle.weight(.bold)).foregroundStyle(Design.Color.ink)
-                    Text("Sign in to continue").foregroundStyle(Design.Color.muted)
+            VStack(spacing: 32) {
+                // Logo & Title
+                VStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Design.Color.accentPrimary.opacity(0.2), Design.Color.accentPrimary.opacity(0.05)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 80, height: 80)
+                        Image(systemName: "fork.knife")
+                            .font(.title)
+                            .foregroundStyle(Design.Color.accentPrimary)
+                    }
+                    
+                    Text("shudo")
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundStyle(Design.Color.ink)
+                    Text("Track your nutrition with AI")
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.muted)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 40)
 
-                VStack(spacing: Design.Spacing.m) {
-                    TextField("Email", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                        .textContentType(.username)
-                        .autocorrectionDisabled()
-                        .fieldStyle()
+                // Form
+                VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Email")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Design.Color.muted)
+                        TextField("you@example.com", text: $email)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            .textContentType(.username)
+                            .autocorrectionDisabled()
+                            .font(.body)
+                            .foregroundStyle(Design.Color.ink)
+                            .padding(14)
+                            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Design.Radius.m)
+                                    .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                            )
+                    }
 
-                    SecureField("Password", text: $password)
-                        .textContentType(.password)
-                        .fieldStyle()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Password")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Design.Color.muted)
+                        SecureField("••••••••", text: $password)
+                            .textContentType(.password)
+                            .font(.body)
+                            .foregroundStyle(Design.Color.ink)
+                            .padding(14)
+                            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Design.Radius.m)
+                                    .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                            )
+                    }
                 }
 
                 if let e = error {
-                    Text(e).font(.caption).foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(Design.Color.danger)
+                        Text(e)
+                            .font(.caption)
+                            .foregroundStyle(Design.Color.danger)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Design.Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: Design.Radius.m))
                 }
 
                 if confirmationSent == false {
-                    HStack {
-                        Button(currentAction == .signIn ? "Signing In…" : "Sign In") { Task { await signIn() } }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isLoading || !isEmailValid || password.isEmpty)
-
-                        Button(currentAction == .signUp ? "Signing Up…" : "Sign Up") { Task { await signUp() } }
-                            .buttonStyle(.bordered)
-                            .disabled(isLoading || !isEmailValid || password.isEmpty || session.session != nil)
-                    }
-                    .overlay(alignment: .bottomLeading) {
-                        if session.session != nil {
-                            Text("You're already signed in.")
-                                .font(.caption)
-                                .foregroundStyle(Design.Color.muted)
-                                .padding(.top, 6)
+                    VStack(spacing: 12) {
+                        Button {
+                            Task { await signIn() }
+                        } label: {
+                            HStack {
+                                if currentAction == .signIn {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(.white)
+                                }
+                                Text(currentAction == .signIn ? "Signing In…" : "Sign In")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(isLoading || !isEmailValid || password.isEmpty)
+
+                        Button {
+                            Task { await signUp() }
+                        } label: {
+                            Text(currentAction == .signUp ? "Creating Account…" : "Create Account")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(isLoading || !isEmailValid || password.isEmpty || session.session != nil)
                     }
-                    HStack(spacing: 16) {
-                        Button("Forgot password?") { Task { await forgotPassword() } }
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Design.Color.accentPrimary)
-                            .buttonStyle(.plain)
-                            .disabled(isLoading || !isEmailValid)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
+                    
+                    Button("Forgot password?") { Task { await forgotPassword() } }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Design.Color.accentPrimary)
+                        .disabled(isLoading || !isEmailValid)
                 } else {
-                    VStack(spacing: 8) {
-                        Text("Check your email to confirm your account.")
-                            .font(.callout)
-                            .foregroundStyle(Design.Color.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(spacing: 16) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "envelope.badge.fill")
+                                .font(.title)
+                                .foregroundStyle(Design.Color.success)
+                            Text("Check your email")
+                                .font(.headline)
+                                .foregroundStyle(Design.Color.ink)
+                            Text("We sent a confirmation link to verify your account.")
+                                .font(.subheadline)
+                                .foregroundStyle(Design.Color.muted)
+                                .multilineTextAlignment(.center)
+                        }
+                        
                         HStack(spacing: 12) {
-                            Button("Resend Email") { Task { await resendConfirmation() } }
-                                .buttonStyle(.bordered)
+                            Button("Resend") { Task { await resendConfirmation() } }
+                                .buttonStyle(SecondaryButtonStyle())
                                 .disabled(isLoading || !isEmailValid)
                             Button("Back") { confirmationSent = false }
-                                .buttonStyle(.plain)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Design.Color.muted)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .padding(20)
+                    .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.l))
                 }
 
-                SignInWithAppleButton(.signIn) { request in
-                    let nonce = randomNonceString()
-                    currentNonce = nonce
-                    request.requestedScopes = [.email]
-                    request.nonce = sha256(nonce)
-                } onCompletion: { result in
-                    switch result {
-                    case .success(let auth):
-                        guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
-                              let tokenData = credential.identityToken,
-                              let token = String(data: tokenData, encoding: .utf8) else {
-                            self.error = "No Apple token"
-                            return
-                        }
-                        Task { await signInWithApple(idToken: token, nonce: currentNonce) }
-                    case .failure(let err):
-                        self.error = err.localizedDescription
-                    }
-                }
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
+                Spacer()
 
-                Spacer(minLength: 0)
+                // Apple Sign In
+                VStack(spacing: 12) {
+                    HStack {
+                        Rectangle()
+                            .fill(Design.Color.rule)
+                            .frame(height: 1)
+                        Text("or")
+                            .font(.caption)
+                            .foregroundStyle(Design.Color.subtle)
+                        Rectangle()
+                            .fill(Design.Color.rule)
+                            .frame(height: 1)
+                    }
+                    
+                    SignInWithAppleButton(.signIn) { request in
+                        let nonce = randomNonceString()
+                        currentNonce = nonce
+                        request.requestedScopes = [.email]
+                        request.nonce = sha256(nonce)
+                    } onCompletion: { result in
+                        switch result {
+                        case .success(let auth):
+                            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
+                                  let tokenData = credential.identityToken,
+                                  let token = String(data: tokenData, encoding: .utf8) else {
+                                self.error = "No Apple token"
+                                return
+                            }
+                            Task { await signInWithApple(idToken: token, nonce: currentNonce) }
+                        case .failure(let err):
+                            self.error = err.localizedDescription
+                        }
+                    }
+                    .signInWithAppleButtonStyle(.white)
+                    .frame(height: 50)
+                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.m))
+                }
             }
-            .padding(20)
+            .padding(24)
+            .background(Design.Color.paper)
             .onChange(of: email) { _ in
                 if confirmationSent { confirmationSent = false; error = nil }
                 if currentAction != nil { currentAction = nil }
@@ -132,6 +217,7 @@ struct AuthView: View {
         }
         currentAction = nil
     }
+    
     private func signUp() async {
         currentAction = .signUp
         isLoading = true; error = nil
@@ -142,7 +228,6 @@ struct AuthView: View {
             case .confirmationSent:
                 confirmationSent = true
             case .didSignIn:
-                // Session is set by AuthSessionManager when didSignIn.
                 break
             }
         } catch {
@@ -151,6 +236,7 @@ struct AuthView: View {
         isLoading = false
         currentAction = nil
     }
+    
     private func authCall(_ block: () async throws -> Void) async {
         isLoading = true; error = nil
         do {
@@ -160,7 +246,6 @@ struct AuthView: View {
                 let code = fe.supabaseErrorCode?.lowercased() ?? ""
                 let msg = fe.serverMessage?.lowercased() ?? ""
                 if code.contains("email_not_confirmed") || msg.contains("email not confirmed") {
-                    // Guide user into resend-confirmation UI
                     confirmationSent = true
                     self.error = nil
                 } else {
@@ -217,5 +302,3 @@ struct AuthView: View {
         return hashed.compactMap { String(format: "%02x", $0) }.joined()
     }
 }
-
-

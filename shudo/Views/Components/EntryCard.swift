@@ -5,17 +5,23 @@ struct EntryCard: View {
     var isProcessing: Bool = false
     var onDelete: (() -> Void)? = nil
 
-    @ScaledMetric(relativeTo: .body) private var thumb: CGFloat = 60
-    @ScaledMetric(relativeTo: .body) private var pad: CGFloat = 12
+    @ScaledMetric(relativeTo: .body) private var thumb: CGFloat = 44
+    
+    private var hasImage: Bool {
+        entry.imageURL != nil
+    }
     
     var body: some View {
-        HStack(alignment: .top, spacing: Design.Spacing.m) {
-            thumbnail
+        HStack(alignment: .center, spacing: 10) {
+            // Only show thumbnail if there's an image
+            if hasImage {
+                thumbnail
+            }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(entry.summary)
-                        .font(.system(size: 12, weight: .regular, design: .rounded))
+                        .font(.subheadline)
                         .foregroundStyle(isProcessing ? Design.Color.muted : Design.Color.ink)
                         .lineLimit(2)
                         .truncationMode(.tail)
@@ -24,27 +30,30 @@ struct EntryCard: View {
                     if isProcessing {
                         ProgressView()
                             .controlSize(.mini)
-                            .scaleEffect(0.7)
+                            .tint(Design.Color.accentPrimary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if isProcessing {
                     Text("Analyzing…")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(Design.Color.accentPrimary)
                 } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 12) {
-                            macro("P", entry.proteinG, unit: "g")
-                            macro("C", entry.carbsG, unit: "g")
-                            macro("F", entry.fatG, unit: "g")
-                        }
+                    HStack(spacing: 8) {
+                        macroChip(Design.Color.ringProtein, entry.proteinG)
+                        macroChip(Design.Color.ringCarb, entry.carbsG)
+                        macroChip(Design.Color.ringFat, entry.fatG)
                         
-                        Text("\(Int(entry.caloriesKcal.rounded())) kcal")
-                            .font(.system(size: 11, weight: .regular))
+                        Spacer()
+                        
+                        Text("\(Int(entry.caloriesKcal.rounded()))")
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(Design.Color.ink)
                             .monospacedDigit()
+                        + Text(" kcal")
+                            .font(.caption2)
+                            .foregroundStyle(Design.Color.muted)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(
@@ -58,21 +67,28 @@ struct EntryCard: View {
                 menuButton
             }
         }
-        .padding(pad)
-        .cardStyle()
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+                .fill(Design.Color.elevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+                .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+        )
         .opacity(isProcessing ? 0.7 : 1.0)
         .dynamicTypeSize(.xSmall ... .large)
     }
 
-    private func macro(_ label: String?, _ value: Double, unit: String) -> some View {
-        HStack(spacing: 4) {
-            if let label {
-                Text(label)
-                    .fontWeight(.regular)
-                    .foregroundStyle(Design.Color.muted)
-            }
-            Text("\(Int(value.rounded()))\(unit)")
-                .kerning(-0.2)
+    private func macroChip(_ color: Color, _ value: Double) -> some View {
+        HStack(spacing: 3) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+            Text("\(Int(value.rounded()))g")
+                .font(.caption2)
+                .foregroundStyle(Design.Color.muted)
+                .monospacedDigit()
         }
     }
 
@@ -85,14 +101,10 @@ struct EntryCard: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .imageScale(.medium)
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(Design.Color.muted)
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
-                                .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                        )
+                        .frame(width: 24, height: 24)
+                        .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: Design.Radius.s, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("More actions")
@@ -100,50 +112,32 @@ struct EntryCard: View {
         }
     }
 
-   private var thumbnail: some View {
-        ZStack {
-            if let url = entry.imageURL {
-                AsyncImage(url: url, transaction: .init(animation: .easeInOut)) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .transition(.opacity.combined(with: .scale))
-                    case .empty:
-                        placeholder
-                            .redacted(reason: .placeholder)
-                    case .failure:
-                        placeholder
-                    @unknown default:
-                        placeholder
-                    }
-                }
-            } else {
-                placeholder
+    private var thumbnail: some View {
+        AsyncImage(url: entry.imageURL, transaction: .init(animation: .easeInOut(duration: 0.2))) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .transition(.opacity)
+            case .empty:
+                Rectangle()
+                    .fill(Design.Color.elevated)
+                    .redacted(reason: .placeholder)
+            case .failure:
+                Rectangle()
+                    .fill(Design.Color.elevated)
+            @unknown default:
+                Rectangle()
+                    .fill(Design.Color.elevated)
             }
         }
         .frame(width: thumb, height: thumb)
-        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.s, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+            RoundedRectangle(cornerRadius: Design.Radius.s, style: .continuous)
                 .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
         )
-        .accessibilityLabel(entry.imageURL == nil ? "No photo" : "Meal photo")
-    } 
-
-    private var placeholder: some View {
-        ZStack {
-            Design.Color.fill
-            Image(systemName: "photo")
-                .font(.caption2)
-                .foregroundStyle(Design.Color.muted)
-        }
+        .accessibilityLabel("Meal photo")
     }
-
-    // retained for potential back-compat; unused after redesign
-    private func macroBadge(label: String, title: String, value: Double, tint: Color) -> some View { EmptyView() }
 }
-
-
-

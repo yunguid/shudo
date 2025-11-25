@@ -18,36 +18,20 @@ struct EntryComposerView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
-                    // Text input
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Notes", systemImage: "text.alignleft")
-                            .font(.subheadline.weight(.medium))
+                VStack(spacing: 24) {
+                    // Photo section - primary
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("PHOTO", systemImage: "camera.fill")
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(Design.Color.muted)
-                        
-                        TextField("What did you eat?", text: $text, axis: .vertical)
-                            .lineLimit(4...8)
-                            .textFieldStyle(.plain)
-                            .padding(14)
-                            .background(Design.Color.fill, in: RoundedRectangle(cornerRadius: Design.Radius.m))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: Design.Radius.m)
-                                    .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                            )
-                    }
-                    
-                    // Photo picker
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Photo", systemImage: "photo")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Design.Color.muted)
+                            .tracking(0.5)
                         
                         if let img = uiImage {
                             ZStack(alignment: .topTrailing) {
                                 Image(uiImage: img)
                                     .resizable()
                                     .scaledToFill()
-                                    .frame(maxHeight: 200)
+                                    .frame(maxHeight: 240)
                                     .clipShape(RoundedRectangle(cornerRadius: Design.Radius.l))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: Design.Radius.l)
@@ -55,45 +39,93 @@ struct EntryComposerView: View {
                                     )
                                 
                                 Button {
-                                    withAnimation { 
+                                    withAnimation(.easeInOut(duration: 0.2)) {
                                         uiImage = nil
                                         pickedImage = nil
                                     }
                                 } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.title2)
-                                        .symbolRenderingMode(.palette)
-                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                    Image(systemName: "xmark")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 28, height: 28)
+                                        .background(.black.opacity(0.6), in: Circle())
                                 }
-                                .padding(8)
+                                .padding(10)
                             }
                         } else {
                             PhotosPicker(selection: $pickedImage, matching: .images) {
-                                HStack {
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.title3)
-                                    Text("Add Photo")
+                                VStack(spacing: 12) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Design.Color.accentPrimary.opacity(0.1))
+                                            .frame(width: 56, height: 56)
+                                        Image(systemName: "camera.fill")
+                                            .font(.title3)
+                                            .foregroundStyle(Design.Color.accentPrimary)
+                                    }
+                                    Text("Add a photo of your meal")
                                         .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(Design.Color.ink)
+                                    Text("or describe it below")
+                                        .font(.caption)
+                                        .foregroundStyle(Design.Color.muted)
                                 }
-                                .foregroundStyle(Design.Color.accentPrimary)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 100)
-                                .background(Design.Color.fill, in: RoundedRectangle(cornerRadius: Design.Radius.l))
+                                .frame(height: 160)
+                                .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.l))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: Design.Radius.l)
-                                        .strokeBorder(Design.Color.accentPrimary.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [8]))
+                                        .strokeBorder(
+                                            Design.Color.accentPrimary.opacity(0.3),
+                                            style: StrokeStyle(lineWidth: 1.5, dash: [8])
+                                        )
                                 )
                             }
                         }
                     }
+                    
+                    // Text input
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("DESCRIPTION", systemImage: "text.alignleft")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Design.Color.muted)
+                            .tracking(0.5)
+                        
+                        TextField("What did you eat?", text: $text, axis: .vertical)
+                            .lineLimit(4...8)
+                            .textFieldStyle(.plain)
+                            .font(.body)
+                            .foregroundStyle(Design.Color.ink)
+                            .padding(16)
+                            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Design.Radius.m)
+                                    .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                            )
+                    }
+                    
+                    // Hint
+                    if uiImage == nil && text.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "lightbulb.fill")
+                                .foregroundStyle(Design.Color.warning)
+                            Text("Add a photo or description to log your meal")
+                                .font(.caption)
+                                .foregroundStyle(Design.Color.muted)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Design.Color.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                    }
                 }
                 .padding(20)
             }
-            .navigationTitle("Log Entry")
+            .navigationTitle("Log Meal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(Design.Color.muted)
                         .disabled(isSubmitting)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -103,9 +135,11 @@ struct EntryComposerView: View {
                         if isSubmitting {
                             ProgressView()
                                 .controlSize(.small)
+                                .tint(Design.Color.accentPrimary)
                         } else {
                             Text("Submit")
                                 .fontWeight(.semibold)
+                                .foregroundStyle(canSubmit ? Design.Color.accentPrimary : Design.Color.subtle)
                         }
                     }
                     .disabled(!canSubmit)
@@ -120,7 +154,7 @@ struct EntryComposerView: View {
                 guard let item = newValue else { return }
                 if let data = try? await item.loadTransferable(type: Data.self),
                    let img = UIImage(data: data) {
-                    withAnimation { uiImage = img }
+                    withAnimation(.easeInOut(duration: 0.2)) { uiImage = img }
                 }
             }
         }

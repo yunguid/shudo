@@ -11,7 +11,7 @@ struct RootView: View {
             if session.session == nil {
                 AuthView()
             } else if isLoadingProfile {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                loadingView
             } else if let p = profile {
                 if needsOnboarding(p) {
                     OnboardingFlowView(profile: p) {
@@ -21,24 +21,11 @@ struct RootView: View {
                     TodayView(profile: p)
                 }
             } else {
-                VStack(spacing: 12) {
-                    if let err = profileLoadError {
-                        Text(err)
-                            .foregroundStyle(.red)
-                    } else {
-                        Text("Loading…")
-                            .foregroundStyle(Design.Color.muted)
-                    }
-                    HStack(spacing: 12) {
-                        Button("Try Again") { reloadProfile() }
-                            .buttonStyle(.bordered)
-                        Button("Sign Out") { AuthSessionManager.shared.signOut() }
-                            .buttonStyle(.plain)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                errorView
             }
         }
+        .background(AppBackground())
+        .preferredColorScheme(.dark)
         .onAppear {
             if session.session != nil {
                 reloadProfile()
@@ -52,6 +39,50 @@ struct RootView: View {
                 profileLoadError = nil
             }
         }
+    }
+    
+    private var loadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(Design.Color.accentPrimary)
+            Text("Loading your profile…")
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.muted)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var errorView: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.largeTitle)
+                    .foregroundStyle(Design.Color.warning)
+                
+                if let err = profileLoadError {
+                    Text(err)
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.muted)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("Something went wrong")
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.muted)
+                }
+            }
+            
+            HStack(spacing: 12) {
+                Button("Try Again") { reloadProfile() }
+                    .buttonStyle(PrimaryButtonStyle())
+                
+                Button("Sign Out") { AuthSessionManager.shared.signOut() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Design.Color.muted)
+            }
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Gating
@@ -73,7 +104,6 @@ struct RootView: View {
                 let p = try await SupabaseService().ensureProfileDefaults()
                 await MainActor.run { self.profile = p }
             } catch {
-                // If auth is invalid (deleted user, invalid JWT), sign out
                 if let fe = error as? SupabaseAuthService.FriendlyAuthError, fe.httpStatus == 401 || fe.httpStatus == 403 {
                     await MainActor.run { AuthSessionManager.shared.signOut() }
                     return
@@ -91,5 +121,3 @@ struct RootView: View {
         }
     }
 }
-
-

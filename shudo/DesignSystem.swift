@@ -1,37 +1,46 @@
 import SwiftUI
 
 // MARK: - Design System
-// Brand-led palette and rational spacing/radii. Tuned for legibility.
+// Dark-first palette: deep blacks, electric blue, crisp white, accent green
 enum Design {
     enum Color {
-        // Neutrals (dark-first)
-        static let paper = SwiftUI.Color(red: 0.059, green: 0.075, blue: 0.067)            // #0F1311
-        static let ink   = SwiftUI.Color.white                                             // #FFFFFF for maximum legibility
-        static let muted = SwiftUI.Color(red: 0.607, green: 0.639, blue: 0.620)            // #9BA39E
+        // Core backgrounds (true dark)
+        static let paper = SwiftUI.Color(red: 0.035, green: 0.039, blue: 0.055)            // #090A0E - near black
+        static let elevated = SwiftUI.Color(red: 0.055, green: 0.063, blue: 0.090)         // #0E1017 - slightly lifted
+        
+        // Text
+        static let ink   = SwiftUI.Color.white                                             // Primary text
+        static let muted = SwiftUI.Color(red: 0.478, green: 0.502, blue: 0.565)            // #7A80A0 - muted blue-gray
+        static let subtle = SwiftUI.Color(red: 0.318, green: 0.345, blue: 0.408)           // #515868
 
-        // Hairlines / fills (glassy)
-        static let rule      = SwiftUI.Color.white.opacity(0.10) // slightly stronger hairline for clarity
-        static let glassFill = SwiftUI.Color.white.opacity(0.06) // card fill on dark
-        static let glassElev = SwiftUI.Color.white.opacity(0.08) // slight bump for elevated pills/chips
+        // Surface / Fills
+        static let rule      = SwiftUI.Color.white.opacity(0.08)                           // Hairlines
+        static let glassFill = SwiftUI.Color(red: 0.098, green: 0.110, blue: 0.149).opacity(0.7) // Card fill
+        static let glassElev = SwiftUI.Color(red: 0.118, green: 0.133, blue: 0.180).opacity(0.8) // Elevated elements
+        static let fill = glassFill
 
-        // Accents
-        static let accentPrimary   = SwiftUI.Color(red: 0.169, green: 0.541, blue: 0.431)  // #2B8A6E
-        static let accentSecondary = SwiftUI.Color(red: 0.514, green: 0.647, blue: 0.596)  // #83A598
+        // Primary accent - Electric Blue
+        static let accentPrimary   = SwiftUI.Color(red: 0.263, green: 0.522, blue: 0.957)  // #4385F4 - vibrant blue
+        static let accentSecondary = SwiftUI.Color(red: 0.392, green: 0.616, blue: 0.965)  // #649DF6 - lighter blue
+        
+        // Success / Positive - Fresh Green
+        static let success = SwiftUI.Color(red: 0.275, green: 0.824, blue: 0.475)          // #46D279 - fresh green
+        static let ok = success
 
-        // Macros
-        static let ringProtein = SwiftUI.Color(red: 0.827, green: 0.525, blue: 0.608)      // #D3869B (floral pink)
-        static let ringCarb    = SwiftUI.Color(red: 0.557, green: 0.753, blue: 0.486)      // #8EC07C
-        static let ringFat     = SwiftUI.Color(red: 0.847, green: 0.600, blue: 0.129)      // #D79921
+        // Macro rings - refined palette
+        static let ringProtein = SwiftUI.Color(red: 0.545, green: 0.710, blue: 0.996)      // #8BB5FE - soft blue
+        static let ringCarb    = SwiftUI.Color(red: 0.275, green: 0.824, blue: 0.475)      // #46D279 - green
+        static let ringFat     = SwiftUI.Color(red: 0.957, green: 0.757, blue: 0.263)      // #F4C143 - warm amber
 
         static func ring(_ c: SwiftUI.Color) -> SwiftUI.Color { c.opacity(0.96) }
 
-        static let danger = SwiftUI.Color(red: 0.918, green: 0.329, blue: 0.333)           // #EA5455
+        // Warning / Danger
+        static let danger = SwiftUI.Color(red: 0.976, green: 0.318, blue: 0.380)           // #F95161 - soft red
+        static let warning = SwiftUI.Color(red: 0.957, green: 0.757, blue: 0.263)          // #F4C143 - amber
 
-        // Back-compat aliases (minimize churn)
+        // Back-compat
         static let inkLegacy = ink
-        static let fill = glassFill
         static let accent = accentPrimary
-        static let ok = SwiftUI.Color(red: 0.28, green: 0.80, blue: 0.48)
     }
 
     enum Spacing {
@@ -44,15 +53,16 @@ enum Design {
     }
 
     enum Radius {
-        static let s:  CGFloat = 10
+        static let s:  CGFloat = 8
         static let m:  CGFloat = 12
-        static let l:  CGFloat = 14
-        static let xl: CGFloat = 22
+        static let l:  CGFloat = 16
+        static let xl: CGFloat = 24
         static let pill: CGFloat = 999
     }
 
     enum Stroke {
-        static let hairline: CGFloat = 1
+        static let hairline: CGFloat = 0.5
+        static let thin: CGFloat = 1
     }
 }
 
@@ -63,15 +73,17 @@ private struct CardBackground: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
-                    .fill(.ultraThinMaterial) // glass
-                    .background(Design.Color.glassFill) // subtle tint for dark
-                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous))
+                    .fill(Design.Color.glassFill)
+                    .background(
+                        RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
+                            .fill(.ultraThinMaterial.opacity(0.3))
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
                     .stroke(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.14), Color.white.opacity(0.06)],
+                            colors: [Color.white.opacity(0.10), Color.white.opacity(0.03)],
                             startPoint: .topLeading, endPoint: .bottomTrailing
                         ),
                         lineWidth: Design.Stroke.hairline
@@ -98,7 +110,7 @@ struct FieldBackground: ViewModifier {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
-                    .fill(Design.Color.fill)
+                    .fill(Design.Color.elevated)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
@@ -123,7 +135,11 @@ struct SectionHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.headline.weight(.semibold)).foregroundStyle(Design.Color.ink)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+                .textCase(.uppercase)
+                .tracking(0.5)
             if let s = subtitle {
                 Text(s).font(.footnote).foregroundStyle(Design.Color.muted)
             }
@@ -149,7 +165,7 @@ struct GaugeCapsule: View {
     let height: CGFloat
     let gradient: LinearGradient
 
-    init(progress: Double, height: CGFloat = 12, gradient: LinearGradient = LinearGradient(colors: [Design.Color.accentSecondary, Design.Color.accentPrimary], startPoint: .leading, endPoint: .trailing)) {
+    init(progress: Double, height: CGFloat = 10, gradient: LinearGradient = LinearGradient(colors: [Design.Color.accentSecondary, Design.Color.accentPrimary], startPoint: .leading, endPoint: .trailing)) {
         self.progress = progress
         self.height = height
         self.gradient = gradient
@@ -159,7 +175,7 @@ struct GaugeCapsule: View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .leading) {
-                Capsule().fill(Design.Color.rule.opacity(0.6))
+                Capsule().fill(Design.Color.elevated)
                 Capsule()
                     .fill(gradient)
                     .frame(width: max(0, min(width * max(0, min(progress, 1)), width)))
@@ -169,5 +185,37 @@ struct GaugeCapsule: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Progress")
         .accessibilityValue("\(Int(progress * 100)) percent")
+    }
+}
+
+// MARK: - Button Styles
+
+struct PrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(Design.Color.accentPrimary, in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+    }
+}
+
+struct SecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Design.Color.accentPrimary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+                    .stroke(Design.Color.accentPrimary.opacity(0.3), lineWidth: Design.Stroke.thin)
+            )
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
 }
