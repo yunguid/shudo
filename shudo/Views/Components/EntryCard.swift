@@ -92,22 +92,28 @@ struct EntryCard: View {
         }
     }
 
+    @State private var showDeleteConfirmation = false
+    
     private var menuButton: some View {
         Group {
             if onDelete != nil {
-                Menu {
-                    Button(role: .destructive) { onDelete?() } label: {
-                        Label("Delete Entry", systemImage: "trash")
-                    }
+                Button {
+                    showDeleteConfirmation = true
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.caption2.weight(.semibold))
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.bold))
                         .foregroundStyle(Design.Color.muted)
                         .frame(width: 24, height: 24)
                         .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: Design.Radius.s, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("More actions")
+                .accessibilityLabel("Delete entry")
+                .confirmationDialog("Delete this entry?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+                    Button("Delete", role: .destructive) { onDelete?() }
+                    Button("Cancel", role: .cancel) { }
+                } message: {
+                    Text("This action cannot be undone.")
+                }
             }
         }
     }

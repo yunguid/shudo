@@ -39,14 +39,37 @@ final class AuthSessionManager: ObservableObject {
     }
 
     func getAccessToken() async throws -> String {
-        if let s = session, s.expiresAt.timeIntervalSinceNow > 60 { return s.accessToken }
+        // If token is valid for more than 5 minutes, use it
+        if let s = session, s.expiresAt.timeIntervalSinceNow > 300 { return s.accessToken }
+        
+        // Try to refresh if we have a session
         if let s = session {
+            do {
+                let refreshed = try await service.refresh(refreshToken: s.refreshToken)
+                await MainActor.run { self.session = refreshed }
+                saveToKeychain(refreshed)
+                return refreshed.accessToken
+            } catch {
+                // Refresh failed - clear stale session and force re-login
+                await MainActor.run { self.signOut() }
+                throw NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Session expired. Please sign in again."])
+            }
+        }
+        throw NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])
+    }
+    
+    /// Call on app foreground to proactively refresh token if needed
+    func refreshIfNeeded() async {
+        guard let s = session else { return }
+        // Refresh if token expires within 10 minutes
+        guard s.expiresAt.timeIntervalSinceNow < 600 else { return }
+        do {
             let refreshed = try await service.refresh(refreshToken: s.refreshToken)
             await MainActor.run { self.session = refreshed }
             saveToKeychain(refreshed)
-            return refreshed.accessToken
+        } catch {
+            // Silent fail - will force re-login on next API call
         }
-        throw NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])
     }
 
     private func saveToKeychain(_ s: SupabaseAuthService.Session) {
