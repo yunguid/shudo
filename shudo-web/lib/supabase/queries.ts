@@ -7,6 +7,29 @@ export async function fetchProfile(supabase: SupabaseClient, userId: string): Pr
   return data as Profile | null
 }
 
+export async function fetchTodayData(supabase: SupabaseClient, userId: string): Promise<{ totals: DayTotals; entries: Entry[] }> {
+  const today = formatLocalDay(new Date())
+  
+  const { data } = await supabase
+    .from('entries')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'complete')
+    .eq('local_day', today)
+    .order('created_at', { ascending: false })
+
+  const entries = (data as Entry[]) || []
+  const totals: DayTotals = {
+    local_day: today,
+    total_calories: entries.reduce((sum, e) => sum + (e.calories_kcal || 0), 0),
+    total_protein: entries.reduce((sum, e) => sum + (e.protein_g || 0), 0),
+    total_carbs: entries.reduce((sum, e) => sum + (e.carbs_g || 0), 0),
+    total_fat: entries.reduce((sum, e) => sum + (e.fat_g || 0), 0),
+    entry_count: entries.length,
+  }
+  return { totals, entries }
+}
+
 export async function fetchDailyTotals(supabase: SupabaseClient, userId: string, startDate: Date, endDate: Date): Promise<DayTotals[]> {
   const { data } = await supabase
     .from('entries')
@@ -39,17 +62,6 @@ export async function fetchDailyTotals(supabase: SupabaseClient, userId: string,
     }
   }
   return Array.from(dayMap.values()).sort((a, b) => a.local_day.localeCompare(b.local_day))
-}
-
-export async function fetchRecentEntries(supabase: SupabaseClient, userId: string, limit = 4): Promise<Entry[]> {
-  const { data } = await supabase
-    .from('entries')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'complete')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  return (data as Entry[]) || []
 }
 
 export async function fetchAllEntries(
