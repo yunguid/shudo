@@ -71,8 +71,11 @@ final class TodayViewModel: ObservableObject {
 
     func deleteEntry(_ entry: Entry) async {
         guard let tz = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier as String? else { return }
-        // Optimistic UI: remove locally and adjust totals
-        let previous = entries
+        // Optimistic UI: save previous state for complete rollback
+        let previousEntries = entries
+        let previousTotals = todayTotals
+
+        // Update UI optimistically
         entries.removeAll { $0.id == entry.id }
         todayTotals = DayTotals(
             proteinG: todayTotals.proteinG - entry.proteinG,
@@ -94,8 +97,10 @@ final class TodayViewModel: ObservableObject {
             // Refresh authoritative entries/totals for the day
             await load(day: currentDay)
         } catch {
-            // Revert on failure
-            entries = previous
+            // Revert BOTH entries AND totals on failure
+            entries = previousEntries
+            todayTotals = previousTotals
+            errorMessage = "Failed to delete entry. Please try again."
         }
     }
 
@@ -141,8 +146,9 @@ final class TodayViewModel: ObservableObject {
             processingEntryIds.insert(newId)
             
             // Poll in background - don't block the UI
+            // Use 5 minute timeout to handle slow networks and heavy AI processing
             Task {
-                await pollAndRefresh(entryId: newId, timeoutSeconds: 120)
+                await pollAndRefresh(entryId: newId, timeoutSeconds: 300)
             }
         } catch {
             errorMessage = (error as NSError).userInfo["body"] as? String ?? error.localizedDescription
@@ -215,8 +221,9 @@ final class TodayViewModel: ObservableObject {
                 }
             } catch {
                 consecutiveErrors += 1
-                // Allow a few transient failures before giving up
-                if consecutiveErrors >= 5 {
+                // Allow more transient failures on unreliable networks
+                // With backoff starting at 0.6s -> 3s max, 10 retries = ~25s window
+                if consecutiveErrors >= 10 {
                     throw error
                 }
             }

@@ -49,8 +49,21 @@ export function getDateRangeForDays(days: number): { start: Date; end: Date } {
   return { start, end }
 }
 
-export function formatLocalDay(date: Date): string {
-  return date.toISOString().split('T')[0]
+/**
+ * Formats a date as YYYY-MM-DD in the user's local timezone.
+ * IMPORTANT: Do NOT use toISOString() as it converts to UTC first,
+ * which causes dates to shift by a day for users not in UTC.
+ */
+export function formatLocalDay(date: Date, timezone?: string): string {
+  if (timezone) {
+    // Use specified timezone
+    return date.toLocaleDateString('en-CA', { timeZone: timezone }) // en-CA gives YYYY-MM-DD format
+  }
+  // Use local timezone - manually construct to avoid UTC conversion
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 export function parseLocalDay(localDay: string): Date {

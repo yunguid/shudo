@@ -1,6 +1,27 @@
 import Foundation
 
 struct SupabaseService {
+    /// Errors that can occur during Supabase operations
+    enum ServiceError: LocalizedError {
+        case networkError(underlying: Error)
+        case serverError(statusCode: Int, message: String?)
+        case parseError(message: String)
+        case notFound(resource: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .networkError(let underlying):
+                return "Network error: \(underlying.localizedDescription)"
+            case .serverError(let code, let message):
+                return message ?? "Server error (\(code))"
+            case .parseError(let message):
+                return "Failed to parse response: \(message)"
+            case .notFound(let resource):
+                return "\(resource) not found"
+            }
+        }
+    }
+
     struct TodayStatusDTO: Decodable { /* unused; keeping for reference */
         let user_id: String
         let target_protein_g: Double
@@ -109,9 +130,24 @@ struct SupabaseService {
         req.httpMethod = "GET"
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let obj = arr.first else { return nil }
+
+        let (data, resp): (Data, URLResponse)
+        do {
+            (data, resp) = try await URLSession.shared.data(for: req)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+
+        guard let http = resp as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(statusCode: http.statusCode, message: "Failed to fetch profile")
+        }
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError.parseError(message: "Invalid JSON response")
+        }
+        guard let obj = arr.first else { return nil } // No profile found is valid (not an error)
         
         let tz = obj["timezone"] as? String ?? TimeZone.autoupdatingCurrent.identifier
         let targetDict = Self.parseJSONIfString(obj["daily_macro_target"]) ?? [:]
@@ -207,9 +243,23 @@ struct SupabaseService {
         req.httpMethod = "GET"
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return [] }
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+
+        let (data, resp): (Data, URLResponse)
+        do {
+            (data, resp) = try await URLSession.shared.data(for: req)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+
+        guard let http = resp as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(statusCode: http.statusCode, message: "Failed to fetch entries")
+        }
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError.parseError(message: "Invalid JSON response")
+        }
 
         var results: [Entry] = []
         for obj in arr {
@@ -386,9 +436,24 @@ struct SupabaseService {
         req.httpMethod = "GET"
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let obj = arr.first else { return nil }
+
+        let (data, resp): (Data, URLResponse)
+        do {
+            (data, resp) = try await URLSession.shared.data(for: req)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+
+        guard let http = resp as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(statusCode: http.statusCode, message: "Failed to fetch entry detail")
+        }
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError.parseError(message: "Invalid JSON response")
+        }
+        guard let obj = arr.first else { return nil } // Entry not found is valid
 
         let idStr = obj["id"] as? String ?? id.uuidString
         let createdAtStr = obj["created_at"] as? String ?? ""
