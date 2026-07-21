@@ -1,124 +1,169 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
-import { Card, CardContent } from '@/components/ui/card'
-import { fetchTodayData, fetchDailyTotals, fetchProfile, summarizeEntry } from '@/lib/supabase/queries'
-import { getDateRangeForDays } from '@/lib/utils'
-import { format, parseISO } from 'date-fns'
 import Link from 'next/link'
+import { Camera, MoveRight } from 'lucide-react'
+import { redirect } from 'next/navigation'
+import { DayNavigator } from '@/components/day-navigator'
+import { getCurrentUser } from '@/lib/auth'
+import {
+  fetchDayData,
+  fetchDayTotals,
+  fetchProfileSettings,
+  summarizeEntry,
+} from '@/lib/supabase/queries'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+import {
+  clampPercent,
+  formatEntryTime,
+  formatLocalDay,
+  formatShortDay,
+  isLocalDay,
+  resolveEntryTimestamp,
+} from '@/lib/utils'
 
-export default async function DashboardPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+interface DashboardPageProps {
+  searchParams: Promise<{ day?: string | string[] }>
+}
 
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const user = await getCurrentUser()
   if (!user) redirect('/auth/login')
 
-  const [profile, todayData, last7Days] = await Promise.all([
-    fetchProfile(supabase, user.id),
-    fetchTodayData(supabase, user.id),
-    fetchDailyTotals(supabase, user.id, getDateRangeForDays(7).start, getDateRangeForDays(7).end),
+  const supabase = await createServerSupabaseClient()
+  const profile = await fetchProfileSettings(supabase, user.id)
+  const todayDay = formatLocalDay(new Date(), profile.timezone)
+  const { day } = await searchParams
+  const requestedDay = Array.isArray(day) ? day[0] : day
+  const selectedDay = isLocalDay(requestedDay) && requestedDay <= todayDay ? requestedDay : todayDay
+
+  const [{ totals, entries }, recentDays] = await Promise.all([
+    fetchDayData(supabase, user.id, selectedDay),
+    fetchDayTotals(supabase, user.id, selectedDay),
   ])
 
-  const targetProtein = profile?.daily_macro_target?.protein_g || 150
-  const targetCalories = profile?.daily_macro_target?.calories_kcal || 2200
-  const { totals: today, entries: todayEntries } = todayData
-
-  const calPct = Math.min((today.total_calories / targetCalories) * 100, 100)
-  const proteinPct = Math.min((today.total_protein / targetProtein) * 100, 100)
+  const target = profile.dailyMacroTarget
+  const calorieProgress = clampPercent((totals.total_calories / target.calories_kcal) * 100)
+  const macroMetrics = [
+    { label: 'Protein', value: totals.total_protein, target: target.protein_g, color: 'text-protein' },
+    { label: 'Carbs', value: totals.total_carbs, target: target.carbs_g, color: 'text-carbs' },
+    { label: 'Fat', value: totals.total_fat, target: target.fat_g, color: 'text-fat' },
+  ] as const
 
   return (
-    <div className="min-h-screen p-6 space-y-6">
-      {/* TODAY - Hero */}
-      <div>
-        <h1 className="text-sm font-medium text-muted mb-4">Today</h1>
-        
-        {/* Progress bars */}
-        <div className="space-y-4">
-          {/* Calories */}
+    <div className="space-y-8">
+      <header className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+        <DayNavigator selectedDay={selectedDay} todayDay={todayDay} />
+        <p className="text-xs text-subtle">Day boundary · {profile.timezone}</p>
+      </header>
+
+      <section aria-labelledby="daily-total-heading" className="rounded-[2rem] bg-surface/75 p-6 shadow-2xl shadow-black/20 sm:p-8">
+        <div className="flex flex-col justify-between gap-8 md:flex-row md:items-end">
           <div>
-            <div className="flex justify-between items-baseline mb-1.5">
-              <span className="text-2xl font-bold font-mono text-ink">{today.total_calories.toFixed(0)}</span>
-              <span className="text-xs text-muted">/ {targetCalories} cal</span>
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">Daily energy</p>
+            <div className="mt-3 flex items-baseline gap-2">
+              <h1 id="daily-total-heading" className="font-mono text-5xl font-medium tracking-[-0.06em] text-ink sm:text-6xl">
+                {Math.round(totals.total_calories).toLocaleString()}
+              </h1>
+              <span className="text-sm text-muted">/ {target.calories_kcal.toLocaleString()} kcal</span>
             </div>
-            <div className="h-2 bg-elevated rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-accent rounded-full transition-all duration-500" 
-                style={{ width: `${calPct}%` }} 
-              />
-            </div>
+            <progress
+              aria-label={`${Math.round(calorieProgress)} percent of calorie target`}
+              className="mt-5 h-2 w-full overflow-hidden rounded-full bg-surface-strong accent-accent sm:w-96"
+              max="100"
+              value={calorieProgress}
+            />
           </div>
 
-          {/* Protein */}
-          <div>
-            <div className="flex justify-between items-baseline mb-1.5">
-              <span className="text-2xl font-bold font-mono text-ink">{today.total_protein.toFixed(0)}<span className="text-sm text-muted ml-1">g</span></span>
-              <span className="text-xs text-muted">/ {targetProtein}g protein</span>
-            </div>
-            <div className="h-2 bg-elevated rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-ring-protein rounded-full transition-all duration-500" 
-                style={{ width: `${proteinPct}%` }} 
-              />
-            </div>
-          </div>
+          <dl className="grid grid-cols-3 gap-7 sm:gap-10">
+            {macroMetrics.map((macro) => (
+              <div key={macro.label}>
+                <dt className="text-xs text-muted">{macro.label}</dt>
+                <dd className={`mt-1 font-mono text-xl font-medium ${macro.color}`}>
+                  {Math.round(macro.value)}g
+                </dd>
+                <dd className="mt-0.5 text-[11px] text-subtle">of {macro.target}g</dd>
+              </div>
+            ))}
+          </dl>
         </div>
-      </div>
+      </section>
 
-      {/* Today's meals */}
-      {todayEntries.length > 0 && (
-        <Card>
-          <CardContent className="p-0">
-            <div className="divide-y divide-rule">
-              {todayEntries.map((entry) => (
-                <div key={entry.id} className="flex items-center justify-between px-4 py-3">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1.35fr)_minmax(16rem,0.65fr)]">
+        <section aria-labelledby="entries-heading">
+          <div className="mb-3 flex items-center justify-between px-1">
+            <h2 id="entries-heading" className="text-sm font-medium text-ink">Meals</h2>
+            <span className="text-xs text-subtle">{totals.entry_count} logged</span>
+          </div>
+
+          {entries.length ? (
+            <div className="overflow-hidden rounded-[1.75rem] bg-surface/60">
+              {entries.map((entry) => (
+                <article className="flex items-center gap-4 px-5 py-4 transition hover:bg-surface-strong/70" key={entry.id}>
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-surface-strong text-muted">
+                    {entry.image_path ? (
+                      <Camera aria-hidden="true" className="h-4 w-4" />
+                    ) : (
+                      <span className="h-2 w-2 rounded-full bg-accent/80" />
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-ink truncate">{summarizeEntry(entry)}</p>
-                    <p className="text-[10px] text-muted">{format(parseISO(entry.created_at), 'h:mm a')}</p>
+                    <p className="truncate text-sm text-ink">{summarizeEntry(entry)}</p>
+                    <time className="mt-1 block text-xs text-subtle" dateTime={resolveEntryTimestamp(entry.occurred_at, entry.created_at)}>
+                      {formatEntryTime(resolveEntryTimestamp(entry.occurred_at, entry.created_at), profile.timezone)}
+                    </time>
                   </div>
-                  <div className="flex items-center gap-3 ml-3 text-xs font-mono">
-                    <span className="text-muted">{entry.calories_kcal?.toFixed(0)}</span>
-                    <span className="text-ring-protein">{entry.protein_g?.toFixed(0)}g</span>
+                  <div className="shrink-0 text-right font-mono">
+                    <p className="text-sm text-ink">{Math.round(entry.calories_kcal ?? 0)}</p>
+                    <p className="mt-1 text-[11px] text-protein">{Math.round(entry.protein_g ?? 0)}g protein</p>
                   </div>
-                </div>
+                </article>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          ) : (
+            <div className="rounded-[1.75rem] bg-surface/50 px-6 py-14 text-center">
+              <p className="text-sm text-muted">Nothing logged for this day.</p>
+              <p className="mt-1 text-xs text-subtle">Entries added on your phone will appear here.</p>
+            </div>
+          )}
+        </section>
 
-      {todayEntries.length === 0 && (
-        <div className="text-center py-8 text-sm text-muted">
-          No meals logged today
-        </div>
-      )}
-
-      {/* 7-day history */}
-      {last7Days.length > 1 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-medium text-muted uppercase tracking-wide">This Week</h2>
-            <Link href="/meals" className="text-[10px] text-accent hover:underline">All meals</Link>
+        <section aria-labelledby="recent-heading">
+          <div className="mb-3 flex items-center justify-between px-1">
+            <h2 id="recent-heading" className="text-sm font-medium text-ink">Seven days</h2>
+            <Link
+              className="flex min-h-11 items-center gap-1 rounded-xl px-2 text-xs text-accent hover:bg-accent/10 hover:text-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              href="/meals"
+            >
+              History <MoveRight aria-hidden="true" className="h-3.5 w-3.5" />
+            </Link>
           </div>
-          <div className="grid grid-cols-7 gap-1">
-            {last7Days.map((day) => {
-              const pct = Math.min((day.total_calories / targetCalories) * 100, 100)
-              return (
-                <div key={day.local_day} className="text-center">
-                  <div className="h-16 bg-elevated rounded relative overflow-hidden">
-                    <div 
-                      className="absolute bottom-0 left-0 right-0 bg-accent/60 transition-all"
-                      style={{ height: `${pct}%` }}
+
+          <div className="rounded-[1.75rem] bg-surface/60 px-4 pb-4 pt-6">
+            <div className="grid h-36 grid-cols-7 items-end gap-2">
+              {recentDays.map((dayTotal) => {
+                const height = clampPercent((dayTotal.total_calories / target.calories_kcal) * 100)
+                const isSelected = dayTotal.local_day === selectedDay
+                return (
+                  <Link
+                    aria-label={`${formatShortDay(dayTotal.local_day)}: ${Math.round(dayTotal.total_calories)} calories`}
+                    className="group flex h-full items-end rounded-xl bg-surface-strong/55 p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    href={`/?day=${dayTotal.local_day}`}
+                    key={dayTotal.local_day}
+                  >
+                    <span
+                      className={`block w-full rounded-lg transition group-hover:brightness-110 ${isSelected ? 'bg-accent' : 'bg-accent/35'}`}
+                      style={{ height: `${Math.max(height, dayTotal.entry_count ? 4 : 0)}%` }}
                     />
-                  </div>
-                  <p className="text-[9px] text-muted mt-1">{format(parseISO(day.local_day), 'EEE')}</p>
-                </div>
-              )
-            })}
+                  </Link>
+                )
+              })}
+            </div>
+            <div aria-hidden="true" className="mt-3 grid grid-cols-7 gap-2 text-center text-[10px] uppercase tracking-wide text-subtle">
+              {recentDays.map((dayTotal) => (
+                <span key={dayTotal.local_day}>{formatShortDay(dayTotal.local_day)}</span>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        </section>
+      </div>
     </div>
   )
 }
-
-
-

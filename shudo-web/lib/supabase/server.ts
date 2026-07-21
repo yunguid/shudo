@@ -1,32 +1,28 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import 'server-only'
+
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { getSupabasePublicConfig } from '@/lib/supabase/config'
+import type { Database } from '@/types/database'
 
-export async function createClient() {
+export async function createServerSupabaseClient() {
   const cookieStore = await cookies()
+  const { url, key } = getSupabasePublicConfig()
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {
-            // The `setAll` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
-          }
-        },
+  return createServerClient<Database>(url, key, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll()
       },
-    }
-  )
+      setAll(cookiesToSet) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options)
+          })
+        } catch {
+          // Server Components cannot write cookies. proxy.ts refreshes them.
+        }
+      },
+    },
+  })
 }
-
-
-

@@ -49,15 +49,27 @@ struct AccountView: View {
                             infoRow(icon: "ruler", label: "Units", value: p.units.capitalized)
                             if let h = p.heightCM {
                                 Divider().background(Design.Color.rule)
-                                infoRow(icon: "arrow.up.and.down", label: "Height", value: "\(Int(h)) cm")
+                                infoRow(
+                                    icon: "arrow.up.and.down",
+                                    label: "Height",
+                                    value: heightText(h, units: p.units)
+                                )
                             }
                             if let w = p.weightKG {
                                 Divider().background(Design.Color.rule)
-                                infoRow(icon: "scalemass", label: "Weight", value: "\(String(format: "%.1f", w)) kg")
+                                infoRow(
+                                    icon: "scalemass",
+                                    label: "Weight",
+                                    value: weightText(w, units: p.units)
+                                )
                             }
                             if let t = p.targetWeightKG {
                                 Divider().background(Design.Color.rule)
-                                infoRow(icon: "target", label: "Goal", value: "\(String(format: "%.1f", t)) kg")
+                                infoRow(
+                                    icon: "target",
+                                    label: "Goal",
+                                    value: weightText(t, units: p.units)
+                                )
                             }
                         }
                         .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.l))
@@ -179,6 +191,20 @@ struct AccountView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+    }
+
+    private func heightText(_ centimeters: Double, units: String) -> String {
+        guard units.lowercased() == "imperial" else {
+            return "\(Int(centimeters.rounded())) cm"
+        }
+        let totalInches = Int((centimeters / 2.54).rounded())
+        return "\(totalInches / 12)′ \(totalInches % 12)″"
+    }
+
+    private func weightText(_ kilograms: Double, units: String) -> String {
+        let value = units.lowercased() == "imperial" ? kilograms * 2.20462 : kilograms
+        let suffix = units.lowercased() == "imperial" ? "lb" : "kg"
+        return "\(String(format: "%.1f", value)) \(suffix)"
     }
 
     private func load() async {

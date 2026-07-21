@@ -19,7 +19,9 @@ struct shudoApp: App {
             }
             .tint(Design.Color.accentPrimary)
             .preferredColorScheme(.dark)
-            .onOpenURL { _ in }
+            .onOpenURL { url in
+                AppRouter.shared.handle(url: url)
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     Task { await AuthSessionManager.shared.refreshIfNeeded() }

@@ -3,120 +3,67 @@ import SwiftUI
 struct RootView: View {
     @ObservedObject private var session = AuthSessionManager.shared
     @State private var profile: Profile?
-    @State private var isLoadingProfile = false
-    @State private var profileLoadError: String?
+    @State private var refreshGeneration = UUID()
 
     var body: some View {
         Group {
             if session.session == nil {
                 AuthView()
-            } else if isLoadingProfile {
-                loadingView
-            } else if let p = profile {
-                if needsOnboarding(p) {
-                    OnboardingFlowView(profile: p) {
-                        reloadProfile()
-                    }
-                } else {
-                    TodayView(profile: p)
-                }
+            } else if let profile {
+                TodayView(profile: profile)
+                    .id(profile.userId)
             } else {
-                errorView
+                loadingView
             }
         }
         .background(AppBackground())
         .preferredColorScheme(.dark)
         .onAppear {
-            if session.session != nil {
-                reloadProfile()
-            }
+            if session.session != nil { prepareProfile() }
         }
-        .onChange(of: session.session) { newVal in
-            if newVal != nil {
-                reloadProfile()
-            } else {
+        .onChange(of: session.session) { _, newSession in
+            if newSession == nil {
                 profile = nil
-                profileLoadError = nil
+                refreshGeneration = UUID()
+            } else {
+                prepareProfile()
             }
         }
     }
-    
+
     private var loadingView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             ProgressView()
                 .controlSize(.large)
                 .tint(Design.Color.accentPrimary)
-            Text("Loading your profile…")
+            Text("Opening Shudo…")
                 .font(.subheadline)
                 .foregroundStyle(Design.Color.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
-    private var errorView: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.largeTitle)
-                    .foregroundStyle(Design.Color.warning)
-                
-                if let err = profileLoadError {
-                    Text(err)
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.muted)
-                        .multilineTextAlignment(.center)
-                } else {
-                    Text("Something went wrong")
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.muted)
-                }
-            }
-            
-            HStack(spacing: 12) {
-                Button("Try Again") { reloadProfile() }
-                    .buttonStyle(PrimaryButtonStyle())
-                
-                Button("Sign Out") { AuthSessionManager.shared.signOut() }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Design.Color.muted)
-            }
-        }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 
-    // MARK: - Gating
+    private func prepareProfile() {
+        let userId = session.userId
+        profile = ProfileCache.load(userId: userId) ?? ProfileCache.fallback(userId: userId)
 
-    private func needsOnboarding(_ p: Profile) -> Bool {
-        let invalidNumbers = (p.heightCM ?? 0) <= 0 || (p.weightKG ?? 0) <= 0 || (p.targetWeightKG ?? 0) <= 0
-        let validActivities = ["sedentary","light","moderate","active","extra_active"]
-        let invalidActivity = !(p.activityLevel.flatMap { validActivities.contains($0) } ?? false)
-        let cutoffEmpty = (p.cutoffTimeLocal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        return invalidNumbers || invalidActivity || cutoffEmpty
-    }
-
-    private func reloadProfile() {
-        isLoadingProfile = true
-        profileLoadError = nil
+        let generation = UUID()
+        refreshGeneration = generation
         Task {
-            defer { isLoadingProfile = false }
             do {
-                let p = try await SupabaseService().ensureProfileDefaults()
-                await MainActor.run { self.profile = p }
+                let fresh = try await SupabaseService().ensureProfileDefaults()
+                guard refreshGeneration == generation else { return }
+                ProfileCache.save(fresh)
+                await MainActor.run { profile = fresh }
             } catch {
-                if let fe = error as? SupabaseAuthService.FriendlyAuthError, fe.httpStatus == 401 || fe.httpStatus == 403 {
+                guard refreshGeneration == generation else { return }
+                let friendlyStatus = (error as? SupabaseAuthService.FriendlyAuthError)?.httpStatus
+                let serviceAuthenticationFailure =
+                    (error as? SupabaseService.ServiceError)?.isAuthenticationFailure == true
+                if friendlyStatus == 401 || friendlyStatus == 403 || serviceAuthenticationFailure {
                     await MainActor.run { AuthSessionManager.shared.signOut() }
-                    return
                 }
-                let ns = error as NSError
-                if ns.domain == "Auth" || ns.code == -1 {
-                    await MainActor.run { AuthSessionManager.shared.signOut() }
-                    return
-                }
-                await MainActor.run {
-                    self.profile = nil
-                    self.profileLoadError = "Failed to load your profile. Please try again."
-                }
+                // Keep the cached/default profile on transient network or server failure.
             }
         }
     }

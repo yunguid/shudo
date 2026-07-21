@@ -1,95 +1,56 @@
-# Shudo Web Analytics
+# Shudo Web
 
-A companion web dashboard for the Shudo iOS app, providing deep analytics and visualization of nutrition habits over time.
+A private, view-only desktop companion for the Shudo iPhone app. It shows one timezone-correct nutrition day at a time and a paginated history of completed meal entries.
 
-## Features
+## What it does
 
-- **Dashboard** - At-a-glance view with streak counter, weekly comparisons, and trend sparklines
-- **Trends** - Stacked area charts, calorie heatmaps, and goal achievement tracking
-- **Meals Log** - Searchable, paginated table of all logged meals
-- **Insights** - Meal timing analysis, weekday vs weekend patterns, and consistency scoring
+- Email magic-link sign-in for an existing Shudo account
+- Explicit previous/next-day navigation using `profiles.timezone`
+- Daily calorie and macro totals
+- Recent seven-day context
+- Read-only meal history
 
-## Tech Stack
+New accounts are not created from the web login. Create the owner account in Supabase first and keep public signups disabled.
 
-- **Framework**: Next.js 14 (App Router)
-- **Auth**: Supabase Auth (same as iOS app)
-- **Styling**: Tailwind CSS
-- **Charts**: Recharts
-- **Database**: Supabase (shared with iOS)
+## Local setup
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- npm or yarn
-- A Supabase project (shared with Shudo iOS app)
-
-### Installation
+Requirements: Node.js 24.x and access to the same Supabase project used by the iOS app.
 
 ```bash
-cd shudo-web
-npm install
-```
-
-### Environment Variables
-
-Create a `.env.local` file (already included) with your Supabase credentials:
-
-```
-NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-```
-
-### Development
-
-```bash
+cp .env.example .env.local
+npm ci
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Fill these public client settings in `.env.local`:
 
-### Production Build
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+```
+
+The legacy `NEXT_PUBLIC_SUPABASE_ANON_KEY` is accepted as a fallback. Never place a service-role key in a `NEXT_PUBLIC_` variable.
+
+## Verification
 
 ```bash
+npm test
+npm run lint
+npm run typecheck
 npm run build
-npm start
 ```
 
-## Project Structure
+## Vercel
 
-```
-shudo-web/
-├── app/
-│   ├── (dashboard)/        # Protected dashboard routes
-│   │   ├── page.tsx        # Dashboard home
-│   │   ├── trends/         # Trends page
-│   │   ├── meals/          # Meals log
-│   │   └── insights/       # Insights page
-│   ├── auth/               # Auth routes
-│   └── layout.tsx          # Root layout
-├── components/
-│   ├── charts/             # Recharts components
-│   ├── dashboard/          # Dashboard-specific components
-│   ├── insights/           # Insights cards
-│   ├── layout/             # Sidebar, header
-│   └── ui/                 # Reusable UI primitives
-├── lib/
-│   ├── supabase/           # Supabase clients & queries
-│   └── utils.ts            # Helper functions
-└── types/
-    └── database.ts         # TypeScript types
-```
+Connect the repository and set the Vercel project Root Directory to `shudo-web`. Add both public Supabase variables to Development, Preview, and Production, then add the deployed `/auth/callback` URL to Supabase Auth redirect URLs.
 
-## Authentication
+Generate one random secret of at least 32 characters. Configure it as
+`CRON_SECRET` in Vercel and as `SHUDO_CLEANUP_SECRET` in Supabase. The production
+deployment invokes `/api/cron/keepalive` once daily; the route verifies Vercel's
+bearer secret and relays an idempotent cleanup drain to Supabase. This supplies
+an external database request during a quiet week without exposing a public
+database health function. It supplements the fifteen-minute Supabase cleanup
+schedule and stays within Vercel Hobby's once-daily cron limit.
 
-Uses Supabase Magic Link authentication. Users sign in with the same email as their Shudo iOS app to access their data.
-
-## Design System
-
-Dark theme matching the iOS app:
-- Background: `#090A0E` (paper)
-- Elevated: `#0E1017`
-- Accent: `#4385F4` (electric blue)
-- Success: `#46D279` (fresh green)
-- Macro colors: Protein `#8BB5FE`, Carbs `#46D279`, Fat `#F4C143`
+The Vercel project is linked only through ignored local `.vercel/` metadata; no
+deployment credentials or project identifiers are committed.

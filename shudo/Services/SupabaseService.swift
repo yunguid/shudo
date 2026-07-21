@@ -1,12 +1,23 @@
 import Foundation
 
-struct SupabaseService {
+struct SupabaseService: Sendable {
+    static let signedImageConcurrencyLimit = 4
+
+    private struct ParsedEntry {
+        var entry: Entry
+        let imagePath: String?
+    }
+
     /// Errors that can occur during Supabase operations
     enum ServiceError: LocalizedError {
         case networkError(underlying: Error)
         case serverError(statusCode: Int, message: String?)
         case parseError(message: String)
-        case notFound(resource: String)
+
+        var isAuthenticationFailure: Bool {
+            guard case .serverError(let statusCode, _) = self else { return false }
+            return statusCode == 401 || statusCode == 403
+        }
 
         var errorDescription: String? {
             switch self {
@@ -16,22 +27,8 @@ struct SupabaseService {
                 return message ?? "Server error (\(code))"
             case .parseError(let message):
                 return "Failed to parse response: \(message)"
-            case .notFound(let resource):
-                return "\(resource) not found"
             }
         }
-    }
-
-    struct TodayStatusDTO: Decodable { /* unused; keeping for reference */
-        let user_id: String
-        let target_protein_g: Double
-        let target_carbs_g: Double
-        let target_fat_g: Double
-        let target_calories_kcal: Double
-        let consumed_protein_g: Double?
-        let consumed_carbs_g: Double?
-        let consumed_fat_g: Double?
-        let consumed_calories_kcal: Double?
     }
 
     let supabaseUrl: URL = AppConfig.supabaseURL
@@ -56,31 +53,52 @@ struct SupabaseService {
         return nil
     }
     
-    private static func summarize(from modelOutput: Any?, rawText: String?) -> String {
-        if let mo = parseJSONIfString(modelOutput) {
-            let parsed = (mo["parsed"] as? [String: Any]) ?? mo
-            if let name = parsed["food_name"] as? String, !name.isEmpty { return name }
-            if let name = parsed["name"] as? String, !name.isEmpty { return name }
-            if let item = parsed["item"] as? [String: Any], let n = item["name"] as? String, !n.isEmpty { return n }
-            if let items = parsed["items"] as? [[String: Any]], !items.isEmpty {
-                let names = items.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
-                if !names.isEmpty {
-                    if names.count <= 2 { return names.joined(separator: ", ") }
-                    return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
+    private static func parseDate(_ value: Any?) -> Date? {
+        guard let string = value as? String else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: string) { return date }
+        return ISO8601DateFormatter().date(from: string)
+    }
+
+    static func boundedConcurrentMap<Input: Sendable, Output: Sendable>(
+        _ inputs: [Input],
+        maximumConcurrentTasks: Int,
+        operation: @escaping @Sendable (Input) async -> Output
+    ) async -> [Output] {
+        guard !inputs.isEmpty else { return [] }
+        let limit = max(1, min(maximumConcurrentTasks, inputs.count))
+
+        return await withTaskGroup(of: (Int, Output).self) { group in
+            var nextIndex = 0
+            var results = Array<Output?>(repeating: nil, count: inputs.count)
+
+            while nextIndex < limit {
+                let index = nextIndex
+                let input = inputs[index]
+                group.addTask { (index, await operation(input)) }
+                nextIndex += 1
+            }
+
+            while let (index, output) = await group.next() {
+                // `.some` preserves a legitimate nil when Output itself is Optional.
+                results[index] = .some(output)
+
+                if nextIndex < inputs.count {
+                    let pendingIndex = nextIndex
+                    let input = inputs[pendingIndex]
+                    group.addTask { (pendingIndex, await operation(input)) }
+                    nextIndex += 1
                 }
             }
-            if let raw = parsed["raw_text"] as? String, let nested = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
-                if let nestedItems = nested["items"] as? [[String: Any]] {
-                    let names: [String] = nestedItems.compactMap { $0["name"] as? String }
-                    if !names.isEmpty {
-                        if names.count <= 2 { return names.joined(separator: ", ") }
-                        return names.prefix(2).joined(separator: ", ") + " + \(names.count - 2) more"
-                    }
+
+            return results.enumerated().map { index, result in
+                guard let result else {
+                    preconditionFailure("Missing bounded map result at index \(index)")
                 }
-                if let n = nested["food_name"] as? String, !n.isEmpty { return n }
+                return result
             }
         }
-        return rawText?.components(separatedBy: "\n").first ?? "Entry"
     }
 
     func ensureProfileDefaults() async throws -> Profile {
@@ -88,12 +106,13 @@ struct SupabaseService {
         let userId = try currentUserId()
         if let p = try await fetchProfile(userId: userId) { return p }
         let timezone = TimeZone.autoupdatingCurrent.identifier
+        let defaults = MacroTarget.defaultDaily
         let target = [
-            "calories_kcal": 2800,
-            "protein_g": 180,
-            "carbs_g": 360,
-            "fat_g": 72
-        ] as [String : Any]
+            "calories_kcal": defaults.caloriesKcal,
+            "protein_g": defaults.proteinG,
+            "carbs_g": defaults.carbsG,
+            "fat_g": defaults.fatG
+        ]
         var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
             URLQueryItem(name: "on_conflict", value: "user_id")
@@ -119,7 +138,11 @@ struct SupabaseService {
             return fetched
         }
         // Fallback to defaults if fetch somehow fails
-        return Profile(userId: userId, timezone: timezone, dailyMacroTarget: MacroTarget(caloriesKcal: 2800, proteinG: 180, carbsG: 360, fatG: 72))
+        return Profile(
+            userId: userId,
+            timezone: timezone,
+            dailyMacroTarget: .defaultDaily
+        )
     }
 
     func fetchProfile(userId: String) async throws -> Profile? {
@@ -151,11 +174,9 @@ struct SupabaseService {
         
         let tz = obj["timezone"] as? String ?? TimeZone.autoupdatingCurrent.identifier
         let targetDict = Self.parseJSONIfString(obj["daily_macro_target"]) ?? [:]
+        let defaults = MacroTarget.defaultDaily
 
         let units = (obj["units"] as? String) ?? "imperial"
-        let activity = obj["activity_level"] as? String
-        let cutoffRaw = obj["cutoff_time_local"] as? String
-        let cutoff = cutoffRaw.flatMap { String($0.prefix(5)) }
         let heightCM = Self.toDouble(obj["height_cm"]) == 0 ? nil : Self.toDouble(obj["height_cm"])
         let weightKG = Self.toDouble(obj["weight_kg"]) == 0 ? nil : Self.toDouble(obj["weight_kg"])
         let targetWeightKG = Self.toDouble(obj["target_weight_kg"]) == 0 ? nil : Self.toDouble(obj["target_weight_kg"])
@@ -164,55 +185,24 @@ struct SupabaseService {
             userId: userId,
             timezone: tz,
             dailyMacroTarget: MacroTarget(
-                caloriesKcal: Self.toDouble(targetDict["calories_kcal"]) != 0 ? Self.toDouble(targetDict["calories_kcal"]) : 2800,
-                proteinG: Self.toDouble(targetDict["protein_g"]) != 0 ? Self.toDouble(targetDict["protein_g"]) : 180,
-                carbsG: Self.toDouble(targetDict["carbs_g"]) != 0 ? Self.toDouble(targetDict["carbs_g"]) : 360,
-                fatG: Self.toDouble(targetDict["fat_g"]) != 0 ? Self.toDouble(targetDict["fat_g"]) : 72
+                caloriesKcal: Self.toDouble(targetDict["calories_kcal"]) != 0
+                    ? Self.toDouble(targetDict["calories_kcal"])
+                    : defaults.caloriesKcal,
+                proteinG: Self.toDouble(targetDict["protein_g"]) != 0
+                    ? Self.toDouble(targetDict["protein_g"])
+                    : defaults.proteinG,
+                carbsG: Self.toDouble(targetDict["carbs_g"]) != 0
+                    ? Self.toDouble(targetDict["carbs_g"])
+                    : defaults.carbsG,
+                fatG: Self.toDouble(targetDict["fat_g"]) != 0
+                    ? Self.toDouble(targetDict["fat_g"])
+                    : defaults.fatG
             ),
             units: units,
             heightCM: heightCM,
             weightKG: weightKG,
-            targetWeightKG: targetWeightKG,
-            activityLevel: activity,
-            cutoffTimeLocal: cutoff
+            targetWeightKG: targetWeightKG
         )
-    }
-
-    func fetchTodayStatus() async throws -> (MacroTarget, DayTotals) {
-        let jwt = try await currentJWT()
-        let userId = try currentUserId()
-        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/today_status"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [
-            URLQueryItem(name: "select", value: "*"),
-            URLQueryItem(name: "user_id", value: "eq.\(userId)")
-        ]
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = "GET"
-        req.setValue(anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let row = arr.first else {
-            return (MacroTarget(caloriesKcal: 2800, proteinG: 180, carbsG: 360, fatG: 72), .empty)
-        }
-        let target = MacroTarget(
-            caloriesKcal: Self.toDouble(row["target_calories_kcal"]) != 0 ? Self.toDouble(row["target_calories_kcal"]) : 2800,
-            proteinG: Self.toDouble(row["target_protein_g"]) != 0 ? Self.toDouble(row["target_protein_g"]) : 180,
-            carbsG: Self.toDouble(row["target_carbs_g"]) != 0 ? Self.toDouble(row["target_carbs_g"]) : 360,
-            fatG: Self.toDouble(row["target_fat_g"]) != 0 ? Self.toDouble(row["target_fat_g"]) : 72
-        )
-        let totals = DayTotals(
-            proteinG: Self.toDouble(row["consumed_protein_g"]),
-            carbsG: Self.toDouble(row["consumed_carbs_g"]),
-            fatG: Self.toDouble(row["consumed_fat_g"]),
-            caloriesKcal: Self.toDouble(row["consumed_calories_kcal"]),
-            entryCount: 0
-        )
-        return (target, totals)
-    }
-
-    func fetchEntriesForToday(timezone: String) async throws -> [Entry] {
-        try await fetchEntries(for: Date(), timezone: timezone)
     }
 
     func localDayString(for date: Date, timezone: String) -> String {
@@ -233,11 +223,10 @@ struct SupabaseService {
         let localDay = localDayString(for: date, timezone: timezone)
         var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
-            URLQueryItem(name: "select", value: "id,created_at,raw_text,model_output,protein_g,carbs_g,fat_g,calories_kcal,image_path"),
+            URLQueryItem(name: "select", value: "id,local_day,occurred_at,created_at,updated_at,status,status_message,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"),
             URLQueryItem(name: "user_id", value: "eq.\(userId)"),
             URLQueryItem(name: "local_day", value: "eq.\(localDay)"),
-            URLQueryItem(name: "status", value: "eq.complete"),
-            URLQueryItem(name: "order", value: "created_at.desc")
+            URLQueryItem(name: "order", value: "occurred_at.desc.nullslast,created_at.desc")
         ]
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
@@ -261,21 +250,91 @@ struct SupabaseService {
             throw ServiceError.parseError(message: "Invalid JSON response")
         }
 
-        var results: [Entry] = []
-        for obj in arr {
-            guard let idStr = obj["id"] as? String, let id = UUID(uuidString: idStr) else { continue }
-            let createdAtStr = obj["created_at"] as? String ?? ""
-            let createdAt = ISO8601DateFormatter().date(from: createdAtStr) ?? Date()
-            let summary = Self.summarize(from: obj["model_output"], rawText: obj["raw_text"] as? String)
-            let protein = Self.toDouble(obj["protein_g"])
-            let carbs = Self.toDouble(obj["carbs_g"])
-            let fat = Self.toDouble(obj["fat_g"])
-            let kcal = Self.toDouble(obj["calories_kcal"])
-            var imageURL: URL? = nil
-            if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
-            results.append(Entry(id: id, createdAt: createdAt, summary: summary, imageURL: imageURL, proteinG: protein, carbsG: carbs, fatG: fat, caloriesKcal: kcal))
+        let parsed = arr.compactMap(parseEntry)
+        let imageURLs: [URL?] = await Self.boundedConcurrentMap(
+            parsed.map(\.imagePath),
+            maximumConcurrentTasks: Self.signedImageConcurrencyLimit
+        ) { path in
+            guard let path else { return nil }
+            return await signImageURL(path: path, jwt: jwt)
         }
-        return results
+
+        return zip(parsed, imageURLs).map { parsedEntry, imageURL in
+            var entry = parsedEntry.entry
+            entry.imageURL = imageURL
+            return entry
+        }
+    }
+
+    func fetchEntry(id: UUID) async throws -> Entry? {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "select", value: "id,local_day,occurred_at,created_at,updated_at,status,status_message,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"),
+            URLQueryItem(name: "id", value: "eq.\(id.uuidString)"),
+            URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+            URLQueryItem(name: "limit", value: "1")
+        ]
+        var request = URLRequest(url: comps.url!)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(
+                statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                message: "Failed to refresh meal status"
+            )
+        }
+        guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let object = objects.first,
+              var parsed = parseEntry(object) else { return nil }
+        if let imagePath = parsed.imagePath {
+            parsed.entry.imageURL = await signImageURL(path: imagePath, jwt: jwt)
+        }
+        return parsed.entry
+    }
+
+    private func parseEntry(_ object: [String: Any]) -> ParsedEntry? {
+        guard let idString = object["id"] as? String,
+              let id = UUID(uuidString: idString) else { return nil }
+
+        let rawText = object["raw_text"] as? String
+        let serverTitle = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawSummary = rawText?.components(separatedBy: "\n").first?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = [serverTitle, rawSummary]
+            .compactMap { $0 }
+            .first(where: { !$0.isEmpty }) ?? "Meal"
+        let status = (object["status"] as? String).flatMap(EntryStatus.init(rawValue:)) ?? .complete
+        let createdAt = Self.parseDate(object["occurred_at"])
+            ?? Self.parseDate(object["created_at"])
+            ?? Date()
+
+        let imagePath = status == .complete
+            ? (object["image_path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
+
+        return ParsedEntry(
+            entry: Entry(
+                id: id,
+                createdAt: createdAt,
+                summary: summary,
+                imageURL: nil,
+                proteinG: Self.toDouble(object["protein_g"]),
+                carbsG: Self.toDouble(object["carbs_g"]),
+                fatG: Self.toDouble(object["fat_g"]),
+                caloriesKcal: Self.toDouble(object["calories_kcal"]),
+                localDay: object["local_day"] as? String,
+                status: status,
+                statusMessage: object["status_message"] as? String,
+                errorMessage: object["error_message"] as? String,
+                statusUpdatedAt: Self.parseDate(object["updated_at"]),
+                processingAttempts: Int(Self.toDouble(object["processing_attempts"]))
+            ),
+            imagePath: imagePath?.isEmpty == false ? imagePath : nil
+        )
     }
 
     private func signImageURL(path: String, jwt: String) async -> URL? {
@@ -302,7 +361,7 @@ struct SupabaseService {
             func absolutize(_ s: String) -> URL? {
                 if let u = URL(string: s), u.scheme != nil { return u }
                 // Build base https://host/storage/v1
-                var base = supabaseUrl.appendingPathComponent("storage/v1")
+                let base = supabaseUrl.appendingPathComponent("storage/v1")
                 if s.hasPrefix("/") { return URL(string: base.absoluteString + s) }
                 if s.hasPrefix("object/") || s.hasPrefix("object/sign/") { return URL(string: base.appendingPathComponent(s).absoluteString) }
                 if s.hasPrefix("entry-images/") { return URL(string: base.appendingPathComponent("object/sign").appendingPathComponent(s).absoluteString) }
@@ -321,115 +380,36 @@ struct SupabaseService {
         return nil
     }
 
-    // MARK: - Onboarding persistence
-
-    /// Update user personalization fields. Only non-nil parameters are sent.
-    func updateProfilePersonalization(
-        units: String? = nil,
-        heightCM: Double? = nil,
-        weightKG: Double? = nil,
-        targetWeightKG: Double? = nil,
-        activityLevel: String? = nil,
-        cutoffTimeLocal: String? = nil
-    ) async throws {
-        let jwt = try await currentJWT()
-        let userId = try currentUserId()
-
-        var payload: [String: Any] = [:]
-        if let units = units { payload["units"] = units }
-        if let heightCM = heightCM { payload["height_cm"] = heightCM }
-        if let weightKG = weightKG { payload["weight_kg"] = weightKG }
-        if let targetWeightKG = targetWeightKG { payload["target_weight_kg"] = targetWeightKG }
-        if let activityLevel = activityLevel { payload["activity_level"] = activityLevel }
-        if let cutoffTimeLocal = cutoffTimeLocal { payload["cutoff_time_local"] = cutoffTimeLocal }
-
-        // Nothing to update
-        if payload.isEmpty { return }
-
-        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [URLQueryItem(name: "user_id", value: "eq.\(userId)")]
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = "PATCH"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (_, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-    }
-
-    /// Compute daily macro targets and persist them to profiles.daily_macro_target.
-    /// - Returns: The computed MacroTarget
-    func computeAndSaveDailyTargets(
-        weightKG: Double,
-        targetWeightKG: Double,
-        activityLevel: String
-    ) async throws -> MacroTarget {
-        // Energy model: BMR ~ 24 * weight (kcal), times activity multiplier, then a modest surplus for bulking
-        let multipliers: [String: Double] = [
-            "sedentary": 1.2,
-            "light": 1.375,
-            "moderate": 1.55,
-            "active": 1.725,
-            "extra_active": 1.9
-        ]
-        let activity = multipliers[activityLevel] ?? 1.55
-        let baseBMR = 24.0 * max(30.0, weightKG) // clamp to reasonable minimum weight
-        let maintenanceKcal = baseBMR * activity
-        let surplusFactor = 1.10 // ~10% surplus for lean gaining
-        let targetKcal = maintenanceKcal * surplusFactor
-
-        // Macro allocations (bulking-lean):
-        // - Protein: 1.8 g per lb of target weight (explicitly use lbs as requested)
-        // - Fat: ~0.4 g per lb of target weight
-        // - Carbs: remainder of calories after protein and fat
-        let targetWeightLBS = max(0, targetWeightKG) * 2.20462
-        let proteinG = 1.8 * targetWeightLBS
-        let fatG = 0.4 * targetWeightLBS
-        let kcalMinusPF = max(0, targetKcal - (proteinG * 4 + fatG * 9))
-        let carbsG = max(0, kcalMinusPF / 4.0)
-
-        let target = MacroTarget(caloriesKcal: targetKcal, proteinG: proteinG, carbsG: carbsG, fatG: fatG)
-
-        // Persist
-        let jwt = try await currentJWT()
-        let userId = try currentUserId()
-        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [URLQueryItem(name: "user_id", value: "eq.\(userId)")]
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = "PATCH"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        let body: [String: Any] = [
-            "daily_macro_target": [
-                "calories_kcal": target.caloriesKcal,
-                "protein_g": target.proteinG,
-                "carbs_g": target.carbsG,
-                "fat_g": target.fatG
-            ]
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (_, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-
-        return target
-    }
-
     // MARK: - Entry detail fetch
+    struct EntryDetailItem {
+        let name: String
+        let amount: String
+        let proteinG: Double
+        let carbsG: Double
+        let fatG: Double
+        let caloriesKcal: Double
+    }
+
     struct EntryDetail {
-        let id: UUID
         let createdAt: Date
         let imageURL: URL?
+        let title: String
         let rawText: String?
-        let modelOutput: [String: Any]
+        let transcript: String?
+        let proteinG: Double
+        let carbsG: Double
+        let fatG: Double
+        let caloriesKcal: Double
+        let items: [EntryDetailItem]
+        let analysisNotes: String?
+        let confidence: Double?
     }
 
-    func fetchEntryDetail(id: UUID, timezone: String) async throws -> EntryDetail? {
+    func fetchEntryDetail(id: UUID) async throws -> EntryDetail? {
         let jwt = try await currentJWT()
         var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
-            URLQueryItem(name: "select", value: "id,created_at,raw_text,model_output,image_path"),
+            URLQueryItem(name: "select", value: "occurred_at,created_at,title,raw_text,transcript,image_path,protein_g,carbs_g,fat_g,calories_kcal,items,analysis_notes,confidence"),
             URLQueryItem(name: "id", value: "eq.\(id.uuidString)")
         ]
         var req = URLRequest(url: comps.url!)
@@ -455,23 +435,44 @@ struct SupabaseService {
         }
         guard let obj = arr.first else { return nil } // Entry not found is valid
 
-        let idStr = obj["id"] as? String ?? id.uuidString
-        let createdAtStr = obj["created_at"] as? String ?? ""
-        let createdAt = ISO8601DateFormatter().date(from: createdAtStr) ?? Date()
+        let createdAt = Self.parseDate(obj["occurred_at"])
+            ?? Self.parseDate(obj["created_at"])
+            ?? Date()
         let rawText = obj["raw_text"] as? String
+        let transcript = obj["transcript"] as? String
+        let title = (obj["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = (title?.isEmpty == false ? title : nil)
+            ?? rawText?.components(separatedBy: "\n").first
+            ?? "Meal"
         var imageURL: URL? = nil
         if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
 
-        var model: [String: Any] = [:]
-        if let dict = obj["model_output"] as? [String: Any] {
-            model = dict
-        } else if let s = obj["model_output"] as? String, let d = s.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-            model = json
+        let itemObjects = obj["items"] as? [[String: Any]] ?? []
+        let items = itemObjects.compactMap { item -> EntryDetailItem? in
+            guard let name = item["name"] as? String, !name.isEmpty else { return nil }
+            return EntryDetailItem(
+                name: name,
+                amount: item["amount"] as? String ?? "",
+                proteinG: Self.toDouble(item["protein_g"]),
+                carbsG: Self.toDouble(item["carbs_g"]),
+                fatG: Self.toDouble(item["fat_g"]),
+                caloriesKcal: Self.toDouble(item["calories_kcal"])
+            )
         }
 
-        return EntryDetail(id: UUID(uuidString: idStr) ?? id, createdAt: createdAt, imageURL: imageURL, rawText: rawText, modelOutput: model)
+        return EntryDetail(
+            createdAt: createdAt,
+            imageURL: imageURL,
+            title: resolvedTitle,
+            rawText: rawText,
+            transcript: transcript,
+            proteinG: Self.toDouble(obj["protein_g"]),
+            carbsG: Self.toDouble(obj["carbs_g"]),
+            fatG: Self.toDouble(obj["fat_g"]),
+            caloriesKcal: Self.toDouble(obj["calories_kcal"]),
+            items: items,
+            analysisNotes: obj["analysis_notes"] as? String,
+            confidence: obj["confidence"].map(Self.toDouble)
+        )
     }
 }
-
-

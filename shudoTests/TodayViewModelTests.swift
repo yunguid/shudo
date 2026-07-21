@@ -2,7 +2,7 @@
 //  TodayViewModelTests.swift
 //  shudoTests
 //
-//  Tests for TodayViewModel behavior including delete recovery and polling
+//  Tests for TodayViewModel processing and retry behavior
 //
 
 import Testing
@@ -11,8 +11,6 @@ import Foundation
 
 struct TodayViewModelTests {
 
-    // MARK: - DayTotals Tests (used in delete recovery)
-
     @Test func testDayTotals_empty_hasZeroValues() {
         let totals = DayTotals.empty
 
@@ -20,123 +18,304 @@ struct TodayViewModelTests {
         #expect(totals.carbsG == 0)
         #expect(totals.fatG == 0)
         #expect(totals.caloriesKcal == 0)
-        #expect(totals.entryCount == 0)
     }
 
-    @Test func testDayTotals_subtraction_producesCorrectValues() {
-        let original = DayTotals(
-            proteinG: 100,
-            carbsG: 200,
-            fatG: 50,
-            caloriesKcal: 1500,
-            entryCount: 3
-        )
+    @Test func processingStatusesRemainVisibleWhileWorkContinues() {
+        #expect(EntryStatus.queued.isProcessing)
+        #expect(EntryStatus.transcribing.isProcessing)
+        #expect(EntryStatus.analyzing.isProcessing)
+        #expect(!EntryStatus.deleting.isProcessing)
+        #expect(!EntryStatus.complete.isProcessing)
+        #expect(!EntryStatus.failed.isProcessing)
+    }
 
-        let entryToRemove = Entry(
+    @Test func deletionStatesNeverOfferAnalysisRetry() {
+        let deleting = Entry(
             id: UUID(),
             createdAt: Date(),
-            summary: "Test",
+            summary: "Meal",
             imageURL: nil,
-            proteinG: 30,
-            carbsG: 40,
-            fatG: 10,
-            caloriesKcal: 400
+            proteinG: 0,
+            carbsG: 0,
+            fatG: 0,
+            caloriesKcal: 0,
+            status: .deleting,
+            statusMessage: "Deleting"
+        )
+        let interrupted = Entry(
+            id: UUID(),
+            createdAt: Date(),
+            summary: "Meal",
+            imageURL: nil,
+            proteinG: 0,
+            carbsG: 0,
+            fatG: 0,
+            caloriesKcal: 0,
+            status: .failed,
+            statusMessage: "Delete interrupted"
         )
 
-        let result = DayTotals(
-            proteinG: original.proteinG - entryToRemove.proteinG,
-            carbsG: original.carbsG - entryToRemove.carbsG,
-            fatG: original.fatG - entryToRemove.fatG,
-            caloriesKcal: original.caloriesKcal - entryToRemove.caloriesKcal,
-            entryCount: max(0, original.entryCount - 1)
-        )
-
-        #expect(result.proteinG == 70)
-        #expect(result.carbsG == 160)
-        #expect(result.fatG == 40)
-        #expect(result.caloriesKcal == 1100)
-        #expect(result.entryCount == 2)
+        #expect(!deleting.canRetry)
+        #expect(deleting.displayStatusMessage == "Deleting")
+        #expect(!interrupted.canRetry)
     }
 
-    @Test func testDayTotals_subtraction_clampsEntryCountToZero() {
-        let original = DayTotals(
-            proteinG: 50,
-            carbsG: 100,
-            fatG: 25,
-            caloriesKcal: 500,
-            entryCount: 0  // Already at zero
+    @MainActor
+    @Test func staleProcessingEntryAutoResumesOncePerObservedAttemptAfterLeaseBuffer() {
+        let now = Date()
+        var entry = Entry(
+            id: UUID(),
+            createdAt: now.addingTimeInterval(-500),
+            summary: "Stalled meal",
+            imageURL: nil,
+            proteinG: 0,
+            carbsG: 0,
+            fatG: 0,
+            caloriesKcal: 0,
+            status: .analyzing,
+            statusUpdatedAt: now.addingTimeInterval(-145),
+            processingAttempts: 0
         )
 
-        let result = DayTotals(
-            proteinG: original.proteinG - 10,
-            carbsG: original.carbsG - 20,
-            fatG: original.fatG - 5,
-            caloriesKcal: original.caloriesKcal - 100,
-            entryCount: max(0, original.entryCount - 1)  // Should stay at 0
-        )
+        var requestState: TodayViewModel.AutoResumeRequestState?
+        for observedAttempt in 0...3 {
+            entry.processingAttempts = observedAttempt
+            #expect(TodayViewModel.shouldAutoResume(
+                entry,
+                at: now,
+                requestState: requestState
+            ))
 
-        #expect(result.entryCount == 0, "Entry count should not go negative")
+            requestState = TodayViewModel.AutoResumeRequestState(
+                attempt: observedAttempt,
+                retryAfter: nil
+            )
+            #expect(!TodayViewModel.shouldAutoResume(
+                entry,
+                at: now,
+                requestState: requestState
+            ))
+        }
+
+        var fresh = entry
+        fresh.statusUpdatedAt = now.addingTimeInterval(-144)
+        #expect(!TodayViewModel.shouldAutoResume(fresh, at: now, requestState: nil))
+
+        var exhausted = entry
+        exhausted.processingAttempts = 4
+        #expect(!TodayViewModel.shouldAutoResume(exhausted, at: now, requestState: nil))
+
+        exhausted.status = .failed
+        exhausted.processingAttempts = 3
+        #expect(!TodayViewModel.shouldAutoResume(exhausted, at: now, requestState: nil))
     }
 
-    // MARK: - Entry Model Tests
-
-    @Test func testEntry_hasCorrectMacros() {
+    @MainActor
+    @Test func transientAutoResumeFailureRetriesOnlyAfterBackoffDeadline() {
+        let failureTime = Date(timeIntervalSince1970: 1_800_000_000)
         let entry = Entry(
             id: UUID(),
-            createdAt: Date(),
-            summary: "Chicken Breast",
+            createdAt: failureTime.addingTimeInterval(-500),
+            summary: "Stalled meal",
             imageURL: nil,
-            proteinG: 31,
+            proteinG: 0,
             carbsG: 0,
-            fatG: 3.6,
-            caloriesKcal: 165
+            fatG: 0,
+            caloriesKcal: 0,
+            status: .analyzing,
+            statusUpdatedAt: failureTime.addingTimeInterval(-200),
+            processingAttempts: 2
+        )
+        let retryState = TodayViewModel.autoResumeRetryState(
+            forAttempt: entry.processingAttempts,
+            scheduledAt: failureTime
         )
 
-        #expect(entry.proteinG == 31)
-        #expect(entry.carbsG == 0)
-        #expect(entry.fatG == 3.6)
-        #expect(entry.caloriesKcal == 165)
+        #expect(TodayViewModel.autoResumeRetryInterval == 50)
+        #expect(retryState.retryAfter == failureTime.addingTimeInterval(50))
+        #expect(!TodayViewModel.shouldAutoResume(
+            entry,
+            at: failureTime.addingTimeInterval(49),
+            requestState: retryState
+        ))
+        #expect(TodayViewModel.shouldAutoResume(
+            entry,
+            at: failureTime.addingTimeInterval(50),
+            requestState: retryState
+        ))
+
+        let retryInFlight = TodayViewModel.AutoResumeRequestState(
+            attempt: entry.processingAttempts,
+            retryAfter: nil
+        )
+        #expect(!TodayViewModel.shouldAutoResume(
+            entry,
+            at: failureTime.addingTimeInterval(51),
+            requestState: retryInFlight
+        ))
     }
 
-    // MARK: - Polling Configuration Tests
-
-    @Test func testPollingTimeout_isFiveMinutes() {
-        // The timeout was increased from 120s to 300s (5 minutes)
-        let expectedTimeout = 300
-        #expect(expectedTimeout == 300, "Polling timeout should be 5 minutes (300 seconds)")
-    }
-
-    @Test func testConsecutiveErrorLimit_isTen() {
-        // The consecutive error limit was increased from 5 to 10
-        let expectedLimit = 10
-        #expect(expectedLimit == 10, "Consecutive error limit should be 10")
-    }
-
-    // MARK: - Delete Recovery State Tests
-
-    @Test func testDeleteRecovery_shouldRestoreBothEntriesAndTotals() {
-        // Simulate the state before delete
-        let previousEntries = [
-            Entry(id: UUID(), createdAt: Date(), summary: "Entry 1", imageURL: nil,
-                  proteinG: 20, carbsG: 30, fatG: 10, caloriesKcal: 300),
-            Entry(id: UUID(), createdAt: Date(), summary: "Entry 2", imageURL: nil,
-                  proteinG: 25, carbsG: 40, fatG: 15, caloriesKcal: 400)
-        ]
-
-        let previousTotals = DayTotals(
-            proteinG: 45,
-            carbsG: 70,
-            fatG: 25,
-            caloriesKcal: 700,
-            entryCount: 2
+    @MainActor
+    @Test func acceptedResumeWithoutAttemptProgressRedispatchesAtBoundedCadence() {
+        let acceptedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let entry = Entry(
+            id: UUID(),
+            createdAt: acceptedAt.addingTimeInterval(-500),
+            summary: "Stalled meal",
+            imageURL: nil,
+            proteinG: 0,
+            carbsG: 0,
+            fatG: 0,
+            caloriesKcal: 0,
+            status: .analyzing,
+            statusUpdatedAt: acceptedAt.addingTimeInterval(-200),
+            processingAttempts: 2
         )
 
-        // After a failed delete, both should be restorable
-        #expect(previousEntries.count == 2)
-        #expect(previousTotals.proteinG == 45)
-        #expect(previousTotals.caloriesKcal == 700)
+        let firstAcceptedState = TodayViewModel.autoResumeRetryState(
+            forAttempt: entry.processingAttempts,
+            scheduledAt: acceptedAt
+        )
+        #expect(!TodayViewModel.shouldAutoResume(
+            entry,
+            at: acceptedAt.addingTimeInterval(3),
+            requestState: firstAcceptedState
+        ))
+        #expect(!TodayViewModel.shouldAutoResume(
+            entry,
+            at: acceptedAt.addingTimeInterval(49),
+            requestState: firstAcceptedState
+        ))
+        #expect(TodayViewModel.shouldAutoResume(
+            entry,
+            at: acceptedAt.addingTimeInterval(50),
+            requestState: firstAcceptedState
+        ))
 
-        // This tests the concept that both values are saved before delete
-        // and can be fully restored on failure (the actual fix)
+        // A second accepted redispatch replaces the deadline in the same state;
+        // it does not create a competing retry task or a three-second loop.
+        let secondAcceptedState = TodayViewModel.autoResumeRetryState(
+            forAttempt: entry.processingAttempts,
+            scheduledAt: acceptedAt.addingTimeInterval(50)
+        )
+        #expect(!TodayViewModel.shouldAutoResume(
+            entry,
+            at: acceptedAt.addingTimeInterval(99),
+            requestState: secondAcceptedState
+        ))
+        #expect(TodayViewModel.shouldAutoResume(
+            entry,
+            at: acceptedAt.addingTimeInterval(100),
+            requestState: secondAcceptedState
+        ))
+    }
+
+    @Test func failedEntryExposesRetryUntilAttemptsAreExhausted() {
+        var entry = Entry(
+            id: UUID(),
+            createdAt: Date(),
+            summary: "Failed meal",
+            imageURL: nil,
+            proteinG: 0,
+            carbsG: 0,
+            fatG: 0,
+            caloriesKcal: 0,
+            status: .failed,
+            processingAttempts: 2
+        )
+
+        #expect(entry.canRetry)
+        entry.processingAttempts = 3
+        #expect(!entry.canRetry)
+        #expect(entry.displayStatusMessage == "Retry limit reached — log it again")
+    }
+
+    @MainActor
+    @Test func exhaustedResumeConflictBecomesUsefulRowStatus() {
+        let message = TodayViewModel.resumeConflictMessage(
+            "This meal could not be recovered. Delete it and log it again.",
+            automatic: true
+        )
+        #expect(message == "Retry limit reached — log it again")
+    }
+
+    @MainActor
+    @Test func incompleteMediaConflictIsNotMisreportedAsRetryExhaustion() {
+        let message = TodayViewModel.resumeConflictMessage(
+            "This meal's photo never finished uploading. Delete it and log it again.",
+            automatic: true
+        )
+        #expect(message == "Attachment upload incomplete — delete and log it again")
+    }
+
+    @MainActor
+    @Test func onlyProcessingToCompleteTransitionsRequestAProgressiveReveal() {
+        #expect(TodayViewModel.shouldRevealCompletedAnalysis(
+            previous: .queued,
+            refreshed: .complete
+        ))
+        #expect(TodayViewModel.shouldRevealCompletedAnalysis(
+            previous: .analyzing,
+            refreshed: .complete
+        ))
+        #expect(!TodayViewModel.shouldRevealCompletedAnalysis(
+            previous: .complete,
+            refreshed: .complete
+        ))
+        #expect(!TodayViewModel.shouldRevealCompletedAnalysis(
+            previous: .failed,
+            refreshed: .complete
+        ))
+        #expect(!TodayViewModel.shouldRevealCompletedAnalysis(
+            previous: nil,
+            refreshed: .complete
+        ))
+    }
+
+    @Test func completedAnalysisRevealPlanIsStagedAndReduceMotionIsImmediate() {
+        #expect(CompletedAnalysisRevealPlan.phases(reduceMotion: false) == [
+            .title,
+            .protein,
+            .carbs,
+            .fat,
+            .calories,
+        ])
+        #expect(CompletedAnalysisRevealPlan.phases(reduceMotion: true) == [.calories])
+        #expect(
+            CompletedAnalysisRevealPlan.delay(before: .title)
+                < CompletedAnalysisRevealPlan.delay(before: .protein)
+        )
+    }
+
+    @MainActor
+    @Test func pinnedTodayAdvancesAcrossMidnightButHistoricalDaysStaySelected() throws {
+        let timezone = "America/New_York"
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: timezone))
+        let beforeMidnight = try #require(calendar.date(
+            from: DateComponents(year: 2026, month: 7, day: 20, hour: 23, minute: 59)
+        ))
+        let afterMidnight = try #require(calendar.date(
+            from: DateComponents(year: 2026, month: 7, day: 21, hour: 0, minute: 1)
+        ))
+
+        #expect(TodayViewModel.shouldAdvancePinnedDay(
+            currentDay: beforeMidnight,
+            now: afterMidnight,
+            timezone: timezone,
+            wasPinnedToToday: true
+        ))
+        #expect(!TodayViewModel.shouldAdvancePinnedDay(
+            currentDay: beforeMidnight,
+            now: afterMidnight,
+            timezone: timezone,
+            wasPinnedToToday: false
+        ))
+        #expect(!TodayViewModel.shouldAdvancePinnedDay(
+            currentDay: beforeMidnight,
+            now: beforeMidnight.addingTimeInterval(30),
+            timezone: timezone,
+            wasPinnedToToday: true
+        ))
     }
 }

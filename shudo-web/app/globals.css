@@ -3,80 +3,73 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --font-jakarta: 'Plus Jakarta Sans', system-ui, sans-serif;
-    --font-jetbrains: 'JetBrains Mono', monospace;
+  * {
+    box-sizing: border-box;
   }
 
-  * {
-    @apply border-rule;
+  html {
+    min-height: 100%;
+    background: #090b0a;
   }
 
   body {
-    @apply bg-paper text-ink antialiased;
-    font-feature-settings: 'rlig' 1, 'calt' 1;
+    min-height: 100vh;
+    margin: 0;
+    background:
+      radial-gradient(circle at 15% -10%, rgba(118, 221, 167, 0.08), transparent 30rem),
+      radial-gradient(circle at 90% 20%, rgba(142, 184, 255, 0.055), transparent 28rem),
+      #090b0a;
+    color: #f6f8f3;
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
-  /* Custom scrollbar */
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+  ::selection {
+    background: rgba(118, 221, 167, 0.28);
+    color: #f6f8f3;
   }
 
-  ::-webkit-scrollbar-track {
-    @apply bg-transparent;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply bg-subtle/30 rounded-full;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-subtle/50;
-  }
-}
-
-@layer components {
-  .glass-card {
-    @apply rounded-lg bg-glass-fill backdrop-blur-sm border border-rule shadow-lg shadow-black/20;
-  }
-
-  .glow-accent {
-    box-shadow: 0 0 20px rgba(67, 133, 244, 0.3);
-  }
-
-  .gradient-text {
-    @apply bg-gradient-to-r from-accent to-accent-secondary bg-clip-text text-transparent;
-  }
-
-  /* Noise texture overlay */
-  .noise-overlay::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-    opacity: 0.03;
-    pointer-events: none;
+  button,
+  a,
+  input {
+    -webkit-tap-highlight-color: transparent;
   }
 }
 
 @layer utilities {
-  .animate-delay-100 {
-    animation-delay: 100ms;
+  .text-balance {
+    text-wrap: balance;
   }
-  .animate-delay-200 {
-    animation-delay: 200ms;
+
+  .shimmer {
+    position: relative;
+    overflow: hidden;
   }
-  .animate-delay-300 {
-    animation-delay: 300ms;
-  }
-  .animate-delay-400 {
-    animation-delay: 400ms;
-  }
-  .animate-delay-500 {
-    animation-delay: 500ms;
+
+  .shimmer::after {
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.055) 45%, transparent 70%);
+    transform: translateX(-100%);
+    animation: shimmer 1.8s ease-in-out infinite;
   }
 }
 
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
 
-
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

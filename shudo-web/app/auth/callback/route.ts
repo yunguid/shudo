@@ -1,56 +1,79 @@
-import { createServerClient } from '@supabase/ssr'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import type { EmailOtpType } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { getSupabasePublicConfig } from '@/lib/supabase/config'
+import { safeInternalPath } from '@/lib/utils'
+import type { Database } from '@/types/database'
+
+const EMAIL_OTP_TYPES = new Set<EmailOtpType>([
+  'email',
+  'email_change',
+  'invite',
+  'magiclink',
+  'recovery',
+  'signup',
+])
+
+type AuthCookie = { name: string; value: string; options: CookieOptions }
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
   const token_hash = searchParams.get('token_hash')
   const type = searchParams.get('type')
-  const next = searchParams.get('next') ?? '/'
+  const returnPath = safeInternalPath(searchParams.get('next'))
 
   const cookieStore = await cookies()
+  const { url, key } = getSupabasePublicConfig()
+  const authCookies: AuthCookie[] = []
+  const authHeaders: Record<string, string> = {}
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
+  function redirectWithAuthState(path: string) {
+    const response = NextResponse.redirect(new URL(path, origin))
+    authCookies.forEach(({ name, value, options }) => {
+      response.cookies.set(name, value, options)
+    })
+    Object.entries(authHeaders).forEach(([name, value]) => {
+      response.headers.set(name, value)
+    })
+    if (!response.headers.has('Cache-Control')) {
+      response.headers.set('Cache-Control', 'private, no-store')
     }
-  )
+    return response
+  }
+
+  const supabase = createServerClient<Database>(url, key, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll()
+      },
+      setAll(cookiesToSet, headersToSet) {
+        authCookies.push(...cookiesToSet)
+        Object.assign(authHeaders, headersToSet)
+      },
+    },
+  })
 
   // Handle PKCE code exchange
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`)
+      return redirectWithAuthState(returnPath)
     }
   }
 
   // Handle magic link token hash (email OTP)
-  if (token_hash && type) {
+  if (token_hash && type && EMAIL_OTP_TYPES.has(type as EmailOtpType)) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash,
-      type: type as 'email' | 'magiclink',
+      type: type as EmailOtpType,
     })
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`)
+      return redirectWithAuthState(returnPath)
     }
   }
 
   // Return the user to an error page with instructions
-  return NextResponse.redirect(`${origin}/auth/login?error=Could not authenticate`)
+  return redirectWithAuthState('/auth/login?error=auth')
 }
-
-
-
-

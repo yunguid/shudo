@@ -8,8 +8,5 @@ public struct Profile: Codable, Equatable {
     public var heightCM: Double? = nil
     public var weightKG: Double? = nil
     public var targetWeightKG: Double? = nil
-    public var activityLevel: String? = nil
-    public var cutoffTimeLocal: String? = nil
 }
-
 

@@ -1,1 +1,14 @@
 .env
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+supabase/.temp.env
+
+# Private recovery and signing artifacts
+*.backup
+*.backup.gz
+*-storage-objects.zip
+recovery-codes*.txt
+*.mobileprovision
+*.p12

@@ -1,304 +1,179 @@
 import SwiftUI
-import AuthenticationServices
-import CryptoKit
 
 struct AuthView: View {
-    @State private var email: String = ""
-    @State private var password: String = ""
+    private enum Field { case email, password }
+
+    @State private var email = ""
+    @State private var password = ""
     @State private var isLoading = false
-    @State private var error: String?
-    @State private var currentNonce: String?
-    @State private var confirmationSent: Bool = false
-    @ObservedObject private var session = AuthSessionManager.shared
-    private enum CurrentAction { case signIn, signUp }
-    @State private var currentAction: CurrentAction? = nil
+    @State private var errorMessage: String?
+    @FocusState private var focusedField: Field?
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 32) {
-                // Logo & Title
-                VStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Design.Color.accentPrimary.opacity(0.2), Design.Color.accentPrimary.opacity(0.05)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
+        ZStack {
+            AppBackground()
+
+            ScrollView {
+                VStack(spacing: 30) {
+                    Spacer(minLength: 62)
+
+                    VStack(spacing: 13) {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Design.Color.accentPrimary.opacity(0.30),
+                                            Design.Color.accentSecondary.opacity(0.08)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
                                 )
-                            )
-                            .frame(width: 80, height: 80)
-                        Image(systemName: "fork.knife")
-                            .font(.title)
-                            .foregroundStyle(Design.Color.accentPrimary)
-                    }
-                    
-                    Text("shudo")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundStyle(Design.Color.ink)
-                    Text("Track your nutrition with AI")
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.muted)
-                }
-                .padding(.top, 40)
+                                .frame(width: 76, height: 76)
 
-                // Form
-                VStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Email")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Design.Color.muted)
-                        TextField("you@example.com", text: $email)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.emailAddress)
-                            .textContentType(.username)
-                            .autocorrectionDisabled()
-                            .font(.body)
+                            Image(systemName: "waveform.and.mic")
+                                .font(.system(size: 27, weight: .medium))
+                                .foregroundStyle(Design.Color.accentSecondary)
+                        }
+
+                        Text("Shudo")
+                            .font(.system(size: 34, weight: .bold, design: .rounded))
                             .foregroundStyle(Design.Color.ink)
-                            .padding(14)
-                            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: Design.Radius.m)
-                                    .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                            )
-                    }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Password")
-                            .font(.caption.weight(.medium))
+                        Text("Your private meal log")
+                            .font(.subheadline)
                             .foregroundStyle(Design.Color.muted)
-                        SecureField("••••••••", text: $password)
-                            .textContentType(.password)
-                            .font(.body)
-                            .foregroundStyle(Design.Color.ink)
-                            .padding(14)
-                            .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: Design.Radius.m)
-                                    .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                            )
                     }
-                }
 
-                if let e = error {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(Design.Color.danger)
-                        Text(e)
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.danger)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Design.Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: Design.Radius.m))
-                }
-
-                if confirmationSent == false {
-                    VStack(spacing: 12) {
-                        Button {
-                            Task { await signIn() }
-                        } label: {
-                            HStack {
-                                if currentAction == .signIn {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                        .tint(.white)
-                                }
-                                Text(currentAction == .signIn ? "Signing In…" : "Sign In")
-                            }
-                            .frame(maxWidth: .infinity)
+                    VStack(spacing: 0) {
+                        credentialRow(systemImage: "envelope", label: "Email") {
+                            TextField("you@example.com", text: $email)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
+                                .textContentType(.username)
+                                .autocorrectionDisabled()
+                                .submitLabel(.next)
+                                .focused($focusedField, equals: .email)
+                                .onSubmit { focusedField = .password }
                         }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .disabled(isLoading || !isEmailValid || password.isEmpty)
 
-                        Button {
-                            Task { await signUp() }
-                        } label: {
-                            Text(currentAction == .signUp ? "Creating Account…" : "Create Account")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .disabled(isLoading || !isEmailValid || password.isEmpty || session.session != nil)
-                    }
-                    
-                    Button("Forgot password?") { Task { await forgotPassword() } }
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Design.Color.accentPrimary)
-                        .disabled(isLoading || !isEmailValid)
-                } else {
-                    VStack(spacing: 16) {
-                        VStack(spacing: 8) {
-                            Image(systemName: "envelope.badge.fill")
-                                .font(.title)
-                                .foregroundStyle(Design.Color.success)
-                            Text("Check your email")
-                                .font(.headline)
-                                .foregroundStyle(Design.Color.ink)
-                            Text("We sent a confirmation link to verify your account.")
-                                .font(.subheadline)
-                                .foregroundStyle(Design.Color.muted)
-                                .multilineTextAlignment(.center)
-                        }
-                        
-                        HStack(spacing: 12) {
-                            Button("Resend") { Task { await resendConfirmation() } }
-                                .buttonStyle(SecondaryButtonStyle())
-                                .disabled(isLoading || !isEmailValid)
-                            Button("Back") { confirmationSent = false }
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(Design.Color.muted)
-                        }
-                    }
-                    .padding(20)
-                    .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.l))
-                }
-
-                Spacer()
-
-                // Apple Sign In
-                VStack(spacing: 12) {
-                    HStack {
                         Rectangle()
                             .fill(Design.Color.rule)
-                            .frame(height: 1)
-                        Text("or")
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.subtle)
-                        Rectangle()
-                            .fill(Design.Color.rule)
-                            .frame(height: 1)
-                    }
-                    
-                    SignInWithAppleButton(.signIn) { request in
-                        let nonce = randomNonceString()
-                        currentNonce = nonce
-                        request.requestedScopes = [.email]
-                        request.nonce = sha256(nonce)
-                    } onCompletion: { result in
-                        switch result {
-                        case .success(let auth):
-                            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
-                                  let tokenData = credential.identityToken,
-                                  let token = String(data: tokenData, encoding: .utf8) else {
-                                self.error = "No Apple token"
-                                return
-                            }
-                            Task { await signInWithApple(idToken: token, nonce: currentNonce) }
-                        case .failure(let err):
-                            self.error = err.localizedDescription
+                            .frame(height: 0.5)
+                            .padding(.leading, 48)
+
+                        credentialRow(systemImage: "lock", label: "Password") {
+                            SecureField("Password", text: $password)
+                                .textContentType(.password)
+                                .submitLabel(.go)
+                                .focused($focusedField, equals: .password)
+                                .onSubmit { submitIfReady() }
                         }
                     }
-                    .signInWithAppleButtonStyle(.white)
-                    .frame(height: 50)
-                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.m))
+                    .padding(.horizontal, 16)
+                    .background(
+                        Design.Color.elevated,
+                        in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    )
+
+                    if let errorMessage {
+                        HStack(spacing: 9) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                            Text(errorMessage)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(Design.Color.danger)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                    }
+
+                    Button(action: submitIfReady) {
+                        HStack(spacing: 9) {
+                            if isLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(.white)
+                            }
+                            Text(isLoading ? "Opening…" : "Open Shudo")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.48)
+
+                    Spacer(minLength: 42)
+
+                    Text("Your OpenAI key stays on the server. Captures are sent securely for private analysis and never posted publicly.")
+                        .font(.caption)
+                        .foregroundStyle(Design.Color.subtle)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
                 }
+                .frame(maxWidth: 430)
+                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity)
             }
-            .padding(24)
-            .background(Design.Color.paper)
-            .onChange(of: email) { _ in
-                if confirmationSent { confirmationSent = false; error = nil }
-                if currentAction != nil { currentAction = nil }
-            }
+            .scrollDismissesKeyboard(.interactively)
         }
+    }
+
+    private var canSubmit: Bool {
+        !isLoading && isEmailValid && !password.isEmpty
     }
 
     private var isEmailValid: Bool {
-        let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let at = e.firstIndex(of: "@") else { return false }
-        let domain = e[e.index(after: at)...]
-        return e.count >= 5 && domain.contains(".")
+        let normalized = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let at = normalized.firstIndex(of: "@") else { return false }
+        let domain = normalized[normalized.index(after: at)...]
+        return normalized.count >= 5 && domain.contains(".")
     }
 
+    private func credentialRow<Content: View>(
+        systemImage: String,
+        label: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Design.Color.muted)
+                .frame(width: 20)
+
+            content()
+                .font(.body)
+                .foregroundStyle(Design.Color.ink)
+                .accessibilityLabel(label)
+        }
+        .frame(minHeight: 58)
+    }
+
+    private func submitIfReady() {
+        guard canSubmit else { return }
+        focusedField = nil
+        Task { await signIn() }
+    }
+
+    @MainActor
     private func signIn() async {
-        currentAction = .signIn
-        await authCall {
-            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            try await AuthSessionManager.shared.signIn(email: e, password: password)
-        }
-        currentAction = nil
-    }
-    
-    private func signUp() async {
-        currentAction = .signUp
-        isLoading = true; error = nil
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
         do {
-            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let result = try await AuthSessionManager.shared.signUp(email: e, password: password)
-            switch result {
-            case .confirmationSent:
-                confirmationSent = true
-            case .didSignIn:
-                break
-            }
+            let normalizedEmail = email
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            try await AuthSessionManager.shared.signIn(
+                email: normalizedEmail,
+                password: password
+            )
+        } catch let friendly as SupabaseAuthService.FriendlyAuthError {
+            errorMessage = friendly.friendlyMessage
         } catch {
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = error.localizedDescription
         }
-        isLoading = false
-        currentAction = nil
-    }
-    
-    private func authCall(_ block: () async throws -> Void) async {
-        isLoading = true; error = nil
-        do {
-            try await block()
-        } catch {
-            if let fe = error as? SupabaseAuthService.FriendlyAuthError {
-                let code = fe.supabaseErrorCode?.lowercased() ?? ""
-                let msg = fe.serverMessage?.lowercased() ?? ""
-                if code.contains("email_not_confirmed") || msg.contains("email not confirmed") {
-                    confirmationSent = true
-                    self.error = nil
-                } else {
-                    self.error = fe.friendlyMessage
-                }
-            } else {
-                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            }
-        }
-        isLoading = false
-    }
-
-    private func signInWithApple(idToken: String, nonce: String?) async {
-        isLoading = true; error = nil
-        do {
-            let s = try await SupabaseAuthService().signInWithApple(idToken: idToken, nonce: nonce)
-            await MainActor.run { AuthSessionManager.shared.setSession(s) }
-        } catch { self.error = error.localizedDescription }
-        isLoading = false
-    }
-
-    private func resendConfirmation() async {
-        await authCall {
-            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            try await SupabaseAuthService().resendSignUpConfirmation(email: e)
-        }
-    }
-
-    private func forgotPassword() async {
-        await authCall {
-            let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            try await SupabaseAuthService().sendPasswordReset(email: e)
-        }
-    }
-
-    // MARK: - Nonce/Hash
-    private func randomNonceString(length: Int = 32) -> String {
-        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        var result = ""
-        var remainingLength = length
-        while remainingLength > 0 {
-            let randoms: [UInt8] = (0..<16).map { _ in UInt8.random(in: 0...255) }
-            randoms.forEach { random in
-                if remainingLength == 0 { return }
-                if random < charset.count { result.append(charset[Int(random)]) ; remainingLength -= 1 }
-            }
-        }
-        return result
-    }
-
-    private func sha256(_ input: String) -> String {
-        let inputData = Data(input.utf8)
-        let hashed = SHA256.hash(data: inputData)
-        return hashed.compactMap { String(format: "%02x", $0) }.joined()
     }
 }

@@ -10,40 +10,11 @@ struct SupabaseAuthService {
         let friendlyMessage: String
         var errorDescription: String? { friendlyMessage }
     }
-    enum SignUpResult {
-        case confirmationSent
-        case didSignIn(Session)
-    }
     struct Session: Codable, Equatable {
         let accessToken: String
         let refreshToken: String
-        let tokenType: String
-        let expiresIn: Int
         let expiresAt: Date
         let userId: String?
-    }
-
-    func signUp(email: String, password: String) async throws -> SignUpResult {
-        var body: [String: Any] = [
-            "email": email,
-            "password": password
-        ]
-        if let redirect = emailRedirectTo() {
-            body["options"] = ["email_redirect_to": redirect]
-        }
-        let json = try await makeRequest(path: "/auth/v1/signup", query: nil, body: body)
-        // If email confirmation is disabled, GoTrue returns a session here. Detect and sign in.
-        if let accessToken = json["access_token"] as? String {
-            let refreshToken = json["refresh_token"] as? String ?? ""
-            let tokenType = json["token_type"] as? String ?? "bearer"
-            let expiresIn = json["expires_in"] as? Int ?? 3600
-            let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
-            let userId = try await fetchUserId(accessToken: accessToken)
-            let session = Session(accessToken: accessToken, refreshToken: refreshToken, tokenType: tokenType, expiresIn: expiresIn, expiresAt: expiresAt, userId: userId)
-            return .didSignIn(session)
-        }
-        // If email confirmation is enabled, no session should be established here.
-        return .confirmationSent
     }
 
     func signIn(email: String, password: String) async throws -> Session {
@@ -53,11 +24,10 @@ struct SupabaseAuthService {
         ])
         let accessToken = json["access_token"] as? String ?? ""
         let refreshToken = json["refresh_token"] as? String ?? ""
-        let tokenType = json["token_type"] as? String ?? "bearer"
         let expiresIn = json["expires_in"] as? Int ?? 3600
         let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
         let userId = try await fetchUserId(accessToken: accessToken)
-        return Session(accessToken: accessToken, refreshToken: refreshToken, tokenType: tokenType, expiresIn: expiresIn, expiresAt: expiresAt, userId: userId)
+        return Session(accessToken: accessToken, refreshToken: refreshToken, expiresAt: expiresAt, userId: userId)
     }
 
     func refresh(refreshToken: String) async throws -> Session {
@@ -66,58 +36,10 @@ struct SupabaseAuthService {
         ])
         let accessToken = json["access_token"] as? String ?? ""
         let newRefresh = json["refresh_token"] as? String ?? refreshToken
-        let tokenType = json["token_type"] as? String ?? "bearer"
         let expiresIn = json["expires_in"] as? Int ?? 3600
         let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
         let userId = try await fetchUserId(accessToken: accessToken)
-        return Session(accessToken: accessToken, refreshToken: newRefresh, tokenType: tokenType, expiresIn: expiresIn, expiresAt: expiresAt, userId: userId)
-    }
-
-    func signInWithApple(idToken: String, nonce: String?) async throws -> Session {
-        let json = try await makeRequest(path: "/auth/v1/token", query: [
-            URLQueryItem(name: "grant_type", value: "id_token"),
-            URLQueryItem(name: "provider", value: "apple")
-        ], body: [
-            "id_token": idToken,
-            "nonce": nonce ?? NSNull()
-        ])
-        let accessToken = json["access_token"] as? String ?? ""
-        let refreshToken = json["refresh_token"] as? String ?? ""
-        let tokenType = json["token_type"] as? String ?? "bearer"
-        let expiresIn = json["expires_in"] as? Int ?? 3600
-        let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
-        let userId = try await fetchUserId(accessToken: accessToken)
-        return Session(accessToken: accessToken, refreshToken: refreshToken, tokenType: tokenType, expiresIn: expiresIn, expiresAt: expiresAt, userId: userId)
-    }
-
-    func resendSignUpConfirmation(email: String) async throws {
-        var body: [String: Any] = [
-            "type": "signup",
-            "email": email
-        ]
-        if let redirect = emailRedirectTo() {
-            body["options"] = ["email_redirect_to": redirect]
-        }
-        _ = try await makeRequest(path: "/auth/v1/resend", query: nil, body: body)
-    }
-
-    func sendPasswordReset(email: String) async throws {
-        var body: [String: Any] = [
-            "email": email
-        ]
-        if let redirect = emailRedirectTo() {
-            body["redirect_to"] = redirect
-        }
-        _ = try await makeRequest(path: "/auth/v1/recover", query: nil, body: body)
-    }
-
-    // MARK: - Helpers (Config)
-    private func emailRedirectTo() -> String? {
-        if let url = Bundle.main.object(forInfoDictionaryKey: "AuthEmailRedirectTo") as? String,
-           url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return url
-        }
-        return nil
+        return Session(accessToken: accessToken, refreshToken: newRefresh, expiresAt: expiresAt, userId: userId)
     }
 
     private func makeRequest(path: String, query: [URLQueryItem]?, body: [String: Any]) async throws -> [String: Any] {
@@ -127,9 +49,7 @@ struct SupabaseAuthService {
         guard let url = comps.url else { throw NSError(domain: "Auth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid URL components"]) }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(AppConfig.supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+        Self.configurePublicHeaders(on: &req, apiKey: AppConfig.supabaseAnonKey)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await URLSession.shared.data(for: req)
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -142,6 +62,15 @@ struct SupabaseAuthService {
         }
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         return obj
+    }
+
+    /// Supabase publishable keys are gateway credentials, not JWTs. Public Auth
+    /// requests carry them only in `apikey`; authenticated requests use the
+    /// user's access token in `Authorization` separately.
+    static func configurePublicHeaders(on request: inout URLRequest, apiKey: String) {
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "apikey")
+        request.setValue(nil, forHTTPHeaderField: "Authorization")
     }
 
     private func fetchUserId(accessToken: String) async throws -> String? {
@@ -159,11 +88,8 @@ struct SupabaseAuthService {
         let code = (supabaseErrorCode ?? "").lowercased()
         let msg = (serverMessage ?? "").lowercased()
         // Supabase common error codes/messages
-        if code.contains("user_already_exists") || code.contains("email_exists") || msg.contains("already registered") {
-            return "This email is already registered. Try Sign In or tap Resend Email if you didn't receive a confirmation."
-        }
         if code.contains("email_not_confirmed") || msg.contains("email not confirmed") {
-            return "Your email isn't confirmed yet. Check your inbox for the confirmation link, or resend it below."
+            return "This account still needs email confirmation in Supabase."
         }
         if code.contains("invalid_grant") || code.contains("invalid_credentials") || msg.contains("invalid login") {
             return "Incorrect email or password."
@@ -178,5 +104,3 @@ struct SupabaseAuthService {
         return "Something went wrong. Please try again."
     }
 }
-
-

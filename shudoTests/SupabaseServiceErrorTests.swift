@@ -35,17 +35,28 @@ struct SupabaseServiceErrorTests {
         #expect(error.errorDescription == "Database unavailable")
     }
 
+    @Test func testServiceError_identifiesOnlyAuthenticationFailures() {
+        #expect(SupabaseService.ServiceError.serverError(
+            statusCode: 401,
+            message: nil
+        ).isAuthenticationFailure)
+        #expect(SupabaseService.ServiceError.serverError(
+            statusCode: 403,
+            message: nil
+        ).isAuthenticationFailure)
+        #expect(!SupabaseService.ServiceError.serverError(
+            statusCode: 500,
+            message: nil
+        ).isAuthenticationFailure)
+        #expect(!SupabaseService.ServiceError.parseError(
+            message: "Invalid JSON structure"
+        ).isAuthenticationFailure)
+    }
+
     @Test func testServiceError_parseError_includesMessage() {
         let error = SupabaseService.ServiceError.parseError(message: "Invalid JSON structure")
 
         #expect(error.errorDescription?.contains("Invalid JSON structure") == true)
-    }
-
-    @Test func testServiceError_notFound_includesResourceName() {
-        let error = SupabaseService.ServiceError.notFound(resource: "Entry")
-
-        #expect(error.errorDescription?.contains("Entry") == true)
-        #expect(error.errorDescription?.contains("not found") == true)
     }
 
     // MARK: - Error Type Distinction Tests
@@ -54,18 +65,16 @@ struct SupabaseServiceErrorTests {
         let networkError = SupabaseService.ServiceError.networkError(underlying: NSError(domain: "", code: 0))
         let serverError = SupabaseService.ServiceError.serverError(statusCode: 500, message: nil)
         let parseError = SupabaseService.ServiceError.parseError(message: "test")
-        let notFoundError = SupabaseService.ServiceError.notFound(resource: "test")
 
         // Verify each error type produces different descriptions
         let descriptions = [
             networkError.errorDescription,
             serverError.errorDescription,
-            parseError.errorDescription,
-            notFoundError.errorDescription
+            parseError.errorDescription
         ].compactMap { $0 }
 
-        #expect(descriptions.count == 4, "All error types should have descriptions")
-        #expect(Set(descriptions).count == 4, "All descriptions should be unique")
+        #expect(descriptions.count == 3, "All error types should have descriptions")
+        #expect(Set(descriptions).count == 3, "All descriptions should be unique")
     }
 
     // MARK: - LocalizedError Conformance

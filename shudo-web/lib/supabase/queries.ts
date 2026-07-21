@@ -1,101 +1,187 @@
-import { SupabaseClient } from '@supabase/supabase-js'
-import { Entry, Profile, DayTotals } from '@/types/database'
-import { formatLocalDay } from '@/lib/utils'
+import 'server-only'
 
-export async function fetchProfile(supabase: SupabaseClient, userId: string): Promise<Profile | null> {
-  const { data } = await supabase.from('profiles').select('*').eq('user_id', userId).single()
-  return data as Profile | null
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js'
+import { normalizeTimeZone, shiftLocalDay } from '@/lib/utils'
+import type {
+  Database,
+  DayTotals,
+  EntryListItem,
+  Json,
+  MacroTarget,
+  ProfileSettings,
+} from '@/types/database'
+
+const ENTRY_COLUMNS =
+  'id,occurred_at,created_at,local_day,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path'
+
+const DEFAULT_MACRO_TARGET: MacroTarget = {
+  calories_kcal: 2200,
+  protein_g: 150,
+  carbs_g: 250,
+  fat_g: 70,
 }
 
-export async function fetchTodayData(supabase: SupabaseClient, userId: string): Promise<{ totals: DayTotals; entries: Entry[] }> {
-  const today = formatLocalDay(new Date())
-  
-  const { data } = await supabase
-    .from('entries')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'complete')
-    .eq('local_day', today)
-    .order('created_at', { ascending: false })
+type ShudoSupabaseClient = SupabaseClient<Database>
 
-  const entries = (data as Entry[]) || []
-  const totals: DayTotals = {
-    local_day: today,
-    total_calories: entries.reduce((sum, e) => sum + (e.calories_kcal || 0), 0),
-    total_protein: entries.reduce((sum, e) => sum + (e.protein_g || 0), 0),
-    total_carbs: entries.reduce((sum, e) => sum + (e.carbs_g || 0), 0),
-    total_fat: entries.reduce((sum, e) => sum + (e.fat_g || 0), 0),
-    entry_count: entries.length,
+function queryError(context: string, error: PostgrestError): Error {
+  return new Error(`${context}: ${error.message}`, { cause: error })
+}
+
+function numberFromJson(value: Json | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function parseMacroTarget(value: Json | null): MacroTarget {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return DEFAULT_MACRO_TARGET
   }
-  return { totals, entries }
+
+  return {
+    calories_kcal: numberFromJson(value.calories_kcal, DEFAULT_MACRO_TARGET.calories_kcal),
+    protein_g: numberFromJson(value.protein_g, DEFAULT_MACRO_TARGET.protein_g),
+    carbs_g: numberFromJson(value.carbs_g, DEFAULT_MACRO_TARGET.carbs_g),
+    fat_g: numberFromJson(value.fat_g, DEFAULT_MACRO_TARGET.fat_g),
+  }
 }
 
-export async function fetchDailyTotals(supabase: SupabaseClient, userId: string, startDate: Date, endDate: Date): Promise<DayTotals[]> {
-  const { data } = await supabase
+export async function fetchProfileSettings(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+): Promise<ProfileSettings> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('timezone,daily_macro_target')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error) throw queryError('Unable to load profile settings', error)
+  if (!data) throw new Error('Profile settings are missing for the current user.')
+
+  return {
+    timezone: normalizeTimeZone(data.timezone),
+    dailyMacroTarget: parseMacroTarget(data.daily_macro_target),
+  }
+}
+
+export async function fetchDayData(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+  localDay: string,
+): Promise<{ totals: DayTotals; entries: EntryListItem[] }> {
+  const { data, error } = await supabase
     .from('entries')
-    .select('local_day, calories_kcal, protein_g, carbs_g, fat_g')
+    .select(ENTRY_COLUMNS)
     .eq('user_id', userId)
     .eq('status', 'complete')
-    .gte('local_day', formatLocalDay(startDate))
-    .lte('local_day', formatLocalDay(endDate))
+    .eq('local_day', localDay)
+    .order('occurred_at', { ascending: false })
+    .order('id', { ascending: false })
 
-  if (!data) return []
+  if (error) throw queryError('Unable to load daily entries', error)
 
-  const dayMap = new Map<string, DayTotals>()
-  for (const e of data) {
-    const d = dayMap.get(e.local_day)
-    if (d) {
-      d.total_calories += e.calories_kcal || 0
-      d.total_protein += e.protein_g || 0
-      d.total_carbs += e.carbs_g || 0
-      d.total_fat += e.fat_g || 0
-      d.entry_count += 1
-    } else {
-      dayMap.set(e.local_day, {
-        local_day: e.local_day,
-        total_calories: e.calories_kcal || 0,
-        total_protein: e.protein_g || 0,
-        total_carbs: e.carbs_g || 0,
-        total_fat: e.fat_g || 0,
-        entry_count: 1,
-      })
+  const entries = data ?? []
+  return {
+    totals: entries.reduce<DayTotals>(
+      (totals, entry) => ({
+        ...totals,
+        total_calories: totals.total_calories + (entry.calories_kcal ?? 0),
+        total_protein: totals.total_protein + (entry.protein_g ?? 0),
+        total_carbs: totals.total_carbs + (entry.carbs_g ?? 0),
+        total_fat: totals.total_fat + (entry.fat_g ?? 0),
+        entry_count: totals.entry_count + 1,
+      }),
+      {
+        local_day: localDay,
+        total_calories: 0,
+        total_protein: 0,
+        total_carbs: 0,
+        total_fat: 0,
+        entry_count: 0,
+      },
+    ),
+    entries,
+  }
+}
+
+export async function fetchDayTotals(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+  endDay: string,
+  dayCount = 7,
+): Promise<DayTotals[]> {
+  const startDay = shiftLocalDay(endDay, -(dayCount - 1))
+  const { data, error } = await supabase
+    .from('entries')
+    .select('local_day,calories_kcal,protein_g,carbs_g,fat_g')
+    .eq('user_id', userId)
+    .eq('status', 'complete')
+    .gte('local_day', startDay)
+    .lte('local_day', endDay)
+
+  if (error) throw queryError('Unable to load recent totals', error)
+
+  const totalsByDay = new Map<string, DayTotals>()
+  for (const entry of data ?? []) {
+    const totals = totalsByDay.get(entry.local_day) ?? {
+      local_day: entry.local_day,
+      total_calories: 0,
+      total_protein: 0,
+      total_carbs: 0,
+      total_fat: 0,
+      entry_count: 0,
     }
+    totals.total_calories += entry.calories_kcal ?? 0
+    totals.total_protein += entry.protein_g ?? 0
+    totals.total_carbs += entry.carbs_g ?? 0
+    totals.total_fat += entry.fat_g ?? 0
+    totals.entry_count += 1
+    totalsByDay.set(entry.local_day, totals)
   }
-  return Array.from(dayMap.values()).sort((a, b) => a.local_day.localeCompare(b.local_day))
+
+  return Array.from({ length: dayCount }, (_, index) => {
+    const localDay = shiftLocalDay(startDay, index)
+    return (
+      totalsByDay.get(localDay) ?? {
+        local_day: localDay,
+        total_calories: 0,
+        total_protein: 0,
+        total_carbs: 0,
+        total_fat: 0,
+        entry_count: 0,
+      }
+    )
+  })
 }
 
 export async function fetchAllEntries(
-  supabase: SupabaseClient,
+  supabase: ShudoSupabaseClient,
   userId: string,
-  options?: { limit?: number; offset?: number }
-): Promise<{ entries: Entry[]; total: number }> {
-  let query = supabase
+  options: { limit: number; offset: number },
+): Promise<{ entries: EntryListItem[]; total: number }> {
+  const { data, count, error } = await supabase
     .from('entries')
-    .select('*', { count: 'exact' })
+    .select(ENTRY_COLUMNS, { count: 'exact' })
     .eq('user_id', userId)
     .eq('status', 'complete')
-    .order('created_at', { ascending: false })
+    .order('occurred_at', { ascending: false })
+    .order('id', { ascending: false })
+    .range(options.offset, options.offset + options.limit - 1)
 
-  if (options?.limit) query = query.limit(options.limit)
-  if (options?.offset) query = query.range(options.offset, options.offset + (options.limit || 25) - 1)
+  if (error) throw queryError('Unable to load entry history', error)
 
-  const { data, count } = await query
-  return { entries: (data as Entry[]) || [], total: count || 0 }
+  return { entries: data ?? [], total: count ?? 0 }
 }
 
-export function summarizeEntry(entry: Entry): string {
-  if (entry.model_output) {
-    const mo = entry.model_output as Record<string, unknown>
-    const parsed = (mo.parsed as Record<string, unknown>) ?? mo
-    if (typeof parsed.food_name === 'string' && parsed.food_name) return parsed.food_name
-    if (typeof parsed.name === 'string' && parsed.name) return parsed.name
-    if (Array.isArray(parsed.items) && parsed.items.length > 0) {
-      const names = parsed.items.map((i: unknown) => (i as Record<string, unknown>)?.name).filter((n): n is string => typeof n === 'string')
-      return names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`
-    }
-  }
-  return entry.raw_text?.split('\n')[0] || 'Entry'
+export function summarizeEntry(entry: EntryListItem): string {
+  const title = entry.title?.trim().replace(/\s+/g, ' ')
+  if (title) return title
+
+  const firstLine = entry.raw_text
+    ?.split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+    ?.replace(/\s+/g, ' ')
+
+  if (firstLine) return firstLine
+  return entry.image_path ? 'Photo meal' : 'Meal entry'
 }
-
-
-

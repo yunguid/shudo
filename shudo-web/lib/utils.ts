@@ -1,75 +1,102 @@
-import { type ClassValue, clsx } from 'clsx'
-import { twMerge } from 'tailwind-merge'
+const LOCAL_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
+export function normalizeTimeZone(timeZone: string | null | undefined): string {
+  if (!timeZone) return 'UTC'
+
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format()
+    return timeZone
+  } catch {
+    return 'UTC'
+  }
 }
 
-export function formatNumber(value: number, decimals = 0): string {
-  return value.toLocaleString('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  })
+export function formatLocalDay(date: Date, timeZone = 'UTC'): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: normalizeTimeZone(timeZone),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+  return `${values.year}-${values.month}-${values.day}`
 }
 
-export function calculateStreak(
-  days: { local_day: string; total_protein: number; total_calories: number }[],
-  targetProtein: number,
-  targetCalories: number
-): number {
-  if (!days.length) return 0
-  
-  // Sort days in descending order (most recent first)
-  const sorted = [...days].sort((a, b) => 
-    new Date(b.local_day).getTime() - new Date(a.local_day).getTime()
+export function isLocalDay(value: string | undefined): value is string {
+  if (!value || !LOCAL_DAY_PATTERN.test(value)) return false
+
+  const [year, month, day] = value.split('-').map(Number)
+  const candidate = new Date(Date.UTC(year, month - 1, day))
+  return (
+    candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() === month - 1 &&
+    candidate.getUTCDate() === day
   )
-  
-  let streak = 0
-  for (const day of sorted) {
-    const hitProtein = day.total_protein >= targetProtein * 0.9 // 90% threshold
-    const hitCalories = day.total_calories >= targetCalories * 0.85 && 
-                        day.total_calories <= targetCalories * 1.15 // within 15%
-    
-    if (hitProtein && hitCalories) {
-      streak++
-    } else {
-      break
-    }
-  }
-  
-  return streak
 }
 
-export function getDateRangeForDays(days: number): { start: Date; end: Date } {
-  const end = new Date()
-  const start = new Date()
-  start.setDate(start.getDate() - days + 1)
-  start.setHours(0, 0, 0, 0)
-  end.setHours(23, 59, 59, 999)
-  return { start, end }
-}
+export function shiftLocalDay(localDay: string, amount: number): string {
+  if (!isLocalDay(localDay)) throw new Error(`Invalid local day: ${localDay}`)
 
-/**
- * Formats a date as YYYY-MM-DD in the user's local timezone.
- * IMPORTANT: Do NOT use toISOString() as it converts to UTC first,
- * which causes dates to shift by a day for users not in UTC.
- */
-export function formatLocalDay(date: Date, timezone?: string): string {
-  if (timezone) {
-    // Use specified timezone
-    return date.toLocaleDateString('en-CA', { timeZone: timezone }) // en-CA gives YYYY-MM-DD format
-  }
-  // Use local timezone - manually construct to avoid UTC conversion
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-export function parseLocalDay(localDay: string): Date {
   const [year, month, day] = localDay.split('-').map(Number)
-  return new Date(year, month - 1, day)
+  const date = new Date(Date.UTC(year, month - 1, day + amount))
+  return date.toISOString().slice(0, 10)
 }
 
+export function formatDayLabel(localDay: string, includeYear = false): string {
+  if (!isLocalDay(localDay)) return localDay
 
+  const [year, month, day] = localDay.split('-').map(Number)
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    ...(includeYear ? { year: 'numeric' } : {}),
+  }).format(new Date(Date.UTC(year, month - 1, day)))
+}
 
+export function formatShortDay(localDay: string): string {
+  if (!isLocalDay(localDay)) return localDay
+
+  const [year, month, day] = localDay.split('-').map(Number)
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'short',
+  }).format(new Date(Date.UTC(year, month - 1, day)))
+}
+
+export function formatEntryTime(timestamp: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: normalizeTimeZone(timeZone),
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(timestamp))
+}
+
+export function resolveEntryTimestamp(
+  occurredAt: string | null | undefined,
+  createdAt: string,
+): string {
+  if (!occurredAt || Number.isNaN(Date.parse(occurredAt))) return createdAt
+  return occurredAt
+}
+
+export function safeInternalPath(value: string | null | undefined): string {
+  if (!value) return '/'
+
+  const baseUrl = new URL('https://shudo.invalid')
+
+  try {
+    const destination = new URL(value, baseUrl)
+    if (destination.origin !== baseUrl.origin) return '/'
+
+    return `${destination.pathname}${destination.search}${destination.hash}`
+  } catch {
+    return '/'
+  }
+}
+
+export function clampPercent(value: number): number {
+  return Math.max(0, Math.min(value, 100))
+}
