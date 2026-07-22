@@ -129,7 +129,24 @@ cleanup_auth_input() {
       ;;
   esac
 }
-trap cleanup_auth_input EXIT
+
+cleanup_release_link_metadata() {
+  case "$release_root" in
+    "$release_tmp/source")
+      /bin/rm -rf -- "$release_root/supabase/.temp"
+      ;;
+    *)
+      print -u2 "Refusing to remove unexpected Supabase link metadata path."
+      ;;
+  esac
+}
+
+cleanup_release_credentials() {
+  cleanup_auth_input
+  cleanup_release_link_metadata
+}
+
+trap cleanup_release_credentials EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -183,6 +200,20 @@ projects_json="$(run_supabase projects list --output-format json)"
 if ! print -r -- "$projects_json" | jq -e --arg ref "$project_ref" \
   '(.projects // .) as $projects | any($projects[]; (.ref // .id) == $ref)' >/dev/null; then
   print -u2 "Authenticated Supabase account cannot access project $project_ref."
+  exit 1
+fi
+
+print "Refreshing disposable IPv4 database link metadata..."
+run_supabase link --project-ref "$project_ref" >/dev/null
+if [[ ! -f "$release_root/supabase/.temp/project-ref" ]] ||
+    [[ ! -f "$release_root/supabase/.temp/pooler-url" ]] ||
+    [[ -n "$(find "$release_root/supabase/.temp" -type l -print -quit)" ]]; then
+  print -u2 "Supabase link did not produce safe IPv4 connection metadata."
+  exit 1
+fi
+release_linked_ref="$(tr -d '\r\n' < "$release_root/supabase/.temp/project-ref")"
+if [[ "$release_linked_ref" != "$project_ref" ]]; then
+  print -u2 "Disposable Supabase link resolved the wrong project."
   exit 1
 fi
 
