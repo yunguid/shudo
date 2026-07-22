@@ -60,6 +60,12 @@ struct AccountView: View {
                     targetHistory: targetHistory,
                     timezone: profile.timezone
                 )
+                NutrientTrendsView(
+                    totals: dailyTotals,
+                    target: profile.dailyMacroTarget,
+                    targetHistory: targetHistory,
+                    timezone: profile.timezone
+                )
                 WeeklyInsightsView(
                     summary: weeklySummary,
                     isLoading: isLoadingWeeklySummary,

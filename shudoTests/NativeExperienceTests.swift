@@ -138,6 +138,95 @@ struct NativeExperienceTests {
         ) == original)
     }
 
+    @Test func nutrientTrendsBuildTwelveWeeksAndKeepEmptyWeeksVisible() throws {
+        let ending = try #require(ISO8601DateFormatter().date(from: "2026-07-21T16:00:00Z"))
+        let totals = [
+            DailyNutritionTotal(
+                localDay: "2026-07-21",
+                proteinG: 150,
+                carbsG: 250,
+                fatG: 70,
+                caloriesKcal: 2_200,
+                entryCount: 2
+            )
+        ]
+
+        let weeks = NutritionProgressPolicy.nutrientTrendWeeks(
+            totals: totals,
+            target: .defaultDaily,
+            endingOn: ending,
+            timezone: "UTC"
+        )
+
+        #expect(weeks.count == 12)
+        #expect(weeks.first?.startLocalDay == "2026-04-29")
+        #expect(weeks.last?.endLocalDay == "2026-07-21")
+        #expect(weeks.dropLast().allSatisfy { $0.loggedDayCount == 0 })
+        #expect(weeks.last?.loggedDayCount == 1)
+        #expect(weeks.last?.ratio(for: .calories) == 1)
+        #expect(weeks.last?.ratio(for: .protein) == 1)
+    }
+
+    @Test func nutrientTrendsAverageLoggedDaysAgainstTheirHistoricalTargets() throws {
+        let ending = try #require(ISO8601DateFormatter().date(from: "2026-07-21T16:00:00Z"))
+        let original = MacroTarget(
+            caloriesKcal: 2_000,
+            proteinG: 100,
+            carbsG: 200,
+            fatG: 60
+        )
+        let revised = MacroTarget(
+            caloriesKcal: 2_400,
+            proteinG: 150,
+            carbsG: 260,
+            fatG: 75
+        )
+        let totals = [
+            DailyNutritionTotal(
+                localDay: "2026-07-19",
+                proteinG: 100,
+                carbsG: 200,
+                fatG: 60,
+                caloriesKcal: 2_000,
+                entryCount: 3
+            ),
+            DailyNutritionTotal(
+                localDay: "2026-07-21",
+                proteinG: 75,
+                carbsG: 130,
+                fatG: 37.5,
+                caloriesKcal: 1_200,
+                entryCount: 2
+            ),
+            DailyNutritionTotal(
+                localDay: "2026-07-20",
+                proteinG: 9_999,
+                carbsG: 9_999,
+                fatG: 9_999,
+                caloriesKcal: 9_999,
+                entryCount: 0
+            )
+        ]
+
+        let week = try #require(NutritionProgressPolicy.nutrientTrendWeeks(
+            totals: totals,
+            target: revised,
+            targetHistory: [
+                DailyMacroTargetSnapshot(targetDay: "2026-01-01", target: original),
+                DailyMacroTargetSnapshot(targetDay: "2026-07-20", target: revised)
+            ],
+            endingOn: ending,
+            timezone: "UTC",
+            weekCount: 1
+        ).first)
+
+        #expect(week.loggedDayCount == 2)
+        #expect(week.average?.caloriesKcal == 1_600)
+        #expect(week.averageTarget?.caloriesKcal == 2_200)
+        #expect(week.ratio(for: .calories) == 1_600.0 / 2_200.0)
+        #expect(week.ratio(for: .protein) == 175.0 / 250.0)
+    }
+
     @Test func correctionPolicyTrimsBoundsAndRejectsEmptyContext() {
         #expect(!EntryCorrectionPolicy.canSubmit("   \n"))
         #expect(EntryCorrectionPolicy.canSubmit("The rice was one cup"))
