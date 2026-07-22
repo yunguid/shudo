@@ -18,7 +18,12 @@ shudo_voice_correction_migration="$shudo_repo_root/supabase/migrations/202607212
 shudo_voice_correction_migration_sha="0b6c89f623ff2ecc4e0223c60c1ff4a792ca7f953d116319fa622721521f7041"
 shudo_budget_migration="$shudo_repo_root/supabase/migrations/20260722001415_project_ai_budget_timezone.sql"
 shudo_budget_migration_sha="ce7c138b6196d9b4a9ce6f93e8017458ef0707c065802ff80877d9ee93ab3be8"
+shudo_beta_signup_migration="$shudo_repo_root/supabase/migrations/20260722015329_restrict_beta_signups_to_allowlist.sql"
+shudo_beta_signup_migration_sha="9ca9a33afc91e370a2f1a469b8291fdc637a4ddd79b9f56aeb8e636c628decf2"
 shudo_node24_dir="/Users/luke/.nvm/versions/node/v24.16.0/bin"
+shudo_node24_sha="1ee75375e33b94fc34b3b19aede049e11dae90efb63b374dc96d6bdace70c4b8"
+shudo_supabase_cli="/opt/homebrew/Cellar/supabase/2.109.1/bin/supabase"
+shudo_supabase_cli_sha="b7be23f4e211b75c00a3df5fcd1f96f3905983c74ff3189bfc69ad5b0f7132c4"
 
 if [[ -x "$shudo_node24_dir/node" ]]; then
   export PATH="$shudo_node24_dir:$PATH"
@@ -27,6 +32,7 @@ if [[ "$(node --version)" != v24.* ]]; then
   print -u2 "Shudo release verification requires Node 24.x."
   exit 1
 fi
+[[ "$(shasum -a 256 "$shudo_node24_dir/node" | awk '{print $1}')" == "$shudo_node24_sha" ]]
 
 verify_migration_sha() {
   local migration_path="$1"
@@ -46,14 +52,25 @@ verify_migration_sha "$shudo_account_migration" "$shudo_account_migration_sha"
 verify_migration_sha "$shudo_hardening_migration" "$shudo_hardening_migration_sha"
 verify_migration_sha "$shudo_voice_correction_migration" "$shudo_voice_correction_migration_sha"
 verify_migration_sha "$shudo_budget_migration" "$shudo_budget_migration_sha"
+verify_migration_sha "$shudo_beta_signup_migration" "$shudo_beta_signup_migration_sha"
 
 cd "$shudo_repo_root"
 git diff --check
 plutil -lint shudo/Info.plist shudo.xcodeproj/project.pbxproj
+[[ "$(shasum -a 256 "$shudo_supabase_cli" | awk '{print $1}')" == "$shudo_supabase_cli_sha" ]]
+! rg -q 'SHUDO_SUPABASE_CLI' \
+  scripts/login-supabase-no-keyring.zsh scripts/deploy-supabase-production.zsh
 [[ -x scripts/login-supabase-no-keyring.zsh ]]
 zsh -n scripts/login-supabase-no-keyring.zsh
 [[ -x scripts/deploy-supabase-production.zsh ]]
 zsh -n scripts/deploy-supabase-production.zsh
+[[ -f scripts/configure-supabase-auth.mjs && ! -L scripts/configure-supabase-auth.mjs ]]
+[[ -x scripts/configure-supabase-auth.zsh ]]
+zsh -n scripts/configure-supabase-auth.zsh
+/usr/bin/env -i "$shudo_node24_dir/node" --check \
+  scripts/configure-supabase-auth.mjs
+/usr/bin/env -i "$shudo_node24_dir/node" --test \
+  scripts/configure-supabase-auth.test.mjs
 
 cd "$shudo_web_root"
 npm ci

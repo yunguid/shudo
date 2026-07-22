@@ -131,6 +131,34 @@ friends are invited. Google and Apple buttons are driven by live Supabase Auth
 settings and remain hidden until their provider is actually enabled, so an
 unfinished provider cannot create a dead sign-in path.
 
+The initial friend beta uses an exact-email allowlist enforced by Supabase's
+Free-plan Before User Created hook. Only the audited primary account is seeded;
+historical Auth rows are not implicitly admitted. Add a friend's normalized
+email to `public.beta_signup_allowlist` before they create an email/password or
+social account; uninvited signups fail closed without consuming shared AI
+capacity.
+
+After that migration is live, inspect and apply only Shudo's owned hosted Auth
+fields with the prompt-free Management API helper:
+
+```bash
+# Read-only: GET live Auth settings and print a redacted field-by-field plan.
+scripts/configure-supabase-auth.zsh
+
+# Enable email signup/recovery plus the friends-beta admission hook.
+scripts/configure-supabase-auth.zsh --apply
+
+# Opt in only after the corresponding credentials are exported locally.
+scripts/configure-supabase-auth.zsh --google --apply
+scripts/configure-supabase-auth.zsh --smtp --apply
+```
+
+Google uses `SHUDO_GOOGLE_CLIENT_ID` and `SHUDO_GOOGLE_CLIENT_SECRET`. SMTP uses
+the six `SHUDO_SMTP_*` variables documented by `--help`. Secrets are redacted;
+the helper stores only non-secret, mode-`600` before/plan/after snapshots. It
+launches the pinned Node runtime with a clean environment and does not change
+Apple or any unrelated hosted Auth setting.
+
 Production URLs:
 
 - Site: `https://shudo.yng.sh`
@@ -155,7 +183,7 @@ scripts/login-supabase-no-keyring.zsh
 # Inspect the exact migration plan without applying schema or data migrations.
 scripts/deploy-supabase-production.zsh
 
-# Apply only the verified migration suffix and deploy the verified functions.
+# Apply the verified migrations, hosted Auth gate, and verified functions.
 scripts/deploy-supabase-production.zsh --apply
 ```
 
@@ -163,7 +191,9 @@ The authenticated group is `create_entry`, `correct_entry`, `delete_entry`,
 `delete_account`, `process_entry`, `onboard_profile`, `reanalyze_entry`, and
 `resume_entry`. Only `drain_storage_cleanup` and `generate_weekly_summaries`
 disable gateway JWT verification because they enforce dedicated server secrets.
-The wrapper deploys one function at a time, never uses `--prune`, verifies JWT
+The wrapper pins the exact CLI binary, releases only committed Supabase inputs
+from an immutable Git snapshot, applies and re-reads the exact friends-beta Auth
+hook, deploys one function at a time, never uses `--prune`, verifies JWT
 settings, and runs database advisors. Use only disposable accounts for hosted
 release tests; never mutate Luke’s real meal history.
 
@@ -190,13 +220,14 @@ scripts/verify-release.zsh
 
 The deploy script refuses the wrong linked project, unexpected or modified
 migrations, unapproved functions, insecure token-file permissions, missing
-functions, and incorrect JWT verification settings. It never prints the access
-token or places it in command arguments.
+functions, a missing hosted signup hook, and incorrect JWT verification
+settings. It never prints the access token or places it in command arguments.
 
-`verify-release.zsh` verifies immutable migration hashes, clean diffs, web tests/lint/typecheck/
-production build/audit, safe Vercel upload contents, Deno format/lint/check/tests,
-fresh and restored PostgreSQL shapes, and native unit/UI tests with compiler
-warnings treated as errors. The focused unsigned device Release check is:
+`verify-release.zsh` verifies immutable migration hashes, the prompt-free Auth
+tooling tests, clean diffs, web tests/lint/typecheck/production build/audit,
+safe Vercel upload contents, Deno format/lint/check/tests, fresh and restored
+PostgreSQL shapes, and native unit/UI tests with compiler warnings treated as
+errors. The focused unsigned device Release check is:
 
 ```bash
 scripts/verify-ios-release.zsh

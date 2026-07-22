@@ -5,6 +5,12 @@ export function modelQuotaHttpError(error: unknown): HttpError | null {
       "message" in error && typeof error.message === "string"
     ? error.message
     : String(error);
+  if (message.includes("beta_access_required")) {
+    return new HttpError(
+      403,
+      "This account is not part of the Shudo beta.",
+    );
+  }
   if (message.includes("project_ai_budget_exceeded")) {
     return new HttpError(
       429,

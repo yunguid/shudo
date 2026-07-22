@@ -16,11 +16,17 @@ $$;
 \ir ../migrations/20260721231126_harden_target_history_weekly_claims.sql
 \ir ../migrations/20260721234531_add_voice_entry_correction_requests.sql
 \ir ../migrations/20260722001415_project_ai_budget_timezone.sql
+\ir ../migrations/20260722015329_restrict_beta_signups_to_allowlist.sql
 
 insert into auth.users (id, email)
 values
   ('00000000-0000-4000-8000-000000000001', 'one@example.test'),
   ('00000000-0000-4000-8000-000000000002', 'two@example.test');
+
+insert into public.beta_signup_allowlist (email, note)
+values
+  ('one@example.test', 'Fresh-schema fixture'),
+  ('two@example.test', 'Fresh-schema fixture');
 
 insert into public.entries (
   user_id,
@@ -156,6 +162,8 @@ end;
 $$;
 
 \ir ai_budget_timezone.sql
+
+\ir beta_signup_allowlist.sql
 
 \ir voice_corrections.sql
 

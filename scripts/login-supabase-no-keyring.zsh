@@ -1,11 +1,15 @@
-#!/bin/zsh
+#!/bin/zsh -f
 
 set -euo pipefail
 umask 077
 
+provided_access_token="${SUPABASE_ACCESS_TOKEN:-}"
+unset SUPABASE_ACCESS_TOKEN
+
 repo_root="${0:A:h:h}"
 project_ref="fjfashsjrajtdilxhcbn"
-supabase_cli="${SHUDO_SUPABASE_CLI:-/opt/homebrew/bin/supabase}"
+supabase_cli="/opt/homebrew/Cellar/supabase/2.109.1/bin/supabase"
+supabase_cli_sha256="b7be23f4e211b75c00a3df5fcd1f96f3905983c74ff3189bfc69ad5b0f7132c4"
 
 case "${1:-}" in
   "") ;;
@@ -18,6 +22,11 @@ esac
 
 if [[ ! -x "$supabase_cli" ]]; then
   print -u2 "Supabase CLI not found at $supabase_cli"
+  exit 1
+fi
+actual_cli_sha256="$(shasum -a 256 "$supabase_cli" | awk '{print $1}')"
+if [[ "$actual_cli_sha256" != "$supabase_cli_sha256" ]]; then
+  print -u2 "Supabase CLI integrity check failed. Refusing to load credentials."
   exit 1
 fi
 if [[ "$($supabase_cli --version)" != "2.109.1" ]]; then
@@ -54,8 +63,8 @@ token_has_project_access() {
     >/dev/null
 }
 
-if [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]] && \
-    token_has_project_access "$SUPABASE_ACCESS_TOKEN"; then
+if [[ -n "$provided_access_token" ]] && \
+    token_has_project_access "$provided_access_token"; then
   print "The current environment already has prompt-free access to Shudo."
   exit 0
 fi
@@ -77,7 +86,6 @@ fi
 
 print "Starting one-time Supabase browser verification."
 print "Open the URL shown below, approve it, paste the short verification code, and press Return."
-unset SUPABASE_ACCESS_TOKEN
 "$supabase_cli" login --no-browser --name supabase --agent no --output-format text
 
 if [[ ! -f "$token_file" || ! -r "$token_file" ]]; then

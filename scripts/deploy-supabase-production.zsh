@@ -1,19 +1,24 @@
-#!/bin/zsh
+#!/bin/zsh -f
 
 set -euo pipefail
 umask 077
 
+provided_access_token="${SUPABASE_ACCESS_TOKEN:-}"
+unset SUPABASE_ACCESS_TOKEN
+
 repo_root="${0:A:h:h}"
 project_ref="fjfashsjrajtdilxhcbn"
-supabase_cli="${SHUDO_SUPABASE_CLI:-/opt/homebrew/bin/supabase}"
+supabase_cli="/opt/homebrew/Cellar/supabase/2.109.1/bin/supabase"
+supabase_cli_sha256="b7be23f4e211b75c00a3df5fcd1f96f3905983c74ff3189bfc69ad5b0f7132c4"
+node_cli="/Users/luke/.nvm/versions/node/v24.16.0/bin/node"
+node_cli_sha256="1ee75375e33b94fc34b3b19aede049e11dae90efb63b374dc96d6bdace70c4b8"
 apply_changes=false
 
-# Pin every ambient Supabase routing input before the CLI is invoked. The
-# access token is supplied separately below, so none of these settings can
-# redirect a linked command or cause a fallback Keychain lookup.
+# Pin every ambient Supabase routing input before the CLI is invoked. Workdir
+# is replaced with the immutable release snapshot below before credentials are
+# loaded or any authenticated command runs.
 export SUPABASE_NO_KEYRING=1
 export SUPABASE_PROJECT_ID="$project_ref"
-export SUPABASE_WORKDIR="$repo_root"
 export SUPABASE_PROFILE="supabase"
 
 case "${1:-}" in
@@ -30,21 +35,88 @@ if [[ ! -x "$supabase_cli" ]]; then
   exit 1
 fi
 
+actual_cli_sha256="$(shasum -a 256 "$supabase_cli" | awk '{print $1}')"
+if [[ "$actual_cli_sha256" != "$supabase_cli_sha256" ]]; then
+  print -u2 "Supabase CLI integrity check failed. Refusing to load credentials."
+  exit 1
+fi
+
 supabase_cli_version="$($supabase_cli --version)"
 if [[ "$supabase_cli_version" != "2.109.1" ]]; then
   print -u2 "Supabase CLI 2.109.1 is required; found $supabase_cli_version."
   exit 1
 fi
 
-if ! command -v jq >/dev/null 2>&1 || ! command -v rg >/dev/null 2>&1; then
-  print -u2 "This release script requires jq and rg."
+if [[ ! -x "$node_cli" ]]; then
+  print -u2 "Node 24.16.0 not found at $node_cli"
+  exit 1
+fi
+actual_node_sha256="$(shasum -a 256 "$node_cli" | awk '{print $1}')"
+if [[ "$actual_node_sha256" != "$node_cli_sha256" ]]; then
+  print -u2 "Node integrity check failed. Refusing to load credentials."
+  exit 1
+fi
+if [[ "$(/usr/bin/env -i "$node_cli" --version)" != "v24.16.0" ]]; then
+  print -u2 "Node 24.16.0 is required."
   exit 1
 fi
 
-if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+if ! command -v git >/dev/null 2>&1 \
+  || ! command -v jq >/dev/null 2>&1 \
+  || ! command -v rg >/dev/null 2>&1 \
+  || ! command -v tar >/dev/null 2>&1; then
+  print -u2 "This release script requires git, jq, rg, and tar."
+  exit 1
+fi
+
+cd "$repo_root"
+
+release_paths=(
+  scripts/deploy-supabase-production.zsh
+  scripts/configure-supabase-auth.mjs
+  supabase
+)
+release_tree_status="$(git status --porcelain --untracked-files=all -- $release_paths)"
+if [[ -n "$release_tree_status" ]]; then
+  print -u2 "Refusing mutable or uncommitted Supabase release inputs:"
+  print -u2 -r -- "$release_tree_status"
+  exit 1
+fi
+
+release_commit="$(git rev-parse --verify HEAD^{commit})"
+release_tmp="$(mktemp -d "${TMPDIR:-/tmp}/shudo-supabase-release.XXXXXX")"
+release_root="$release_tmp/source"
+mkdir -p "$release_root"
+git archive --format=tar "$release_commit" \
+  -- supabase scripts/configure-supabase-auth.mjs | tar -xf - -C "$release_root"
+if [[ -n "$(find "$release_root" -type l -print -quit)" ]]; then
+  print -u2 "Refusing symlinks in the immutable release snapshot."
+  exit 1
+fi
+if [[ ! -f "$release_root/scripts/configure-supabase-auth.mjs" ]]; then
+  print -u2 "The immutable release is missing the Auth configurator."
+  exit 1
+fi
+mkdir -p "$release_root/supabase/.temp"
+print -r -- "$project_ref" > "$release_root/supabase/.temp/project-ref"
+(
+  cd "$release_root"
+  find supabase/config.toml supabase/migrations supabase/functions \
+    scripts/configure-supabase-auth.mjs -type f -print0 |
+    sort -z |
+    xargs -0 shasum -a 256
+) > "$release_tmp/source-manifest.sha256"
+print -r -- "$release_commit" > "$release_tmp/git-commit.txt"
+export SUPABASE_WORKDIR="$release_root"
+
+print "Prepared immutable Supabase release commit $release_commit."
+print "Release snapshots: $release_tmp"
+
+supabase_access_token="$provided_access_token"
+if [[ -z "$supabase_access_token" ]]; then
   token_file="${SUPABASE_HOME:-$HOME/.supabase}/access-token"
   if [[ ! -f "$token_file" || ! -r "$token_file" ]]; then
-    print -u2 "No non-Keychain Supabase token is available. Run SUPABASE_NO_KEYRING=1 supabase login first."
+    print -u2 "No non-Keychain Supabase token is available. Run scripts/login-supabase-no-keyring.zsh first."
     exit 1
   fi
 
@@ -54,17 +126,17 @@ if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
     exit 1
   fi
 
-  SUPABASE_ACCESS_TOKEN=""
-  IFS= read -r SUPABASE_ACCESS_TOKEN < "$token_file" || [[ -n "$SUPABASE_ACCESS_TOKEN" ]]
-  export SUPABASE_ACCESS_TOKEN
+  IFS= read -r supabase_access_token < "$token_file" || [[ -n "$supabase_access_token" ]]
 fi
 
-if [[ -z "$SUPABASE_ACCESS_TOKEN" ]]; then
+if [[ -z "$supabase_access_token" ]]; then
   print -u2 "The Supabase access token is empty."
   exit 1
 fi
 
-cd "$repo_root"
+run_supabase() {
+  SUPABASE_ACCESS_TOKEN="$supabase_access_token" "$supabase_cli" "$@"
+}
 
 linked_ref_file="$repo_root/supabase/.temp/project-ref"
 if [[ ! -f "$linked_ref_file" ]]; then
@@ -78,7 +150,9 @@ if [[ "$linked_ref" != "$project_ref" ]]; then
   exit 1
 fi
 
-projects_json="$($supabase_cli projects list --output-format json)"
+cd "$release_root"
+
+projects_json="$(run_supabase projects list --output-format json)"
 if ! print -r -- "$projects_json" | jq -e --arg ref "$project_ref" \
   '(.projects // .) as $projects | any($projects[]; (.ref // .id) == $ref)' >/dev/null; then
   print -u2 "Authenticated Supabase account cannot access project $project_ref."
@@ -90,7 +164,7 @@ required_secret_names=(
   SHUDO_CLEANUP_SECRET
   SHUDO_WEEKLY_SECRET
 )
-secrets_json="$($supabase_cli secrets list --project-ref "$project_ref" --output-format json)"
+secrets_json="$(run_supabase secrets list --project-ref "$project_ref" --output-format json)"
 for secret_name in $required_secret_names; do
   if ! print -r -- "$secrets_json" | jq -e --arg name "$secret_name" \
     '(.secrets // .) as $secrets | any($secrets[]; .name == $name)' >/dev/null; then
@@ -120,7 +194,7 @@ allowed_function_slugs_json="$(
   print -l -- $authenticated_functions $maintenance_functions |
     jq -Rsc 'split("\n") | map(select(length > 0))'
 )"
-function_inventory_json="$($supabase_cli functions list \
+function_inventory_json="$(run_supabase functions list \
   --project-ref "$project_ref" --output-format json)"
 unexpected_function_text="$(
   print -r -- "$function_inventory_json" |
@@ -147,6 +221,7 @@ approved_migration_files=(
   20260721231126_harden_target_history_weekly_claims.sql
   20260721234531_add_voice_entry_correction_requests.sql
   20260722001415_project_ai_budget_timezone.sql
+  20260722015329_restrict_beta_signups_to_allowlist.sql
 )
 
 approved_migration_hashes=(
@@ -157,12 +232,13 @@ approved_migration_hashes=(
   2334b068da5874533d6923f6a1039bac787eee140ac566dce2e64e77fb07c9f0
   0b6c89f623ff2ecc4e0223c60c1ff4a792ca7f953d116319fa622721521f7041
   ce7c138b6196d9b4a9ce6f93e8017458ef0707c065802ff80877d9ee93ab3be8
+  9ca9a33afc91e370a2f1a469b8291fdc637a4ddd79b9f56aeb8e636c628decf2
 )
 
 approved_migration_versions=()
 for (( index = 1; index <= ${#approved_migration_files}; index++ )); do
   migration_file="${approved_migration_files[$index]}"
-  migration_path="$repo_root/supabase/migrations/$migration_file"
+  migration_path="$release_root/supabase/migrations/$migration_file"
   if [[ ! -f "$migration_path" ]]; then
     print -u2 "Approved migration is missing: $migration_file"
     exit 1
@@ -177,7 +253,7 @@ for (( index = 1; index <= ${#approved_migration_files}; index++ )); do
 done
 
 print "Checking production migration history..."
-migration_history_json="$($supabase_cli migration list --linked --output-format json)"
+migration_history_json="$(run_supabase migration list --linked --output-format json)"
 remote_version_text="$(
   print -r -- "$migration_history_json" |
     jq -r '(.migrations // .)[] | .remote | select(length > 0)'
@@ -204,7 +280,7 @@ done
 print "Verified remote migration prefix: ${#remote_versions}/${#approved_migration_versions}"
 
 dry_run_output=""
-if ! dry_run_output="$($supabase_cli db push --linked --dry-run 2>&1)"; then
+if ! dry_run_output="$(run_supabase db push --linked --dry-run 2>&1)"; then
   print -u2 -r -- "$dry_run_output"
   exit 1
 fi
@@ -233,25 +309,28 @@ for (( index = 1; index <= ${#pending_migrations}; index++ )); do
   fi
 done
 
+print "Inspecting the exact hosted Auth configuration plan..."
+/usr/bin/env -i TMPDIR="$release_tmp" \
+  SUPABASE_ACCESS_TOKEN="$supabase_access_token" \
+  "$node_cli" "$release_root/scripts/configure-supabase-auth.mjs"
+
 if [[ "$apply_changes" != true ]]; then
-  print "Dry-run passed. Re-run with --apply to deploy migrations and functions."
+  print "Dry-run passed. Re-run with --apply to deploy migrations, Auth, and functions."
   exit 0
 fi
 
-release_tmp="$(mktemp -d "${TMPDIR:-/tmp}/shudo-supabase-release.XXXXXX")"
-print "Release snapshots: $release_tmp"
 print -r -- "$migration_history_json" > "$release_tmp/migrations-before.json"
 print -r -- "$function_inventory_json" > "$release_tmp/functions-before.json"
 
 if (( ${#pending_migrations} > 0 )); then
   print "Applying ${#pending_migrations} approved migration(s)..."
-  $supabase_cli db push --linked --yes
+  run_supabase db push --linked --yes
 else
   print "Database migrations are already current."
 fi
 
 post_push_output=""
-if ! post_push_output="$($supabase_cli db push --linked --dry-run 2>&1)"; then
+if ! post_push_output="$(run_supabase db push --linked --dry-run 2>&1)"; then
   print -u2 -r -- "$post_push_output"
   exit 1
 fi
@@ -261,19 +340,24 @@ if print -r -- "$post_push_output" | rg -q '[0-9]{14}_[A-Za-z0-9_]+\.sql'; then
   exit 1
 fi
 
+print "Applying and verifying the friends-beta hosted Auth configuration..."
+/usr/bin/env -i TMPDIR="$release_tmp" \
+  SUPABASE_ACCESS_TOKEN="$supabase_access_token" \
+  "$node_cli" "$release_root/scripts/configure-supabase-auth.mjs" --apply
+
 for function_name in $authenticated_functions; do
   print "Deploying authenticated function: $function_name"
-  $supabase_cli functions deploy "$function_name" \
+  run_supabase functions deploy "$function_name" \
     --project-ref "$project_ref" --use-api --jobs 1
 done
 
 for function_name in $maintenance_functions; do
   print "Deploying maintenance function: $function_name"
-  $supabase_cli functions deploy "$function_name" \
+  run_supabase functions deploy "$function_name" \
     --project-ref "$project_ref" --use-api --jobs 1 --no-verify-jwt
 done
 
-$supabase_cli functions list --project-ref "$project_ref" --output-format json \
+run_supabase functions list --project-ref "$project_ref" --output-format json \
   > "$release_tmp/functions-after.json"
 
 jq -e '
@@ -292,10 +376,10 @@ jq -e '
 ' "$release_tmp/functions-after.json" >/dev/null
 
 print "Running Supabase security and performance advisors..."
-$supabase_cli db advisors --linked --type security --level warn --fail-on error
-$supabase_cli db advisors --linked --type performance --level warn --fail-on error
+run_supabase db advisors --linked --type security --level warn --fail-on error
+run_supabase db advisors --linked --type performance --level warn --fail-on error
 
-post_migration_history="$($supabase_cli migration list --linked --output-format json)"
+post_migration_history="$(run_supabase migration list --linked --output-format json)"
 print -r -- "$post_migration_history" > "$release_tmp/migrations-after.json"
 if ! print -r -- "$post_migration_history" | jq -e \
   --argjson expected_count "${#approved_migration_versions}" '
@@ -306,4 +390,5 @@ if ! print -r -- "$post_migration_history" | jq -e \
   print -u2 "Migration history is not fully synchronized after deployment."
   exit 1
 fi
-print "Supabase production release passed. Snapshots: $release_tmp"
+print "Supabase production release passed from commit $release_commit."
+print "Snapshots and source manifest: $release_tmp"

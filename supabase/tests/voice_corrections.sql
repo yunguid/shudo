@@ -5,6 +5,12 @@ values
   ('00000000-0000-4000-8000-000000000005', 'correction@example.test'),
   ('00000000-0000-4000-8000-000000000006', 'correction-quota@example.test');
 
+insert into public.beta_signup_allowlist (email, note)
+values
+  ('correction@example.test', 'Voice-correction fixture'),
+  ('correction-quota@example.test', 'Voice-correction fixture')
+on conflict (email) do update set enabled = true;
+
 do $$
 declare
   correction_user constant uuid := '00000000-0000-4000-8000-000000000005';

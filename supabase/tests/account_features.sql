@@ -5,6 +5,12 @@ values
   ('00000000-0000-4000-8000-000000000003', 'quota@example.test'),
   ('00000000-0000-4000-8000-000000000004', 'lease@example.test');
 
+insert into public.beta_signup_allowlist (email, note)
+values
+  ('quota@example.test', 'Account-feature fixture'),
+  ('lease@example.test', 'Account-feature fixture')
+on conflict (email) do update set enabled = true;
+
 do $$
 declare
   quota_user constant uuid := '00000000-0000-4000-8000-000000000003';

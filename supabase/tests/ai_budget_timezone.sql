@@ -12,6 +12,16 @@ values
   ('00000000-0000-4000-8000-000000000094', 'correction-retry-budget@example.test'),
   ('00000000-0000-4000-8000-000000000095', 'non-processing-transition@example.test');
 
+insert into public.beta_signup_allowlist (email, note)
+values
+  ('budget@example.test', 'AI-budget fixture'),
+  ('meal-retry-budget@example.test', 'AI-budget fixture'),
+  ('meal-operation-cap@example.test', 'AI-budget fixture'),
+  ('meal-project-cap@example.test', 'AI-budget fixture'),
+  ('correction-retry-budget@example.test', 'AI-budget fixture'),
+  ('non-processing-transition@example.test', 'AI-budget fixture')
+on conflict (email) do update set enabled = true;
+
 do $$
 declare
   budget_user constant uuid := '00000000-0000-4000-8000-000000000090';
