@@ -5,7 +5,21 @@ extension Notification.Name {
     static let entryReanalysisRequested = Notification.Name("shudo.entryReanalysisRequested")
 }
 
+enum EntryDetailLayoutPolicy {
+    static let horizontalPadding: CGFloat = 20
+
+    static func contentWidth(for viewportWidth: CGFloat) -> CGFloat {
+        max(0, viewportWidth - horizontalPadding * 2)
+    }
+
+    static func stacksMacroCards(for dynamicTypeSize: DynamicTypeSize) -> Bool {
+        dynamicTypeSize >= .xxLarge
+    }
+}
+
 struct EntryDetailView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 40
     let entryId: UUID
     private let reanalysisService: any EntryReanalysisServing
     @State private var detail: SupabaseService.EntryDetail?
@@ -33,70 +47,78 @@ struct EntryDetailView: View {
     var body: some View {
         ZStack {
             AppBackground()
-            ScrollView {
-                if let detail {
-                    VStack(alignment: .leading, spacing: 26) {
-                        photo(detail.imageURL)
+            GeometryReader { viewport in
+                ScrollView {
+                    if let detail {
+                        VStack(alignment: .leading, spacing: 26) {
+                            photo(detail.imageURL)
 
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(detail.title)
-                                .font(.title2.weight(.bold))
-                                .foregroundStyle(Design.Color.ink)
-                            Text(detail.createdAt, style: .time)
-                                .font(.caption)
-                                .foregroundStyle(Design.Color.muted)
-                        }
-
-                        macroSummary(detail)
-
-                        if let reanalysisNotice {
-                            Label(reanalysisNotice, systemImage: "arrow.triangle.2.circlepath")
-                                .font(.footnote.weight(.medium))
-                                .foregroundStyle(Design.Color.accentSecondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 15)
-                                .padding(.vertical, 12)
-                                .background(
-                                    Design.Color.accentPrimary.opacity(0.1),
-                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                )
-                        }
-
-                        if !detail.items.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
-                                sectionTitle("Breakdown")
-                                ForEach(Array(detail.items.enumerated()), id: \.offset) { index, item in
-                                    itemRow(item, index: index)
-                                    if index < detail.items.count - 1 {
-                                        Rectangle()
-                                            .fill(Design.Color.rule)
-                                            .frame(height: 0.5)
+                                Text(detail.title)
+                                    .font(.title2.weight(.bold))
+                                    .foregroundStyle(Design.Color.ink)
+                                Text(detail.createdAt, style: .time)
+                                    .font(.caption)
+                                    .foregroundStyle(Design.Color.muted)
+                            }
+
+                            macroSummary(detail)
+
+                            if let reanalysisNotice {
+                                Label(reanalysisNotice, systemImage: "arrow.triangle.2.circlepath")
+                                    .font(.footnote.weight(.medium))
+                                    .foregroundStyle(Design.Color.accentSecondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 15)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        Design.Color.accentPrimary.opacity(0.1),
+                                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    )
+                            }
+
+                            if !detail.items.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    sectionTitle("Breakdown")
+                                    ForEach(Array(detail.items.enumerated()), id: \.offset) { index, item in
+                                        itemRow(item, index: index)
+                                        if index < detail.items.count - 1 {
+                                            Rectangle()
+                                                .fill(Design.Color.rule)
+                                                .frame(height: 0.5)
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if let notes = nonempty(detail.analysisNotes) {
-                            ExpandableDetailText(title: "Notes", text: notes)
-                        }
+                            if let notes = nonempty(detail.analysisNotes) {
+                                ExpandableDetailText(title: "Notes", text: notes)
+                            }
 
-                        if let transcript = nonempty(detail.transcript) {
-                            ExpandableDetailText(title: "Transcript", text: transcript)
-                        } else if let rawText = nonempty(detail.rawText) {
-                            ExpandableDetailText(title: "Description", text: rawText)
-                        }
+                            if let transcript = nonempty(detail.transcript) {
+                                ExpandableDetailText(title: "Transcript", text: transcript)
+                            } else if let rawText = nonempty(detail.rawText) {
+                                ExpandableDetailText(title: "Description", text: rawText)
+                            }
 
-                        correctionAction
+                            correctionAction
+                        }
+                        // A vertical ScrollView otherwise adopts a wide child's ideal width.
+                        // Keep collages and nutrition rows inside the visible phone viewport.
+                        .frame(
+                            width: EntryDetailLayoutPolicy.contentWidth(for: viewport.size.width),
+                            alignment: .leading
+                        )
+                        .padding(.horizontal, EntryDetailLayoutPolicy.horizontalPadding)
+                        .padding(.vertical, 14)
+                    } else if isLoading {
+                        loadingView
+                    } else {
+                        errorView
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
-                } else if isLoading {
-                    loadingView
-                } else {
-                    errorView
                 }
+                .refreshable { await load() }
             }
-            .refreshable { await load() }
         }
         .navigationTitle("Meal")
         .navigationBarTitleDisplayMode(.inline)
@@ -152,27 +174,56 @@ struct EntryDetailView: View {
 
     private func macroSummary(_ detail: SupabaseService.EntryDetail) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(Int(detail.caloriesKcal.rounded()))")
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
-                    .foregroundStyle(Design.Color.ink)
-                    .monospacedDigit()
-                Text("kcal")
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.muted)
-                Spacer()
-                if let confidence = detail.confidence, confidence > 0 {
-                    Text("\(Int((confidence * 100).rounded()))% confidence")
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.muted)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    calorieSummary(detail)
+                    Spacer(minLength: 12)
+                    confidenceLabel(detail)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    calorieSummary(detail)
+                    confidenceLabel(detail)
                 }
             }
 
-            HStack(spacing: 10) {
-                macroValue("Protein", detail.proteinG, Design.Color.ringProtein)
-                macroValue("Carbs", detail.carbsG, Design.Color.ringCarb)
-                macroValue("Fat", detail.fatG, Design.Color.ringFat)
+            if EntryDetailLayoutPolicy.stacksMacroCards(for: dynamicTypeSize) {
+                VStack(spacing: 10) {
+                    macroValue("Protein", detail.proteinG, Design.Color.ringProtein)
+                    macroValue("Carbs", detail.carbsG, Design.Color.ringCarb)
+                    macroValue("Fat", detail.fatG, Design.Color.ringFat)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    macroValue("Protein", detail.proteinG, Design.Color.ringProtein)
+                    macroValue("Carbs", detail.carbsG, Design.Color.ringCarb)
+                    macroValue("Fat", detail.fatG, Design.Color.ringFat)
+                }
             }
+        }
+    }
+
+    private func calorieSummary(_ detail: SupabaseService.EntryDetail) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("\(Int(detail.caloriesKcal.rounded()))")
+                .font(.system(size: calorieFontSize, weight: .bold, design: .rounded))
+                .foregroundStyle(Design.Color.ink)
+                .monospacedDigit()
+            Text("kcal")
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.muted)
+        }
+    }
+
+    @ViewBuilder
+    private func confidenceLabel(_ detail: SupabaseService.EntryDetail) -> some View {
+        if let confidence = detail.confidence, confidence > 0 {
+            Text("\(Int((confidence * 100).rounded()))% confidence")
+                .font(.caption)
+                .foregroundStyle(Design.Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(
+                    "Nutrition estimate confidence, \(Int((confidence * 100).rounded())) percent"
+                )
         }
     }
 
@@ -182,14 +233,22 @@ struct EntryDetailView: View {
                 .font(.headline)
                 .foregroundStyle(Design.Color.ink)
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             HStack(spacing: 5) {
                 Circle().fill(color).frame(width: 6, height: 6)
-                Text(label).font(.caption).foregroundStyle(Design.Color.muted)
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label), \(Int(value.rounded())) grams")
     }
 
     private func itemRow(_ item: SupabaseService.EntryDetailItem, index: Int) -> some View {

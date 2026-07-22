@@ -108,7 +108,7 @@ struct CapturePipelineTests {
         #expect(ImageProcessor.jpegData(from: original)?.isEmpty == false)
     }
 
-    @Test func upToFourPhotosBecomeOneBoundedUploadCollage() throws {
+    @Test func multiplePhotosBecomeOneBoundedUploadCollage() throws {
         func image(_ color: UIColor) -> UIImage {
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 400))
             return renderer.image { context in
@@ -116,6 +116,12 @@ struct CapturePipelineTests {
                 context.fill(CGRect(x: 0, y: 0, width: 600, height: 400))
             }
         }
+
+        let twoPhotoCollage = try #require(ImageProcessor.collageForUpload([
+            image(.red), image(.green)
+        ]))
+        #expect(twoPhotoCollage.cgImage?.width == 1_600)
+        #expect(twoPhotoCollage.cgImage?.height == 800)
 
         let collage = try #require(ImageProcessor.collageForUpload([
             image(.red), image(.green), image(.blue), image(.yellow), image(.purple)

@@ -252,6 +252,16 @@ struct NativeExperienceTests {
         ))
     }
 
+    @Test func detailViewportStaysBoundedAndMacroCardsStackBeforeOverflow() {
+        #expect(EntryDetailLayoutPolicy.contentWidth(for: 393) == 353)
+        #expect(EntryDetailLayoutPolicy.contentWidth(for: 320) == 280)
+        #expect(EntryDetailLayoutPolicy.contentWidth(for: 20) == 0)
+        #expect(!EntryDetailLayoutPolicy.stacksMacroCards(for: .large))
+        #expect(!EntryDetailLayoutPolicy.stacksMacroCards(for: .xLarge))
+        #expect(EntryDetailLayoutPolicy.stacksMacroCards(for: .xxLarge))
+        #expect(EntryDetailLayoutPolicy.stacksMacroCards(for: .accessibility1))
+    }
+
     @Test func macroDraftRequiresSensibleValuesAndDetectsChanges() {
         var draft = MacroTargetDraft(target: .defaultDaily)
         #expect(draft.validatedTarget == .defaultDaily)
