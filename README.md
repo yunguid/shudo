@@ -144,35 +144,28 @@ Xcode entitlement is added.
 
 ## Database and Edge deployment
 
-From the linked repository root:
+Use the guarded release wrapper from the linked repository root. It is pinned to
+Supabase CLI `2.109.1`, reads a mode-`600` file token into the environment, and
+never asks macOS Keychain for credentials:
 
 ```bash
-supabase migration list --linked
-supabase db push --linked --dry-run
-supabase db push --linked
+# One time: browser verification that never touches macOS Keychain.
+scripts/login-supabase-no-keyring.zsh
+
+# Inspect the exact migration plan without applying schema or data migrations.
+scripts/deploy-supabase-production.zsh
+
+# Apply only the verified migration suffix and deploy the verified functions.
+scripts/deploy-supabase-production.zsh --apply
 ```
 
-Apply every migration chronologically before deploying functions. Then deploy
-authenticated user functions normally and only disable gateway JWT verification
-for endpoints that implement their own dedicated server-secret authentication:
-
-```bash
-supabase functions deploy \
-  create_entry process_entry resume_entry delete_entry \
-  delete_account onboard_profile reanalyze_entry \
-  --project-ref "$SHUDO_PROJECT_REF" --use-api
-
-supabase functions deploy drain_storage_cleanup \
-  --project-ref "$SHUDO_PROJECT_REF" --use-api --no-verify-jwt
-
-supabase functions deploy generate_weekly_summaries \
-  --project-ref "$SHUDO_PROJECT_REF" --use-api --no-verify-jwt
-```
-
-Include any later correction-transcription function in the authenticated group.
-Do not use `--prune`. After deployment, run database advisors and hosted smoke
-tests with a disposable account; never use Luke’s real meal history for release
-tests.
+The authenticated group is `create_entry`, `correct_entry`, `delete_entry`,
+`delete_account`, `process_entry`, `onboard_profile`, `reanalyze_entry`, and
+`resume_entry`. Only `drain_storage_cleanup` and `generate_weekly_summaries`
+disable gateway JWT verification because they enforce dedicated server secrets.
+The wrapper deploys one function at a time, never uses `--prune`, verifies JWT
+settings, and runs database advisors. Use only disposable accounts for hosted
+release tests; never mutate Luke’s real meal history.
 
 ## Scheduled maintenance and free-tier behavior
 
@@ -195,7 +188,12 @@ Run the complete gate from the repository root:
 scripts/verify-release.zsh
 ```
 
-It verifies immutable migration hashes, clean diffs, web tests/lint/typecheck/
+The deploy script refuses the wrong linked project, unexpected or modified
+migrations, unapproved functions, insecure token-file permissions, missing
+functions, and incorrect JWT verification settings. It never prints the access
+token or places it in command arguments.
+
+`verify-release.zsh` verifies immutable migration hashes, clean diffs, web tests/lint/typecheck/
 production build/audit, safe Vercel upload contents, Deno format/lint/check/tests,
 fresh and restored PostgreSQL shapes, and native unit/UI tests with compiler
 warnings treated as errors. The focused unsigned device Release check is:

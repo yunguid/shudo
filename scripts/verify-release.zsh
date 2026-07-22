@@ -50,6 +50,10 @@ verify_migration_sha "$shudo_budget_migration" "$shudo_budget_migration_sha"
 cd "$shudo_repo_root"
 git diff --check
 plutil -lint shudo/Info.plist shudo.xcodeproj/project.pbxproj
+[[ -x scripts/login-supabase-no-keyring.zsh ]]
+zsh -n scripts/login-supabase-no-keyring.zsh
+[[ -x scripts/deploy-supabase-production.zsh ]]
+zsh -n scripts/deploy-supabase-production.zsh
 
 cd "$shudo_web_root"
 npm ci
