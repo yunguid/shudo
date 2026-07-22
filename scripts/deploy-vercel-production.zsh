@@ -114,7 +114,12 @@ jq -e --arg project "$project_id" --arg org "$org_id" \
   '.projectId == $project and .orgId == $org' .vercel/project.json >/dev/null
 
 production_env=".vercel/.env.production.local"
-"$node_cli" ../scripts/verify-vercel-env.mjs verify "$production_env"
+production_inventory="$audit_dir/production-env-inventory.json"
+npx --offline --yes vercel@$vercel_version env ls production \
+  --format json --project "$project_id" --scope "$team_slug" \
+  > "$production_inventory"
+"$node_cli" ../scripts/verify-vercel-env.mjs verify-public "$production_env"
+"$node_cli" ../scripts/verify-vercel-env.mjs verify-inventory "$production_inventory"
 
 print "Building with the current production environment..."
 npx --offline --yes vercel@$vercel_version build \
@@ -126,9 +131,29 @@ if [[ "$apply_changes" != true ]]; then
   exit 0
 fi
 
+cron_secret_file="$release_source/.cron-secret"
+cron_curl_config="$release_source/.cron-curl.conf"
+"$node_cli" ../scripts/verify-vercel-env.mjs generate-cron-material \
+  "$cron_secret_file" "$cron_curl_config"
+print "Rotating the production cron credential for this release..."
+npx --offline --yes vercel@$vercel_version env update CRON_SECRET production \
+  --sensitive --yes --project "$project_id" --scope "$team_slug" \
+  < "$cron_secret_file"
+production_inventory_after_rotation="$audit_dir/production-env-inventory-after-cron-rotation.json"
+npx --offline --yes vercel@$vercel_version env ls production \
+  --format json --project "$project_id" --scope "$team_slug" \
+  > "$production_inventory_after_rotation"
+"$node_cli" ../scripts/verify-vercel-env.mjs verify-cron-rotation \
+  "$production_inventory" "$production_inventory_after_rotation"
+
 print "Deploying the prebuilt immutable snapshot to production..."
-deployment_output="$(npx --offline --yes vercel@$vercel_version deploy \
-  --prebuilt --prod --yes --scope "$team_slug")"
+deployment_output=""
+if ! deployment_output="$(npx --offline --yes vercel@$vercel_version deploy \
+  --prebuilt --prod --yes --scope "$team_slug")"; then
+  print -u2 "Deployment failed after rotating CRON_SECRET."
+  print -u2 "The current production deployment is unchanged; re-run --apply to rotate again and deploy."
+  exit 1
+fi
 print -r -- "$deployment_output"
 print -r -- "$deployment_output" > "$audit_dir/deployment-output.txt"
 
@@ -155,9 +180,6 @@ for origin in https://shudo.yng.sh https://shudo.vercel.app; do
   assert_status "$origin/api/cron/keepalive" 401
 done
 
-cron_curl_config="$release_source/.cron-curl.conf"
-"$node_cli" ../scripts/verify-vercel-env.mjs write-cron-curl-config \
-  "$production_env" "$cron_curl_config"
 authorized_cron_status="$(curl --config "$cron_curl_config" \
   --output /dev/null --write-out '%{http_code}' \
   https://shudo.yng.sh/api/cron/keepalive)"

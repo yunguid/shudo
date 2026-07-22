@@ -83,6 +83,8 @@ zsh -n scripts/deploy-vercel-production.zsh
   scripts/verify-vercel-env.mjs
 /usr/bin/env -i "$shudo_node24_dir/node" --test \
   scripts/verify-vercel-env.test.mjs
+/usr/bin/env -i "$shudo_node24_dir/node" --test \
+  scripts/deploy-vercel-production.test.mjs
 
 cd "$shudo_web_root"
 npm ci

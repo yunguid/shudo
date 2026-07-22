@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, realpathSync } from "node:fs";
 import {
   chmod,
   lstat,
@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 process.umask(0o077);
 
@@ -459,8 +459,9 @@ async function main() {
   await run({ argv, env });
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+const invokedPath = process.argv[1] ? realpathSync(process.argv[1]) : null;
+const modulePath = realpathSync(fileURLToPath(import.meta.url));
+if (invokedPath === modulePath) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : "Auth configuration failed.");
     process.exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : 1;

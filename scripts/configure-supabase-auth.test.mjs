@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -14,6 +15,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   AUTH_CONFIG_URL,
@@ -31,6 +33,8 @@ import {
   stageAccessToken,
   verifyOwnedNonSecretFields,
 } from "./configure-supabase-auth.mjs";
+
+const execFile = promisify(execFileCallback);
 
 test("production project and endpoint are hard-pinned", () => {
   assert.equal(PROJECT_REF, "fjfashsjrajtdilxhcbn");
@@ -238,6 +242,28 @@ test("token staging creates a new owner-only copy", async () => {
       stageAccessToken({ SUPABASE_HOME: sourceDirectory }, destination),
       /EEXIST/,
     );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("CLI main runs through symlinked path components", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "shudo-auth-cli-path-test."));
+  const sourceDirectory = path.join(directory, "source");
+  const destination = path.join(directory, "staged-token");
+  const repositoryAlias = path.join(directory, "repository-alias");
+  await mkdir(sourceDirectory, { mode: 0o700 });
+  await writeFile(path.join(sourceDirectory, "access-token"), "sbp_cli_path", { mode: 0o600 });
+  await symlink(path.resolve("."), repositoryAlias, "dir");
+  try {
+    const { stdout } = await execFile(
+      process.execPath,
+      [path.join(repositoryAlias, "scripts/configure-supabase-auth.mjs"), "stage-access-token", destination],
+      { env: { SUPABASE_HOME: sourceDirectory } },
+    );
+    assert.match(stdout, /Staged an owner-only Supabase access token/);
+    assert.equal(await readFile(destination, "utf8"), "sbp_cli_path");
+    assert.equal((await stat(destination)).mode & 0o777, 0o600);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

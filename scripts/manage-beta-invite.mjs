@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   loadAccessToken,
   PROJECT_REF,
@@ -242,8 +243,9 @@ async function main() {
   await run({ argv: process.argv.slice(2), env });
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+const invokedPath = process.argv[1] ? realpathSync(process.argv[1]) : null;
+const modulePath = realpathSync(fileURLToPath(import.meta.url));
+if (invokedPath === modulePath) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : "Beta invite command failed.");
     process.exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : 1;

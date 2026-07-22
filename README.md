@@ -117,6 +117,14 @@ Generate three different high-entropy maintenance values of at least 32
 characters. `CRON_SECRET` protects the Vercel route; the route forwards each
 distinct Shudo secret only to its matching Supabase function.
 
+Store all three as Vercel `sensitive` production-only variables. Vercel does not
+allow sensitive values to be read back: the release wrapper validates their
+project-local inventory, rotates `CRON_SECRET` from owner-only temporary
+material on each applied release, and treats the authorized runtime smoke as
+the proof that the opaque cleanup and weekly values still match Supabase. If a
+deployment fails after rotation, re-run the applied release; the existing live
+deployment remains unchanged.
+
 Vercel browser variables:
 
 ```dotenv

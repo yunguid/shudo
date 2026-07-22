@@ -1,17 +1,16 @@
 #!/usr/bin/env node
 
-import { chmod, readFile, writeFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { chmod, readFile, rm, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const EXPECTED_SUPABASE_URL = "https://fjfashsjrajtdilxhcbn.supabase.co";
-const REQUIRED = [
+const REQUIRED_PUBLIC = [
   "NEXT_PUBLIC_SUPABASE_URL",
   "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-  "CRON_SECRET",
-  "SHUDO_CLEANUP_SECRET",
-  "SHUDO_WEEKLY_SECRET",
 ];
-const SECRET_NAMES = [
+const REQUIRED_SENSITIVE = [
   "CRON_SECRET",
   "SHUDO_CLEANUP_SECRET",
   "SHUDO_WEEKLY_SECRET",
@@ -52,10 +51,10 @@ export function parseVercelEnvironment(text) {
   return values;
 }
 
-export function validateProductionEnvironment(values) {
-  const missing = REQUIRED.filter((name) => !values[name]);
+export function validatePublicProductionEnvironment(values) {
+  const missing = REQUIRED_PUBLIC.filter((name) => !values[name]);
   if (missing.length > 0) {
-    fail(`Missing production environment variables: ${missing.join(", ")}`);
+    fail(`Missing readable production environment variables: ${missing.join(", ")}`);
   }
   if (values.NEXT_PUBLIC_SUPABASE_URL !== EXPECTED_SUPABASE_URL) {
     fail("Production points at the wrong Supabase project.");
@@ -66,13 +65,56 @@ export function validateProductionEnvironment(values) {
   ) {
     fail("Production Supabase publishable key is invalid.");
   }
-  for (const name of SECRET_NAMES) {
-    if (values[name].length < 32 || /[\u0000\r\n]/u.test(values[name])) {
-      fail(`${name} must be at least 32 characters and one line.`);
+  return true;
+}
+
+export function validateProductionInventory(inventory) {
+  if (!inventory || !Array.isArray(inventory.envs)) {
+    fail("Vercel production environment inventory is invalid.");
+  }
+
+  const requiredTypes = new Map([
+    ...REQUIRED_PUBLIC.map((name) => [name, "encrypted"]),
+    ...REQUIRED_SENSITIVE.map((name) => [name, "sensitive"]),
+  ]);
+  for (const [name, expectedType] of requiredTypes) {
+    const matches = inventory.envs.filter(
+      (entry) => entry?.key === name,
+    );
+    if (matches.length !== 1) {
+      fail(`Expected exactly one production environment variable named ${name}.`);
+    }
+    if (
+      !Array.isArray(matches[0].target) ||
+      matches[0].target.length !== 1 ||
+      matches[0].target[0] !== "production"
+    ) {
+      fail(`${name} must target production only.`);
+    }
+    if (matches[0].type !== expectedType) {
+      fail(`${name} must be stored as a Vercel ${expectedType} variable.`);
+    }
+    if (matches[0].configurationId !== null) {
+      fail(`${name} must be owned directly by the pinned Vercel project.`);
     }
   }
-  if (new Set(SECRET_NAMES.map((name) => values[name])).size !== SECRET_NAMES.length) {
-    fail("Production maintenance secrets must all be different.");
+  return true;
+}
+
+function cronInventoryEntry(inventory) {
+  return inventory.envs.find((entry) => entry?.key === "CRON_SECRET");
+}
+
+export function validateCronRotation(before, after) {
+  validateProductionInventory(before);
+  validateProductionInventory(after);
+  const beforeUpdatedAt = cronInventoryEntry(before)?.updatedAt;
+  const afterUpdatedAt = cronInventoryEntry(after)?.updatedAt;
+  if (!Number.isSafeInteger(beforeUpdatedAt) || !Number.isSafeInteger(afterUpdatedAt)) {
+    fail("CRON_SECRET inventory is missing a valid update timestamp.");
+  }
+  if (afterUpdatedAt <= beforeUpdatedAt) {
+    fail("CRON_SECRET update timestamp did not advance after rotation.");
   }
   return true;
 }
@@ -81,44 +123,80 @@ function escapeCurlConfig(value) {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
-export async function verifyFile(inputPath) {
+export async function verifyPublicFile(inputPath) {
   const values = parseVercelEnvironment(await readFile(inputPath, "utf8"));
-  validateProductionEnvironment(values);
+  validatePublicProductionEnvironment(values);
   return values;
 }
 
-export async function writeCronCurlConfig(inputPath, outputPath) {
-  const values = await verifyFile(inputPath);
-  const secret = escapeCurlConfig(values.CRON_SECRET);
-  await writeFile(
-    outputPath,
-    `silent\nshow-error\nmax-time = 120\nheader = "Authorization: Bearer ${secret}"\n`,
-    { encoding: "utf8", flag: "wx", mode: 0o600 },
-  );
-  await chmod(outputPath, 0o600);
+export async function verifyInventoryFile(inputPath) {
+  const inventory = JSON.parse(await readFile(inputPath, "utf8"));
+  validateProductionInventory(inventory);
+  return inventory;
+}
+
+export async function generateCronMaterial(secretPath, curlConfigPath) {
+  const secret = randomBytes(32).toString("hex");
+  const curlSecret = escapeCurlConfig(secret);
+  let secretCreated = false;
+  let curlConfigCreated = false;
+  try {
+    await writeFile(secretPath, secret, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    secretCreated = true;
+    await writeFile(
+      curlConfigPath,
+      `silent\nshow-error\nmax-time = 120\nheader = "Authorization: Bearer ${curlSecret}"\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    curlConfigCreated = true;
+    await Promise.all([chmod(secretPath, 0o600), chmod(curlConfigPath, 0o600)]);
+  } catch (error) {
+    await Promise.allSettled([
+      ...(secretCreated ? [rm(secretPath, { force: true })] : []),
+      ...(curlConfigCreated ? [rm(curlConfigPath, { force: true })] : []),
+    ]);
+    throw error;
+  }
 }
 
 async function main() {
   const [command, inputPath, outputPath] = process.argv.slice(2);
-  if (command === "verify" && inputPath && !outputPath) {
-    await verifyFile(inputPath);
-    console.log(`Verified production environment names: ${REQUIRED.join(", ")}`);
+  if (command === "verify-public" && inputPath && !outputPath) {
+    await verifyPublicFile(inputPath);
+    console.log(`Verified readable production environment names: ${REQUIRED_PUBLIC.join(", ")}`);
     return;
   }
-  if (command === "write-cron-curl-config" && inputPath && outputPath) {
-    await writeCronCurlConfig(inputPath, outputPath);
-    console.log("Wrote owner-only cron smoke configuration.");
+  if (command === "verify-inventory" && inputPath && !outputPath) {
+    await verifyInventoryFile(inputPath);
+    console.log(
+      `Verified sensitive production environment names: ${REQUIRED_SENSITIVE.join(", ")}`,
+    );
+    return;
+  }
+  if (command === "verify-cron-rotation" && inputPath && outputPath) {
+    const before = JSON.parse(await readFile(inputPath, "utf8"));
+    const after = JSON.parse(await readFile(outputPath, "utf8"));
+    validateCronRotation(before, after);
+    console.log("Verified production cron credential rotation metadata.");
+    return;
+  }
+  if (command === "generate-cron-material" && inputPath && outputPath) {
+    await generateCronMaterial(inputPath, outputPath);
+    console.log("Generated owner-only cron release material.");
     return;
   }
   fail(
-    "Usage: verify-vercel-env.mjs verify ENV_FILE | " +
-      "write-cron-curl-config ENV_FILE OUTPUT_FILE",
+    "Usage: verify-vercel-env.mjs verify-public ENV_FILE | " +
+      "verify-inventory INVENTORY_FILE | " +
+      "verify-cron-rotation BEFORE_INVENTORY AFTER_INVENTORY | " +
+      "generate-cron-material SECRET_FILE CURL_CONFIG_FILE",
     64,
   );
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+const invokedPath = process.argv[1] ? realpathSync(process.argv[1]) : null;
+const modulePath = realpathSync(fileURLToPath(import.meta.url));
+if (invokedPath === modulePath) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : "Vercel environment verification failed.");
     process.exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : 1;
