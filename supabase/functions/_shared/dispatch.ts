@@ -1,4 +1,4 @@
-import { requiredEnv } from "./http.ts";
+import { requiredEnv, runInBackground } from "./http.ts";
 
 const DISPATCH_TIMEOUT_MS = 10_000;
 
@@ -34,4 +34,40 @@ export async function dispatchStoredEntry(
   if (!response.ok) {
     throw new Error(`Processing dispatch failed (${response.status})`);
   }
+}
+
+type DispatchStoredEntry = (req: Request, entryId: string) => Promise<void>;
+type ObserveBackgroundWork = (promise: Promise<unknown>) => void;
+type DispatchFailureObserver = (error: unknown) => void;
+
+export type StoredEntryDispatchDependencies = {
+  dispatch?: DispatchStoredEntry;
+  observe?: ObserveBackgroundWork;
+  onFailure?: DispatchFailureObserver;
+};
+
+/**
+ * Registers nested dispatch with EdgeRuntime.waitUntil and returns immediately.
+ * The entry is already durable before callers invoke this helper, so a gateway
+ * timeout is observable but recoverable through the normal resume/lease path.
+ */
+export function scheduleStoredEntryDispatch(
+  req: Request,
+  entryId: string,
+  dependencies: StoredEntryDispatchDependencies = {},
+): void {
+  const dispatch = dependencies.dispatch ?? dispatchStoredEntry;
+  const observe = dependencies.observe ?? runInBackground;
+  const onFailure = dependencies.onFailure ?? ((error: unknown) => {
+    console.error("entry_processing_dispatch_failed", {
+      entryId,
+      message: String(error),
+    });
+  });
+  const task = (async () => {
+    await dispatch(req, entryId);
+  })().catch((error) => {
+    onFailure(error);
+  });
+  observe(task);
 }

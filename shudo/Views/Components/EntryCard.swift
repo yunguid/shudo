@@ -24,6 +24,37 @@ enum CompletedAnalysisRevealPlan {
     }
 }
 
+enum AnalysisPreviewPresentation {
+    static let maximumCharacterCount = 240
+    static let frameDelayNanoseconds: UInt64 = 18_000_000
+
+    static func text(
+        _ rawValue: String?,
+        status: EntryStatus,
+        isRetrying: Bool
+    ) -> String? {
+        guard status == .analyzing, !isRetrying, let rawValue else { return nil }
+        let compact = rawValue
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard !compact.isEmpty else { return nil }
+        return String(compact.prefix(maximumCharacterCount))
+    }
+
+    static func nextFrame(
+        from current: String,
+        toward target: String,
+        reduceMotion: Bool
+    ) -> String {
+        guard !reduceMotion, target.hasPrefix(current), current != target else {
+            return target
+        }
+        let remaining = target.count - current.count
+        let step = max(1, min(8, (remaining + 17) / 18))
+        return String(target.prefix(current.count + step))
+    }
+}
+
 struct EntryCard: View {
     let entry: Entry
     var isRetrying: Bool = false
@@ -78,14 +109,44 @@ struct EntryCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if processing {
-                    HStack(spacing: 7) {
-                        Capsule()
-                            .fill(Design.Color.accentPrimary.opacity(0.32))
-                            .frame(width: 24, height: 5)
-                            .shimmering()
-                        TypewriterStatusText(text: entry.displayStatusMessage)
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(spacing: 7) {
+                            Capsule()
+                                .fill(Design.Color.accentPrimary.opacity(0.32))
+                                .frame(width: 24, height: 5)
+                                .shimmering()
+                            TypewriterStatusText(text: entry.displayStatusMessage)
+                        }
+                        .foregroundStyle(Design.Color.accentSecondary)
+
+                        if let preview = AnalysisPreviewPresentation.text(
+                            entry.analysisPreview,
+                            status: entry.status,
+                            isRetrying: isRetrying
+                        ) {
+                            HStack(alignment: .top, spacing: 7) {
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Design.Color.accentPrimary.opacity(0.75),
+                                                Design.Color.accentSecondary.opacity(0.18)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(width: 2)
+
+                                StreamingAnalysisPreviewText(text: preview)
+                            }
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                            .animation(
+                                reduceMotion ? nil : .easeOut(duration: 0.2),
+                                value: preview
+                            )
+                        }
                     }
-                    .foregroundStyle(Design.Color.accentSecondary)
                 } else if entry.status == .failed {
                     HStack(spacing: 10) {
                         Text(entry.displayStatusMessage)
@@ -222,6 +283,47 @@ struct EntryCard: View {
                 .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
         )
         .accessibilityLabel("Meal photo")
+    }
+}
+
+private struct StreamingAnalysisPreviewText: View {
+    let text: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var renderedText = ""
+
+    var body: some View {
+        Text(renderedText)
+            .font(.caption)
+            .foregroundStyle(Design.Color.muted)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Analysis preview: \(text)")
+            .accessibilityHint("Updates while nutrition is estimated")
+            .task(id: "\(text)|\(reduceMotion)") {
+                if reduceMotion {
+                    renderedText = text
+                    return
+                }
+
+                while renderedText != text, !Task.isCancelled {
+                    renderedText = AnalysisPreviewPresentation.nextFrame(
+                        from: renderedText,
+                        toward: text,
+                        reduceMotion: false
+                    )
+                    guard renderedText != text else { return }
+                    do {
+                        try await Task.sleep(
+                            nanoseconds: AnalysisPreviewPresentation.frameDelayNanoseconds
+                        )
+                    } catch {
+                        return
+                    }
+                }
+            }
     }
 }
 

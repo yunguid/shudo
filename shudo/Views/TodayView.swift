@@ -77,7 +77,11 @@ struct TodayView: View {
             .presentationCornerRadius(28)
         }
         .sheet(isPresented: $isShowingAccount) {
-            NavigationStack { AccountView() }
+            NavigationStack {
+                AccountView(initialProfile: vm.profile ?? profile) { updatedProfile in
+                    vm.applyProfile(updatedProfile)
+                }
+            }
         }
         .popover(isPresented: $isShowingDatePicker) {
             DatePicker(
@@ -108,6 +112,9 @@ struct TodayView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             Task { await vm.reconcileAfterActivation() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .entryReanalysisRequested)) { _ in
+            Task { await vm.load(day: vm.currentDay) }
         }
         .onChange(of: vm.errorMessage) { _, message in showErrorAlert = message != nil }
         .alert("Couldn’t finish that", isPresented: $showErrorAlert) {
@@ -169,31 +176,98 @@ struct TodayView: View {
     }
 
     private var macroStrip: some View {
-        HStack(spacing: 8) {
-            macroMetric("kcal", vm.todayTotals.caloriesKcal, Design.Color.accentSecondary)
-            macroMetric("protein", vm.todayTotals.proteinG, Design.Color.ringProtein)
-            macroMetric("carbs", vm.todayTotals.carbsG, Design.Color.ringCarb)
-            macroMetric("fat", vm.todayTotals.fatG, Design.Color.ringFat)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func macroMetric(_ label: String, _ value: Double, _ color: Color) -> some View {
-        VStack(spacing: 5) {
-            Text("\(Int(value.rounded()))")
-                .font(.system(.subheadline, design: .rounded, weight: .bold))
-                .foregroundStyle(Design.Color.ink)
-                .monospacedDigit()
-                .contentTransition(.numericText(value: value))
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: value)
-            HStack(spacing: 4) {
-                Circle().fill(color).frame(width: 5, height: 5)
-                Text(label)
-                    .font(.caption2)
+        let target = vm.effectiveTarget
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Daily summary")
+                    .font(.headline)
+                    .foregroundStyle(Design.Color.ink)
+                Spacer()
+                Text(calorieGoalStatus(current: vm.todayTotals.caloriesKcal, goal: target.caloriesKcal))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(Design.Color.muted)
             }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("\(Int(vm.todayTotals.caloriesKcal.rounded()))")
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .foregroundStyle(Design.Color.ink)
+                        .monospacedDigit()
+                    Text("/ \(Int(target.caloriesKcal.rounded())) kcal")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Design.Color.muted)
+                        .monospacedDigit()
+                    Spacer(minLength: 0)
+                }
+                goalBar(
+                    current: vm.todayTotals.caloriesKcal,
+                    goal: target.caloriesKcal,
+                    color: Design.Color.accentSecondary
+                )
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                macroMetric("Protein", vm.todayTotals.proteinG, target.proteinG, Design.Color.ringProtein)
+                macroMetric("Carbs", vm.todayTotals.carbsG, target.carbsG, Design.Color.ringCarb)
+                macroMetric("Fat", vm.todayTotals.fatG, target.fatG, Design.Color.ringFat)
+            }
         }
-        .frame(maxWidth: .infinity)
+        .padding(18)
+        .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func macroMetric(_ label: String, _ value: Double, _ goal: Double, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(Design.Color.muted)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text("\(Int(value.rounded()))")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .foregroundStyle(Design.Color.ink)
+                    .monospacedDigit()
+                    .contentTransition(.numericText(value: value))
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: value)
+                Text("/\(Int(goal.rounded()))g")
+                    .font(.caption2)
+                    .foregroundStyle(Design.Color.muted)
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.8)
+            }
+            goalBar(current: value, goal: goal, color: color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(label), \(Int(value.rounded())) of \(Int(goal.rounded())) grams"
+        )
+    }
+
+    private func goalBar(current: Double, goal: Double, color: Color) -> some View {
+        GeometryReader { geometry in
+            Capsule()
+                .fill(Design.Color.rule)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(color)
+                        .frame(
+                            width: geometry.size.width
+                                * NutritionProgressPolicy.progress(current: current, goal: goal)
+                        )
+                }
+        }
+        .frame(height: 4)
+        .accessibilityHidden(true)
+    }
+
+    private func calorieGoalStatus(current: Double, goal: Double) -> String {
+        let difference = Int(abs(goal - current).rounded())
+        if current > goal {
+            return "\(difference) kcal over"
+        }
+        if difference == 0 { return "Goal met" }
+        return "\(difference) kcal left"
     }
 
     @ViewBuilder

@@ -2,10 +2,11 @@ import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import {
   parseAnalysis,
   type ParsedAnalysis,
-  responseOutputText,
   RESULT_SCHEMA,
 } from "./analysis.ts";
+import { AnalysisPreviewPublisher } from "./analysis_preview.ts";
 import { requiredEnv } from "./http.ts";
+import { readResponsesEventStream } from "./responses_stream.ts";
 import { drainStorageCleanup } from "./storage_cleanup.ts";
 
 export const ANALYSIS_MODEL = "gpt-5.6-sol";
@@ -22,6 +23,7 @@ type StoredEntry = {
   input_text: string | null;
   transcript: string | null;
   raw_text: string | null;
+  analysis_context: string | null;
   image_path: string | null;
   audio_path: string | null;
   transcription_model: string | null;
@@ -126,18 +128,24 @@ async function transcribe(audio: Blob, path: string): Promise<string> {
 async function analyze(
   userId: string,
   combinedText: string,
+  analysisContext: string | null,
   imageUrl: string | null,
+  publishPreview: (preview: string) => Promise<void>,
 ): Promise<{ analysis: ParsedAnalysis; responseId: string | null }> {
   const content: Array<Record<string, unknown>> = [{
     type: "input_text",
     text: [
       "Estimate the nutrition for this meal from the description and photo.",
       "Use realistic portion assumptions when exact amounts are unavailable.",
+      "Write analysis_preview first as a short, warm, natural-language sentence summarizing the meal and its likely quantities. Never put JSON syntax in that sentence.",
       "Keep the title short and useful in a meal history.",
       "Make item totals internally consistent with the meal totals.",
       `Description and transcript:\n${
         combinedText || "No written description was provided."
       }`,
+      analysisContext
+        ? `User correction history, newest first. The first correction overrides conflicting details listed later:\n${analysisContext}`
+        : "",
     ].join("\n"),
   }];
   if (imageUrl) {
@@ -148,10 +156,12 @@ async function analyze(
     method: "POST",
     headers: {
       authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}`,
+      accept: "text/event-stream",
       "content-type": "application/json",
     },
     body: JSON.stringify({
       model: ANALYSIS_MODEL,
+      stream: true,
       reasoning: { effort: "low" },
       input: [{ role: "user", content }],
       text: {
@@ -172,12 +182,16 @@ async function analyze(
   if (!response.ok) {
     throw new Error(`Meal analysis failed (${response.status})`);
   }
-  const payload = await response.json() as Record<string, unknown>;
-  const outputText = responseOutputText(payload);
-  if (!outputText) throw new Error("Meal analysis returned no output");
+  if (!response.body) throw new Error("Meal analysis returned no stream");
+
+  const previewPublisher = new AnalysisPreviewPublisher(publishPreview);
+  const { outputText, responseId } = await readResponsesEventStream(
+    response.body,
+    (partialOutput) => previewPublisher.observe(partialOutput),
+  );
   return {
     analysis: parseAnalysis(JSON.parse(outputText)),
-    responseId: typeof payload.id === "string" ? payload.id : null,
+    responseId,
   };
 }
 
@@ -191,10 +205,11 @@ export async function processStoredEntry(
   try {
     processingAttempt = await claimEntry(admin, entryId, userId);
     if (processingAttempt === null) return;
+    const activeProcessingAttempt = processingAttempt;
 
     const { data, error } = await admin.from("entries")
       .select(
-        "id,input_text,transcript,raw_text,image_path,audio_path,transcription_model",
+        "id,input_text,transcript,raw_text,analysis_context,image_path,audio_path,transcription_model",
       )
       .eq("id", entryId)
       .eq("user_id", userId)
@@ -224,6 +239,7 @@ export async function processStoredEntry(
         raw_text: combined,
         status: "analyzing",
         status_message: "Estimating your meal",
+        analysis_preview: null,
         transcription_model: TRANSCRIPTION_MODEL,
         lease_expires_at: new Date(Date.now() + 135_000).toISOString(),
       });
@@ -270,11 +286,34 @@ export async function processStoredEntry(
     const { analysis, responseId } = await analyze(
       userId,
       combinedText,
+      entry.analysis_context?.trim() || null,
       signedImageUrl,
+      async (preview) => {
+        try {
+          await updateEntry(
+            admin,
+            entryId,
+            userId,
+            activeProcessingAttempt,
+            { analysis_preview: preview },
+          );
+        } catch (previewError) {
+          if (previewError instanceof LostProcessingLeaseError) {
+            throw previewError;
+          }
+          // A transient preview write must not discard an otherwise valid meal
+          // analysis. The final fenced update remains mandatory and atomic.
+          console.warn("entry_analysis_preview_update_failed", {
+            entryId,
+            message: String(previewError),
+          });
+        }
+      },
     );
     await updateEntry(admin, entryId, userId, processingAttempt, {
       status: "complete",
       status_message: "Ready",
+      analysis_preview: null,
       title: analysis.title,
       raw_text: combinedText,
       transcript: transcript || null,
@@ -318,6 +357,7 @@ export async function processStoredEntry(
       await updateEntry(admin, entryId, userId, processingAttempt, {
         status: "failed",
         status_message: "Could not finish this meal",
+        analysis_preview: null,
         error_message: message,
         lease_expires_at: null,
       });

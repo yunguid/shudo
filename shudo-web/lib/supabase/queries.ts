@@ -2,6 +2,7 @@ import 'server-only'
 
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js'
 import { normalizeTimeZone, shiftLocalDay } from '@/lib/utils'
+import type { DailyTargetSnapshot } from '@/lib/targets'
 import type {
   Database,
   DayTotals,
@@ -151,6 +152,22 @@ export async function fetchDayTotals(
       }
     )
   })
+}
+
+export async function fetchDailyTargetHistory(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+  endDay: string,
+): Promise<DailyTargetSnapshot[]> {
+  const { data, error } = await supabase
+    .from('daily_targets')
+    .select('target_day,calories_kcal,protein_g,carbs_g,fat_g')
+    .eq('user_id', userId)
+    .lte('target_day', endDay)
+    .order('target_day', { ascending: true })
+
+  if (error) throw queryError('Unable to load target history', error)
+  return data ?? []
 }
 
 export async function fetchAllEntries(

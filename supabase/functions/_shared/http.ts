@@ -3,7 +3,6 @@ import {
   type SupabaseClient,
 } from "jsr:@supabase/supabase-js@2.110.7";
 import { HttpError } from "./errors.ts";
-import { evaluateOwnerAccess, hasOwnerPolicy } from "./owner_guard.ts";
 
 export { HttpError } from "./errors.ts";
 
@@ -15,6 +14,7 @@ export const CORS_HEADERS = {
 
 export type AuthenticatedContext = {
   admin: SupabaseClient;
+  accessToken: string;
   userId: string;
 };
 
@@ -55,13 +55,6 @@ export async function authenticate(
   const supabaseUrl = requiredEnv("SUPABASE_URL");
   const anonKey = requiredEnv("SUPABASE_ANON_KEY");
   const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-  const ownerUserId = Deno.env.get("SHUDO_OWNER_USER_ID");
-  const ownerEmail = Deno.env.get("SHUDO_OWNER_EMAIL");
-  if (!hasOwnerPolicy(ownerUserId, ownerEmail)) {
-    throw new Error(
-      "Missing server configuration: SHUDO_OWNER_USER_ID or SHUDO_OWNER_EMAIL",
-    );
-  }
 
   const token = (req.headers.get("authorization")?.trim() ?? "").replace(
     /^Bearer\s+/i,
@@ -74,16 +67,12 @@ export async function authenticate(
   });
   const { data, error } = await authClient.auth.getUser(token);
   if (error || !data.user) throw new HttpError(401, "Invalid session");
-  if (
-    evaluateOwnerAccess(data.user, ownerUserId, ownerEmail) !== "allowed"
-  ) {
-    throw new HttpError(403, "Account not allowed");
-  }
 
   return {
     admin: createClient(supabaseUrl, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     }),
+    accessToken: token,
     userId: data.user.id,
   };
 }

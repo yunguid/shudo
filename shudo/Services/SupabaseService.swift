@@ -1,7 +1,8 @@
 import Foundation
 
-struct SupabaseService: Sendable {
+struct SupabaseService: Sendable, WeeklySummaryProviding {
     static let signedImageConcurrencyLimit = 4
+    static let entryListColumns = "id,local_day,occurred_at,created_at,updated_at,status,status_message,analysis_preview,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"
 
     private struct ParsedEntry {
         var entry: Entry
@@ -180,6 +181,10 @@ struct SupabaseService: Sendable {
         let heightCM = Self.toDouble(obj["height_cm"]) == 0 ? nil : Self.toDouble(obj["height_cm"])
         let weightKG = Self.toDouble(obj["weight_kg"]) == 0 ? nil : Self.toDouble(obj["weight_kg"])
         let targetWeightKG = Self.toDouble(obj["target_weight_kg"]) == 0 ? nil : Self.toDouble(obj["target_weight_kg"])
+        let activityLevel = (obj["activity_level"] as? String)
+            .flatMap(ProfileActivityLevel.init(rawValue:))
+        let goalType = (obj["goal_type"] as? String)
+            .flatMap(NutritionGoalType.init(rawValue:)) ?? .maintain
 
         return Profile(
             userId: userId,
@@ -201,7 +206,376 @@ struct SupabaseService: Sendable {
             units: units,
             heightCM: heightCM,
             weightKG: weightKG,
-            targetWeightKG: targetWeightKG
+            targetWeightKG: targetWeightKG,
+            displayName: obj["display_name"] as? String,
+            activityLevel: activityLevel,
+            goalType: goalType,
+            goalNotes: obj["goal_notes"] as? String,
+            onboardingStatus: (obj["onboarding_status"] as? String)
+                .flatMap(OnboardingStatus.init(rawValue:)),
+            onboardingCompletedAt: Self.parseDate(obj["onboarding_completed_at"])
+        )
+    }
+
+    static func profileUpdatePayload(_ update: ProfileSettingsUpdate) throws -> [String: Any] {
+        func optionalNumber(
+            _ value: Double?,
+            label: String,
+            range: ClosedRange<Double>
+        ) throws -> Any {
+            guard let value else { return NSNull() }
+            guard value.isFinite, range.contains(value) else {
+                throw ServiceError.parseError(message: "\(label) is outside the supported range")
+            }
+            return value
+        }
+
+        func optionalText(_ value: String?) -> Any {
+            guard let value, !value.isEmpty else { return NSNull() }
+            return value
+        }
+
+        let displayName = update.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let goalNotes = update.goalNotes?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let timezone = update.timezone?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (displayName?.count ?? 0) <= 80 else {
+            throw ServiceError.parseError(message: "Display name is too long")
+        }
+        guard (goalNotes?.count ?? 0) <= 2_000 else {
+            throw ServiceError.parseError(message: "Goal description is too long")
+        }
+
+        var payload: [String: Any] = [
+            "display_name": optionalText(displayName),
+            "height_cm": try optionalNumber(update.heightCM, label: "Height", range: 50...275),
+            "weight_kg": try optionalNumber(update.weightKG, label: "Weight", range: 20...500),
+            "target_weight_kg": try optionalNumber(
+                update.targetWeightKG,
+                label: "Target weight",
+                range: 20...500
+            ),
+            "activity_level": optionalText(update.activityLevel?.rawValue),
+            "goal_type": update.goalType.rawValue,
+            "goal_notes": optionalText(goalNotes)
+        ]
+        if let timezone {
+            guard TimeZone(identifier: timezone) != nil else {
+                throw ServiceError.parseError(message: "Choose a valid timezone")
+            }
+            payload["timezone"] = timezone
+        }
+        if let units = update.units {
+            guard units == "imperial" || units == "metric" else {
+                throw ServiceError.parseError(message: "Choose metric or imperial units")
+            }
+            payload["units"] = units
+        }
+        if let target = update.dailyMacroTarget {
+            guard target.caloriesKcal.isFinite,
+                  (500...10_000).contains(target.caloriesKcal),
+                  target.proteinG.isFinite,
+                  (0...1_000).contains(target.proteinG),
+                  target.carbsG.isFinite,
+                  (0...1_500).contains(target.carbsG),
+                  target.fatG.isFinite,
+                  (0...1_000).contains(target.fatG) else {
+                throw ServiceError.parseError(message: "Daily targets are outside the supported range")
+            }
+            payload["daily_macro_target"] = [
+                "calories_kcal": target.caloriesKcal,
+                "protein_g": target.proteinG,
+                "carbs_g": target.carbsG,
+                "fat_g": target.fatG
+            ]
+        }
+        return payload
+    }
+
+    func updateProfile(_ update: ProfileSettingsUpdate) async throws -> Profile {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var components = URLComponents(
+            url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "user_id", value: "eq.\(userId)")]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: Self.profileUpdatePayload(update)
+        )
+
+        let (_, response): (Data, URLResponse)
+        do {
+            (_, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(
+                statusCode: http.statusCode,
+                message: "Couldn’t save profile settings"
+            )
+        }
+        guard let profile = try await fetchProfile(userId: userId) else {
+            throw ServiceError.parseError(message: "Updated profile was missing")
+        }
+        return profile
+    }
+
+    func updateDailyMacroTarget(_ target: MacroTarget) async throws -> Profile {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var components = URLComponents(
+            url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "user_id", value: "eq.\(userId)")]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "daily_macro_target": [
+                "calories_kcal": target.caloriesKcal,
+                "protein_g": target.proteinG,
+                "carbs_g": target.carbsG,
+                "fat_g": target.fatG
+            ]
+        ])
+
+        let (_, response): (Data, URLResponse)
+        do {
+            (_, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(
+                statusCode: http.statusCode,
+                message: "Couldn’t save daily targets"
+            )
+        }
+        guard let updated = try await fetchProfile(userId: userId) else {
+            throw ServiceError.parseError(message: "Updated profile was missing")
+        }
+        return updated
+    }
+
+    func fetchDailyNutritionTotals(
+        timezone: String,
+        dayCount: Int = NutritionProgressPolicy.heatmapDayCount
+    ) async throws -> [DailyNutritionTotal] {
+        guard dayCount > 0 else { return [] }
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
+        let startDate = calendar.date(
+            byAdding: .day,
+            value: -(dayCount - 1),
+            to: calendar.startOfDay(for: Date())
+        ) ?? Date()
+        let firstLocalDay = localDayString(for: startDate, timezone: timezone)
+
+        var components = URLComponents(
+            url: supabaseUrl.appendingPathComponent("/rest/v1/daily_totals"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(
+                name: "select",
+                value: "local_day,protein_g,carbs_g,fat_g,calories_kcal,entry_count"
+            ),
+            URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+            URLQueryItem(name: "local_day", value: "gte.\(firstLocalDay)"),
+            URLQueryItem(name: "order", value: "local_day.asc")
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(
+                statusCode: http.statusCode,
+                message: "Couldn’t load adherence history"
+            )
+        }
+        return try Self.parseDailyNutritionTotals(data)
+    }
+
+    static func parseDailyNutritionTotals(_ data: Data) throws -> [DailyNutritionTotal] {
+        guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError.parseError(message: "Invalid daily totals response")
+        }
+        return objects.compactMap { object in
+            guard let localDay = object["local_day"] as? String, !localDay.isEmpty else {
+                return nil
+            }
+            return DailyNutritionTotal(
+                localDay: localDay,
+                proteinG: toDouble(object["protein_g"]),
+                carbsG: toDouble(object["carbs_g"]),
+                fatG: toDouble(object["fat_g"]),
+                caloriesKcal: toDouble(object["calories_kcal"]),
+                entryCount: Int(toDouble(object["entry_count"]))
+            )
+        }
+    }
+
+    func fetchDailyMacroTargetHistory() async throws -> [DailyMacroTargetSnapshot] {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var components = URLComponents(
+            url: supabaseUrl.appendingPathComponent("/rest/v1/daily_targets"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(
+                name: "select",
+                value: "target_day,calories_kcal,protein_g,carbs_g,fat_g"
+            ),
+            URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+            URLQueryItem(name: "order", value: "target_day.asc")
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(
+                statusCode: http.statusCode,
+                message: "Couldn’t load target history"
+            )
+        }
+        return try Self.parseDailyMacroTargetHistory(data)
+    }
+
+    static func parseDailyMacroTargetHistory(_ data: Data) throws -> [DailyMacroTargetSnapshot] {
+        guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError.parseError(message: "Invalid target history response")
+        }
+        return objects.compactMap { object in
+            guard let targetDay = object["target_day"] as? String,
+                  targetDay.count == 10 else { return nil }
+            let target = MacroTarget(
+                caloriesKcal: toDouble(object["calories_kcal"]),
+                proteinG: toDouble(object["protein_g"]),
+                carbsG: toDouble(object["carbs_g"]),
+                fatG: toDouble(object["fat_g"])
+            )
+            guard target.caloriesKcal > 0,
+                  target.proteinG >= 0,
+                  target.carbsG >= 0,
+                  target.fatG >= 0 else { return nil }
+            return DailyMacroTargetSnapshot(targetDay: targetDay, target: target)
+        }
+        .sorted { $0.targetDay < $1.targetDay }
+    }
+
+    func fetchLatestWeeklySummary() async throws -> WeeklyInsightSummary? {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var components = URLComponents(
+            url: supabaseUrl.appendingPathComponent("/rest/v1/weekly_summaries"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(
+                name: "select",
+                value: "week_start,week_end,headline,narrative,repeated_foods,patterns,suggestions"
+            ),
+            URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+            URLQueryItem(name: "status", value: "eq.complete"),
+            URLQueryItem(name: "order", value: "week_start.desc"),
+            URLQueryItem(name: "limit", value: "1")
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(
+                statusCode: http.statusCode,
+                message: "Couldn’t load weekly insights"
+            )
+        }
+        return try Self.parseWeeklySummary(data)
+    }
+
+    static func parseWeeklySummary(_ data: Data) throws -> WeeklyInsightSummary? {
+        guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError.parseError(message: "Invalid weekly summary response")
+        }
+        guard let object = objects.first else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let startText = object["week_start"] as? String,
+              let endText = object["week_end"] as? String,
+              let weekStart = formatter.date(from: startText),
+              let weekEnd = formatter.date(from: endText) else {
+            throw ServiceError.parseError(message: "Weekly summary dates were invalid")
+        }
+        let repeatedFoods: [WeeklyRepeatedFood] =
+            (object["repeated_foods"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let name = item["name"] as? String, !name.isEmpty else { return nil }
+            let count = Int(Self.toDouble(item["count"]))
+            guard count > 0 else { return nil }
+            return WeeklyRepeatedFood(name: name, count: count)
+            }
+        return WeeklyInsightSummary(
+            weekStart: weekStart,
+            weekEnd: weekEnd,
+            headline: object["headline"] as? String ?? "",
+            narrative: object["narrative"] as? String ?? "",
+            repeatedFoods: repeatedFoods,
+            patterns: object["patterns"] as? [String] ?? [],
+            suggestions: object["suggestions"] as? [String] ?? []
         )
     }
 
@@ -223,7 +597,7 @@ struct SupabaseService: Sendable {
         let localDay = localDayString(for: date, timezone: timezone)
         var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
-            URLQueryItem(name: "select", value: "id,local_day,occurred_at,created_at,updated_at,status,status_message,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"),
+            URLQueryItem(name: "select", value: Self.entryListColumns),
             URLQueryItem(name: "user_id", value: "eq.\(userId)"),
             URLQueryItem(name: "local_day", value: "eq.\(localDay)"),
             URLQueryItem(name: "order", value: "occurred_at.desc.nullslast,created_at.desc")
@@ -271,7 +645,7 @@ struct SupabaseService: Sendable {
         let userId = try currentUserId()
         var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
-            URLQueryItem(name: "select", value: "id,local_day,occurred_at,created_at,updated_at,status,status_message,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"),
+            URLQueryItem(name: "select", value: Self.entryListColumns),
             URLQueryItem(name: "id", value: "eq.\(id.uuidString)"),
             URLQueryItem(name: "user_id", value: "eq.\(userId)"),
             URLQueryItem(name: "limit", value: "1")
@@ -331,7 +705,8 @@ struct SupabaseService: Sendable {
                 statusMessage: object["status_message"] as? String,
                 errorMessage: object["error_message"] as? String,
                 statusUpdatedAt: Self.parseDate(object["updated_at"]),
-                processingAttempts: Int(Self.toDouble(object["processing_attempts"]))
+                processingAttempts: Int(Self.toDouble(object["processing_attempts"])),
+                analysisPreview: object["analysis_preview"] as? String
             ),
             imagePath: imagePath?.isEmpty == false ? imagePath : nil
         )

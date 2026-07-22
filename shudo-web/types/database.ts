@@ -43,6 +43,18 @@ export type ProfileRow = {
   daily_macro_target: Json
 }
 
+export type DailyTargetRow = {
+  user_id: string
+  target_day: string
+  calories_kcal: number
+  protein_g: number
+  carbs_g: number
+  fat_g: number
+  source: string
+  created_at: string
+  updated_at: string
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -56,6 +68,12 @@ export interface Database {
         Row: ProfileRow
         Insert: Partial<ProfileRow> & Pick<ProfileRow, 'user_id'>
         Update: Partial<ProfileRow>
+        Relationships: []
+      }
+      daily_targets: {
+        Row: DailyTargetRow
+        Insert: Partial<DailyTargetRow> & Pick<DailyTargetRow, 'user_id' | 'target_day'>
+        Update: Partial<DailyTargetRow>
         Relationships: []
       }
     }

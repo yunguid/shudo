@@ -13,6 +13,7 @@ final class TodayViewModel: ObservableObject {
     @Published private(set) var isLoadingDay = false
     @Published private(set) var resumingEntryIds: Set<UUID> = []
     @Published private(set) var completionRevealEntryIds: Set<UUID> = []
+    @Published private(set) var effectiveTarget: MacroTarget
 
     let api: APIService
     let supabase: SupabaseService
@@ -22,9 +23,12 @@ final class TodayViewModel: ObservableObject {
     private var pollingTokens: [UUID: UUID] = [:]
     private var autoResumeRequestStates: [UUID: AutoResumeRequestState] = [:]
     private var resumeNotices: [UUID: String] = [:]
+    private var targetHistory: [DailyMacroTargetSnapshot] = []
 
     static let staleResumeInterval: TimeInterval = 145
     static let autoResumeRetryInterval: TimeInterval = 50
+    static let streamingPreviewPollingInterval: UInt64 = 650_000_000
+    static let maximumPollingInterval: UInt64 = 3_000_000_000
     private static let maximumProcessingAttempts = 3
 
     struct AutoResumeRequestState: Equatable {
@@ -42,10 +46,19 @@ final class TodayViewModel: ObservableObject {
         self.api = api
         self.supabase = supabase
         self.profile = profile
+        self.effectiveTarget = profile.dailyMacroTarget
         Task { await load(day: Date()) }
     }
 
     var hasProcessingEntries: Bool { entries.contains { $0.status.isProcessing } }
+
+    func applyProfile(_ updatedProfile: Profile) {
+        profile = updatedProfile
+        effectiveTarget = updatedProfile.dailyMacroTarget
+        targetHistory = []
+        ProfileCache.save(updatedProfile)
+        Task { await refreshTargetHistory() }
+    }
 
     func loadFor(profile: Profile) async {
         self.profile = profile
@@ -82,10 +95,18 @@ final class TodayViewModel: ObservableObject {
         errorMessage = nil
 
         do {
-            let items = try await supabase.fetchEntries(for: day, timezone: timezone)
+            async let entryRequest = supabase.fetchEntries(for: day, timezone: timezone)
+            async let targetRequest = supabase.fetchDailyMacroTargetHistory()
+            let (items, loadedTargetHistory) = try await (entryRequest, targetRequest)
             guard loadGeneration == generation else { return }
+            targetHistory = loadedTargetHistory
             entries = items
             todayTotals = Self.totals(for: items)
+            effectiveTarget = NutritionProgressPolicy.effectiveTarget(
+                on: requestedLocalDay,
+                history: targetHistory,
+                fallback: profile?.dailyMacroTarget ?? .defaultDaily
+            )
             isLoadingDay = false
 
             for item in items where item.status.isProcessing {
@@ -101,6 +122,11 @@ final class TodayViewModel: ObservableObject {
             )
             entries = fallback.entries
             todayTotals = fallback.totals
+            effectiveTarget = NutritionProgressPolicy.effectiveTarget(
+                on: requestedLocalDay,
+                history: targetHistory,
+                fallback: profile?.dailyMacroTarget ?? .defaultDaily
+            )
             for item in entries where item.status.isProcessing {
                 startPolling(
                     entryId: item.id,
@@ -110,6 +136,17 @@ final class TodayViewModel: ObservableObject {
             isLoadingDay = false
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func refreshTargetHistory() async {
+        guard let profile else { return }
+        guard let history = try? await supabase.fetchDailyMacroTargetHistory() else { return }
+        targetHistory = history
+        effectiveTarget = NutritionProgressPolicy.effectiveTarget(
+            on: supabase.localDayString(for: currentDay, timezone: profile.timezone),
+            history: history,
+            fallback: profile.dailyMacroTarget
+        )
     }
 
     func deleteEntry(_ entry: Entry) async {
@@ -236,8 +273,9 @@ final class TodayViewModel: ObservableObject {
 
     private func poll(entryId: UUID, targetLocalDay: String) async {
         var deadline = Date().addingTimeInterval(600)
-        var delay: UInt64 = 650_000_000
+        var delay = Self.streamingPreviewPollingInterval
         var consecutiveErrors = 0
+        var observedStatus: EntryStatus?
 
         while !Task.isCancelled && Date() < deadline {
             do {
@@ -246,6 +284,7 @@ final class TodayViewModel: ObservableObject {
                 }
                 guard !Task.isCancelled else { return }
                 consecutiveErrors = 0
+                observedStatus = refreshed.status
 
                 if refreshed.status == .complete {
                     resumeNotices[entryId] = nil
@@ -308,7 +347,7 @@ final class TodayViewModel: ObservableObject {
                             )
                         }
                         deadline = Date().addingTimeInterval(600)
-                        delay = 650_000_000
+                        delay = Self.streamingPreviewPollingInterval
                     case .failed:
                         if autoResumeRequestStates[entryId]?.attempt == observedAttempt {
                             autoResumeRequestStates[entryId] = Self.autoResumeRetryState(
@@ -335,9 +374,15 @@ final class TodayViewModel: ObservableObject {
                 }
             }
 
-            try? await Task.sleep(nanoseconds: delay)
+            let sleepDelay = observedStatus == .analyzing
+                ? Self.streamingPreviewPollingInterval
+                : delay
+            try? await Task.sleep(nanoseconds: sleepDelay)
             guard !Task.isCancelled else { return }
-            delay = min(delay + delay / 2, 3_000_000_000)
+            delay = Self.nextPollingDelay(
+                current: sleepDelay,
+                status: observedStatus
+            )
         }
 
         guard !Task.isCancelled else { return }
@@ -383,6 +428,7 @@ final class TodayViewModel: ObservableObject {
                     entries[index].status = status
                     entries[index].statusMessage = status.defaultMessage
                     entries[index].errorMessage = nil
+                    entries[index].analysisPreview = nil
                     entries[index].statusUpdatedAt = Date()
                     entries[index].processingAttempts = min(
                         Self.maximumProcessingAttempts,
@@ -442,6 +488,14 @@ final class TodayViewModel: ObservableObject {
         refreshed: EntryStatus
     ) -> Bool {
         previous?.isProcessing == true && refreshed == .complete
+    }
+
+    static func nextPollingDelay(
+        current: UInt64,
+        status: EntryStatus?
+    ) -> UInt64 {
+        if status == .analyzing { return streamingPreviewPollingInterval }
+        return min(current + current / 2, maximumPollingInterval)
     }
 
     static func shouldAdvancePinnedDay(

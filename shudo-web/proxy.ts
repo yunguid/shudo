@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isPublicAuthPath, isPublicInformationPath } from '@/lib/auth-paths'
 import { getSupabasePublicConfig } from '@/lib/supabase/config'
 import type { Database } from '@/types/database'
 
@@ -10,6 +11,11 @@ export async function proxy(request: NextRequest) {
   // Vercel invokes this system route with CRON_SECRET, not a Supabase user
   // cookie. The route performs its own timing-safe Bearer authentication.
   if (path === '/api/cron/keepalive') {
+    return NextResponse.next({ request })
+  }
+  // Public information routes—and the deliberately removed /privacy route—
+  // bypass auth so the latter resolves to a real 404 rather than a login loop.
+  if (isPublicInformationPath(path)) {
     return NextResponse.next({ request })
   }
 
@@ -48,7 +54,7 @@ export async function proxy(request: NextRequest) {
     error,
   } = await supabase.auth.getUser()
 
-  const isAuthRoute = path.startsWith('/auth/')
+  const isAuthRoute = isPublicAuthPath(path)
 
   const sessionIsMissing = error && [400, 401, 403].includes(error.status ?? 0)
 

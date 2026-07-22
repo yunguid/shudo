@@ -4,8 +4,20 @@ set -euo pipefail
 
 shudo_repo_root="${0:A:h:h}"
 shudo_web_root="$shudo_repo_root/shudo-web"
-shudo_migration="$shudo_repo_root/supabase/migrations/20260720221116_rebuild_shudo_core.sql"
-shudo_expected_migration_sha="d2e46d509e50fef4266136c92a7aab60f218915a4cca44017d952c0f6247ad77"
+shudo_core_migration="$shudo_repo_root/supabase/migrations/20260720221116_rebuild_shudo_core.sql"
+shudo_core_migration_sha="d2e46d509e50fef4266136c92a7aab60f218915a4cca44017d952c0f6247ad77"
+shudo_streaming_migration="$shudo_repo_root/supabase/migrations/20260721125035_add_analysis_streaming_preview.sql"
+shudo_streaming_migration_sha="acb508783d67fb3baf8594f47762443322550912653b0cd1af9e94601a399dae"
+shudo_rls_helper_migration="$shudo_repo_root/supabase/migrations/20260721222010_restrict_rls_auto_enable_execute.sql"
+shudo_rls_helper_migration_sha="4fa8100a1001f22ae4e97a678ce8828f301df3436fc815f16b7c7910c92e5508"
+shudo_account_migration="$shudo_repo_root/supabase/migrations/20260721223105_account_onboarding_corrections_weekly.sql"
+shudo_account_migration_sha="d8ba1c1a16984df4afddba3f96772709baa28ffb15bae7d7ec63458266ecded1"
+shudo_hardening_migration="$shudo_repo_root/supabase/migrations/20260721231126_harden_target_history_weekly_claims.sql"
+shudo_hardening_migration_sha="2334b068da5874533d6923f6a1039bac787eee140ac566dce2e64e77fb07c9f0"
+shudo_voice_correction_migration="$shudo_repo_root/supabase/migrations/20260721234531_add_voice_entry_correction_requests.sql"
+shudo_voice_correction_migration_sha="0b6c89f623ff2ecc4e0223c60c1ff4a792ca7f953d116319fa622721521f7041"
+shudo_budget_migration="$shudo_repo_root/supabase/migrations/20260722001415_project_ai_budget_timezone.sql"
+shudo_budget_migration_sha="ce7c138b6196d9b4a9ce6f93e8017458ef0707c065802ff80877d9ee93ab3be8"
 shudo_node24_dir="/Users/luke/.nvm/versions/node/v24.16.0/bin"
 
 if [[ -x "$shudo_node24_dir/node" ]]; then
@@ -16,11 +28,24 @@ if [[ "$(node --version)" != v24.* ]]; then
   exit 1
 fi
 
-shudo_actual_migration_sha="$(shasum -a 256 "$shudo_migration" | awk '{print $1}')"
-if [[ "$shudo_actual_migration_sha" != "$shudo_expected_migration_sha" ]]; then
-  print -u2 "Migration hash changed; update the private recovery manifest before cutover."
-  exit 1
-fi
+verify_migration_sha() {
+  local migration_path="$1"
+  local expected_sha="$2"
+  local actual_sha
+  actual_sha="$(shasum -a 256 "$migration_path" | awk '{print $1}')"
+  if [[ "$actual_sha" != "$expected_sha" ]]; then
+    print -u2 "Migration hash changed: ${migration_path:t}"
+    exit 1
+  fi
+}
+
+verify_migration_sha "$shudo_core_migration" "$shudo_core_migration_sha"
+verify_migration_sha "$shudo_streaming_migration" "$shudo_streaming_migration_sha"
+verify_migration_sha "$shudo_rls_helper_migration" "$shudo_rls_helper_migration_sha"
+verify_migration_sha "$shudo_account_migration" "$shudo_account_migration_sha"
+verify_migration_sha "$shudo_hardening_migration" "$shudo_hardening_migration_sha"
+verify_migration_sha "$shudo_voice_correction_migration" "$shudo_voice_correction_migration_sha"
+verify_migration_sha "$shudo_budget_migration" "$shudo_budget_migration_sha"
 
 cd "$shudo_repo_root"
 git diff --check
@@ -85,6 +110,7 @@ xcodebuild -project shudo.xcodeproj -scheme shudo \
   CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
   GCC_TREAT_WARNINGS_AS_ERRORS=YES test
 xcrun xcresulttool get test-results summary --path "$shudo_xc_result"
+"$shudo_repo_root/scripts/verify-ios-release.zsh"
 
 print "Shudo release verification passed."
 print "Xcode result bundle: $shudo_xc_result"

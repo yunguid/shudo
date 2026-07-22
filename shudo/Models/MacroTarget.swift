@@ -1,6 +1,6 @@
 import Foundation
 
-public struct MacroTarget: Codable, Equatable {
+public struct MacroTarget: Codable, Equatable, Sendable {
     public var caloriesKcal: Double
     public var proteinG: Double
     public var carbsG: Double
@@ -13,4 +13,3 @@ public struct MacroTarget: Codable, Equatable {
         fatG: 70
     )
 }
-

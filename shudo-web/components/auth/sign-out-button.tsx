@@ -23,7 +23,7 @@ export function SignOutButton() {
       router.replace('/auth/login')
       router.refresh()
     } catch {
-      setErrorMessage('Could not sign out. Check your connection and try again.')
+      setErrorMessage('Sign-out failed. Check the connection and try again.')
       setIsSigningOut(false)
     }
   }

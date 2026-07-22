@@ -1,0 +1,55 @@
+import Link from 'next/link'
+import type { ReactNode } from 'react'
+import { PUBLIC_INFORMATION_LINKS } from '@/lib/public-information'
+
+interface AuthShellProps {
+  children: ReactNode
+}
+
+export function AuthShell({ children }: AuthShellProps) {
+  return (
+    <main
+      className="relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-12 sm:px-8"
+      id="main-content"
+      tabIndex={-1}
+    >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_12%,rgba(236,227,211,0.09),transparent_32rem)]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent"
+      />
+
+      <div className="relative w-full max-w-[26rem]">
+        <header className="mb-8 text-center">
+          <Link
+            className="inline-flex rounded-xl px-2 py-1 text-xl font-semibold tracking-[-0.035em] text-ink transition hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            href="/auth/login"
+          >
+            Shudo
+          </Link>
+          <p className="mt-1 text-xs tracking-wide text-subtle">Voice-first nutrition log</p>
+        </header>
+
+        {children}
+
+        <footer className="mt-7 text-center text-xs text-subtle">
+          <p>Voice-first nutrition logging</p>
+          <nav aria-label="Legal and support" className="mt-3 flex justify-center gap-4">
+            {PUBLIC_INFORMATION_LINKS.map((item) => (
+              <Link
+                className="rounded-md text-muted transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                href={item.href}
+                key={item.href}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        </footer>
+      </div>
+    </main>
+  )
+}

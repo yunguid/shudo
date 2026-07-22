@@ -287,6 +287,99 @@ struct TodayViewModelTests {
         )
     }
 
+    @Test func analysisPreviewIsBoundedNormalizedAndOnlyVisibleDuringActiveAnalysis() {
+        let normalized = AnalysisPreviewPresentation.text(
+            "  Salmon\nwith\t rice   and broccoli.  ",
+            status: .analyzing,
+            isRetrying: false
+        )
+        #expect(normalized == "Salmon with rice and broccoli.")
+
+        let unicodePreview = String(repeating: "🍜", count: 260)
+        let bounded = AnalysisPreviewPresentation.text(
+            unicodePreview,
+            status: .analyzing,
+            isRetrying: false
+        )
+        #expect(bounded?.count == AnalysisPreviewPresentation.maximumCharacterCount)
+        #expect(bounded == String(unicodePreview.prefix(240)))
+
+        #expect(AnalysisPreviewPresentation.text(
+            "Analyzing salmon",
+            status: .complete,
+            isRetrying: false
+        ) == nil)
+        #expect(AnalysisPreviewPresentation.text(
+            "Analyzing salmon",
+            status: .analyzing,
+            isRetrying: true
+        ) == nil)
+        #expect(AnalysisPreviewPresentation.text(
+            " \n\t ",
+            status: .analyzing,
+            isRetrying: false
+        ) == nil)
+    }
+
+    @Test func analysisPreviewFramesAdvanceSmoothlyAndRespectAccessibility() {
+        let target = "Salmon, rice, broccoli, and a light sesame dressing"
+        var rendered = ""
+        var frameCount = 0
+
+        while rendered != target {
+            let next = AnalysisPreviewPresentation.nextFrame(
+                from: rendered,
+                toward: target,
+                reduceMotion: false
+            )
+            #expect(target.hasPrefix(next))
+            #expect(next.count > rendered.count)
+            #expect(next.count - rendered.count <= 8)
+            rendered = next
+            frameCount += 1
+        }
+
+        #expect(frameCount > 1)
+        #expect(AnalysisPreviewPresentation.nextFrame(
+            from: "Old partial",
+            toward: "Replacement partial",
+            reduceMotion: false
+        ) == "Replacement partial")
+        #expect(AnalysisPreviewPresentation.nextFrame(
+            from: "",
+            toward: target,
+            reduceMotion: true
+        ) == target)
+    }
+
+    @MainActor
+    @Test func analyzingPollingStaysFastWhileOtherStatesBackOffWithinBounds() {
+        #expect(TodayViewModel.nextPollingDelay(
+            current: TodayViewModel.maximumPollingInterval,
+            status: .analyzing
+        ) == TodayViewModel.streamingPreviewPollingInterval)
+        #expect(TodayViewModel.nextPollingDelay(
+            current: TodayViewModel.streamingPreviewPollingInterval,
+            status: .transcribing
+        ) == 975_000_000)
+        #expect(TodayViewModel.nextPollingDelay(
+            current: 2_500_000_000,
+            status: .queued
+        ) == TodayViewModel.maximumPollingInterval)
+        #expect(TodayViewModel.nextPollingDelay(
+            current: 2_500_000_000,
+            status: nil
+        ) == TodayViewModel.maximumPollingInterval)
+    }
+
+    @Test func entryPollingSelectsThePersistedAnalysisPreviewExactlyOnce() {
+        let columns = SupabaseService.entryListColumns.split(separator: ",")
+        #expect(columns.filter { $0 == "analysis_preview" }.count == 1)
+        #expect(columns.contains("updated_at"))
+        #expect(columns.contains("status"))
+        #expect(columns.contains("processing_attempts"))
+    }
+
     @MainActor
     @Test func pinnedTodayAdvancesAcrossMidnightButHistoricalDaysStaySelected() throws {
         let timezone = "America/New_York"

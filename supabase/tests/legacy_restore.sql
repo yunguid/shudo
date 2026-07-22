@@ -82,6 +82,22 @@ $$;
 grant all on function public.set_timestamp_updated_at()
   to anon, authenticated, service_role;
 
+-- The paused project's downloaded backup also contained this public
+-- SECURITY DEFINER helper with default/direct Data API execution grants.
+create function public.rls_auto_enable()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  null;
+end;
+$$;
+
+grant execute on function public.rls_auto_enable()
+  to anon, authenticated;
+
 create trigger profiles_set_updated_at
 before update on public.profiles
 for each row execute function public.set_timestamp_updated_at();
@@ -180,6 +196,12 @@ values
   );
 
 \ir ../migrations/20260720221116_rebuild_shudo_core.sql
+\ir ../migrations/20260721125035_add_analysis_streaming_preview.sql
+\ir ../migrations/20260721222010_restrict_rls_auto_enable_execute.sql
+\ir ../migrations/20260721223105_account_onboarding_corrections_weekly.sql
+\ir ../migrations/20260721231126_harden_target_history_weekly_claims.sql
+\ir ../migrations/20260721234531_add_voice_entry_correction_requests.sql
+\ir ../migrations/20260722001415_project_ai_budget_timezone.sql
 
 do $$
 declare
@@ -305,6 +327,40 @@ begin
   if to_regprocedure('public.set_timestamp_updated_at()') is not null then
     raise exception 'legacy public timestamp trigger function survived';
   end if;
+  if to_regprocedure('public.rls_auto_enable()') is null then
+    raise exception 'legacy RLS helper was unexpectedly removed';
+  end if;
+  if has_function_privilege(
+    'anon',
+    'public.rls_auto_enable()',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.rls_auto_enable()',
+    'execute'
+  ) then
+    raise exception 'legacy SECURITY DEFINER RLS helper retained Data API EXECUTE';
+  end if;
+  if exists (
+    select 1
+    from pg_proc as function_meta
+    cross join lateral aclexplode(
+      coalesce(
+        function_meta.proacl,
+        acldefault('f', function_meta.proowner)
+      )
+    ) as privilege
+    left join pg_roles as grantee_role
+      on grantee_role.oid = privilege.grantee
+    where function_meta.oid = 'public.rls_auto_enable()'::regprocedure
+      and privilege.privilege_type = 'EXECUTE'
+      and (
+        privilege.grantee = 0
+        or grantee_role.rolname in ('anon', 'authenticated')
+      )
+  ) then
+    raise exception 'legacy SECURITY DEFINER RLS helper retained an explicit EXECUTE ACL';
+  end if;
   if has_function_privilege(
     'service_role',
     'private.set_updated_at()',
@@ -408,6 +464,10 @@ begin
 end;
 $$;
 
+\ir ai_budget_timezone.sql
+
+\ir voice_corrections.sql
+
 insert into storage.objects (bucket_id, name)
 values
   (
@@ -450,3 +510,34 @@ end;
 $$;
 
 reset role;
+
+do $$
+declare
+  restored_target jsonb;
+  restored_status text;
+begin
+  select daily_macro_target, onboarding_status
+  into restored_target, restored_status
+  from public.profiles
+  where user_id = '00000000-0000-4000-8000-000000000001';
+
+  if restored_target <> '{"calories_kcal":2800,"protein_g":180,"carbs_g":360,"fat_g":72}'::jsonb then
+    raise exception 'legacy macro target was overwritten: %', restored_target;
+  end if;
+  if restored_status <> 'completed' then
+    raise exception 'established legacy user was forced through onboarding: %', restored_status;
+  end if;
+  if not exists (
+    select 1 from public.daily_targets
+    where user_id = '00000000-0000-4000-8000-000000000001'
+      and target_day = '2026-07-20'
+      and calories_kcal = 2800
+      and protein_g = 180
+      and carbs_g = 360
+      and fat_g = 72
+      and source = 'imported'
+  ) then
+    raise exception 'legacy macro target was not backfilled from its first meal day';
+  end if;
+end;
+$$;

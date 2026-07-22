@@ -24,7 +24,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>luke.shudo.capture</string>
+			<string>luke.shudo</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>shudo</string>
@@ -41,8 +41,6 @@
 	<string>Shudo uses the camera so you can attach a meal photo.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Shudo uses the microphone to record and transcribe your meal description.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Shudo lets you choose a meal photo to include with your log.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

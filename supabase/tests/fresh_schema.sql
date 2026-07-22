@@ -10,6 +10,12 @@ end;
 $$;
 
 \ir ../migrations/20260720221116_rebuild_shudo_core.sql
+\ir ../migrations/20260721125035_add_analysis_streaming_preview.sql
+\ir ../migrations/20260721222010_restrict_rls_auto_enable_execute.sql
+\ir ../migrations/20260721223105_account_onboarding_corrections_weekly.sql
+\ir ../migrations/20260721231126_harden_target_history_weekly_claims.sql
+\ir ../migrations/20260721234531_add_voice_entry_correction_requests.sql
+\ir ../migrations/20260722001415_project_ai_budget_timezone.sql
 
 insert into auth.users (id, email)
 values
@@ -146,6 +152,109 @@ begin
   ) then
     raise exception 'entries is missing from Realtime publication';
   end if;
+end;
+$$;
+
+\ir ai_budget_timezone.sql
+
+\ir voice_corrections.sql
+
+-- Streamed previews stay bounded and are replaced/terminalized under the same
+-- attempt fence as the durable processor state.
+do $$
+declare
+  owner_id constant uuid := '00000000-0000-4000-8000-000000000001';
+  preview_entry_id constant uuid := '50000000-0000-4000-8000-000000000001';
+  claimed_attempt smallint;
+  repaired boolean;
+  stored_preview text;
+  rejected boolean := false;
+begin
+  insert into public.entries (
+    id,
+    user_id,
+    client_request_id,
+    local_day,
+    status,
+    processing_attempts
+  ) values (
+    preview_entry_id,
+    owner_id,
+    '51000000-0000-4000-8000-000000000001',
+    '2026-07-21',
+    'queued',
+    0
+  );
+
+  select public.claim_entry_processing(preview_entry_id, owner_id)
+  into claimed_attempt;
+  if claimed_attempt <> 1 then
+    raise exception 'preview fixture did not acquire its first attempt';
+  end if;
+
+  update public.entries
+  set analysis_preview = 'A chicken bowl with rice and vegetables.'
+  where id = preview_entry_id;
+
+  begin
+    update public.entries
+    set analysis_preview = repeat('x', 241)
+    where id = preview_entry_id;
+  exception when check_violation then
+    rejected := true;
+  end;
+  if not rejected then
+    raise exception 'preview constraint accepted more than 240 characters';
+  end if;
+
+  update public.entries
+  set lease_expires_at = now() - interval '1 second'
+  where id = preview_entry_id;
+  select public.claim_entry_processing(preview_entry_id, owner_id)
+  into claimed_attempt;
+  if claimed_attempt <> 2 then
+    raise exception 'preview fixture did not replace its stale attempt';
+  end if;
+  select analysis_preview into stored_preview
+  from public.entries
+  where id = preview_entry_id;
+  if stored_preview is not null then
+    raise exception 'replacement claim retained a stale streamed preview';
+  end if;
+
+  update public.entries
+  set analysis_preview = 'Still estimating this meal.',
+      processing_attempts = 3,
+      lease_expires_at = now() - interval '1 second'
+  where id = preview_entry_id;
+  select public.fail_exhausted_entry_processing(
+    preview_entry_id,
+    owner_id,
+    3::smallint
+  ) into repaired;
+  if not repaired then
+    raise exception 'expired final preview attempt was not terminalized';
+  end if;
+  select analysis_preview into stored_preview
+  from public.entries
+  where id = preview_entry_id;
+  if stored_preview is not null then
+    raise exception 'terminalized attempt retained a streamed preview';
+  end if;
+
+  rejected := false;
+  begin
+    update public.entries
+    set analysis_preview = 'Stale terminal preview'
+    where id = preview_entry_id;
+  exception when check_violation then
+    rejected := true;
+  end;
+  if not rejected then
+    raise exception 'terminal state accepted a streamed preview';
+  end if;
+
+  delete from public.entries where id = preview_entry_id;
 end;
 $$;
 
@@ -895,6 +1004,8 @@ begin
   );
 end;
 $$;
+
+\ir account_features.sql
 
 -- Repair RPCs deliberately use database time plus exact lease tokens. These
 -- assertions prove that a stale request cannot terminate a newer upload or a

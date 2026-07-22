@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js@2.110.7/edge-runtime.d.ts";
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
-import { dispatchStoredEntry } from "../_shared/dispatch.ts";
+import { scheduleStoredEntryDispatch } from "../_shared/dispatch.ts";
 import { drainStorageCleanup } from "../_shared/storage_cleanup.ts";
 import {
   AUDIO_TYPES,
@@ -28,6 +28,7 @@ import {
   json,
   runInBackground,
 } from "../_shared/http.ts";
+import { modelQuotaHttpError } from "../_shared/quotas.ts";
 
 const ENTRY_FIELDS =
   "id,status,status_message,processing_attempts,lease_expires_at,upload_token,image_path,audio_path";
@@ -90,7 +91,9 @@ async function prepareEntry(
     .select(ENTRY_FIELDS)
     .maybeSingle();
 
-  if (insertError && insertError.code !== "23505") throw insertError;
+  if (insertError && insertError.code !== "23505") {
+    throw modelQuotaHttpError(insertError) ?? insertError;
+  }
 
   const existing = (inserted as EntryRecord | null) ??
     await fetchEntry(admin, userId, clientRequestId);
@@ -175,16 +178,8 @@ Deno.serve(async (req: Request) => {
     validateCombinedAttachmentSize(image, audio);
     requireCaptureContent(text, image, audio);
 
-    const dispatchEntry = (id: string): void => {
-      runInBackground(
-        dispatchStoredEntry(req, id).catch((error) => {
-          console.error("entry_processing_dispatch_failed", {
-            entryId: id,
-            message: String(error),
-          });
-        }),
-      );
-    };
+    const dispatchEntry = (id: string): void =>
+      scheduleStoredEntryDispatch(req, id);
 
     const prepared = await prepareEntry(
       admin,
@@ -258,14 +253,7 @@ Deno.serve(async (req: Request) => {
 
       // The capture is durable at this point. A dispatch failure must not roll
       // back Storage objects or the queued row; the client can safely resume it.
-      try {
-        await dispatchStoredEntry(req, entryId);
-      } catch (error) {
-        console.error("entry_processing_dispatch_failed", {
-          entryId,
-          message: String(error),
-        });
-      }
+      scheduleStoredEntryDispatch(req, entryId);
       return json({ entry_id: entryId, status: "queued" }, 202);
     } catch (error) {
       const message = error instanceof Error

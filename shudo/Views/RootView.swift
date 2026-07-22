@@ -4,14 +4,26 @@ struct RootView: View {
     @ObservedObject private var session = AuthSessionManager.shared
     @State private var profile: Profile?
     @State private var refreshGeneration = UUID()
+    @State private var profileError: String?
 
     var body: some View {
         Group {
             if session.session == nil {
                 AuthView()
             } else if let profile {
-                TodayView(profile: profile)
-                    .id(profile.userId)
+                switch ProfileLaunchPolicy.destination(for: profile) {
+                case .onboarding:
+                    OnboardingView(initialProfile: profile) { updatedProfile in
+                        ProfileCache.save(updatedProfile)
+                        self.profile = updatedProfile
+                    }
+                    .id("onboarding-\(profile.userId)")
+                case .loading:
+                    loadingView
+                case .today:
+                    TodayView(profile: profile)
+                        .id(profile.userId)
+                }
             } else {
                 loadingView
             }
@@ -24,6 +36,7 @@ struct RootView: View {
         .onChange(of: session.session) { _, newSession in
             if newSession == nil {
                 profile = nil
+                profileError = nil
                 refreshGeneration = UUID()
             } else {
                 prepareProfile()
@@ -33,19 +46,44 @@ struct RootView: View {
 
     private var loadingView: some View {
         VStack(spacing: 14) {
-            ProgressView()
-                .controlSize(.large)
-                .tint(Design.Color.accentPrimary)
-            Text("Opening Shudo…")
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.muted)
+            if let profileError {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.title2)
+                    .foregroundStyle(Design.Color.muted)
+                Text("Couldn’t open your profile")
+                    .font(.headline)
+                    .foregroundStyle(Design.Color.ink)
+                Text(profileError)
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try again") { prepareProfile() }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .frame(maxWidth: 220)
+                Button("Sign out") { AuthSessionManager.shared.signOut() }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Design.Color.muted)
+                    .padding(.top, 4)
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Design.Color.accentPrimary)
+                Text("Opening Shudo…")
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.muted)
+            }
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func prepareProfile() {
+        profileError = nil
         let userId = session.userId
-        profile = ProfileCache.load(userId: userId) ?? ProfileCache.fallback(userId: userId)
+        // Cached profiles render immediately while the authoritative row is
+        // refreshed for onboarding status, targets, timezone, and units.
+        profile = ProfileCache.load(userId: userId)
 
         let generation = UUID()
         refreshGeneration = generation
@@ -62,6 +100,10 @@ struct RootView: View {
                     (error as? SupabaseService.ServiceError)?.isAuthenticationFailure == true
                 if friendlyStatus == 401 || friendlyStatus == 403 || serviceAuthenticationFailure {
                     await MainActor.run { AuthSessionManager.shared.signOut() }
+                } else if profile == nil {
+                    await MainActor.run {
+                        profileError = "Check your connection and try again."
+                    }
                 }
                 // Keep the cached/default profile on transient network or server failure.
             }

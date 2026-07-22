@@ -13,13 +13,10 @@ export function TopBar() {
         <div className="flex items-center gap-4 sm:gap-6">
           <Link
             aria-label="Shudo dashboard"
-            className="flex items-center gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="rounded-xl px-1 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             href="/"
           >
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent text-xs font-bold text-paper shadow-[0_0_24px_rgba(118,221,167,0.15)]">
-              S
-            </span>
-            <span className="text-sm font-semibold tracking-tight text-ink">shudo</span>
+            <span className="text-base font-semibold tracking-[-0.035em] text-ink">Shudo</span>
           </Link>
 
           <nav aria-label="Primary navigation" className="flex items-center gap-1">

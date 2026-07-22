@@ -1,7 +1,14 @@
+export const ANALYSIS_PREVIEW_MAX_CHARACTERS = 240;
+
 export const RESULT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
+    analysis_preview: {
+      type: "string",
+      minLength: 1,
+      maxLength: ANALYSIS_PREVIEW_MAX_CHARACTERS,
+    },
     title: { type: "string", minLength: 1, maxLength: 120 },
     items: {
       type: "array",
@@ -43,7 +50,14 @@ export const RESULT_SCHEMA = {
     confidence: { type: "number", minimum: 0, maximum: 1 },
     notes: { type: ["string", "null"] },
   },
-  required: ["title", "items", "totals", "confidence", "notes"],
+  required: [
+    "analysis_preview",
+    "title",
+    "items",
+    "totals",
+    "confidence",
+    "notes",
+  ],
 } as const;
 
 export type ParsedAnalysisItem = {
@@ -57,6 +71,7 @@ export type ParsedAnalysisItem = {
 };
 
 export type ParsedAnalysis = {
+  analysis_preview: string;
   title: string;
   items: ParsedAnalysisItem[];
   totals: {
@@ -68,6 +83,70 @@ export type ParsedAnalysis = {
   confidence: number;
   notes: string | null;
 };
+
+function unicodePrefix(value: string, maxCharacters: number): string {
+  return Array.from(value).slice(0, maxCharacters).join("");
+}
+
+export function normalizeAnalysisPreview(value: string): string {
+  return unicodePrefix(
+    value.replace(/\s+/g, " ").trim(),
+    ANALYSIS_PREVIEW_MAX_CHARACTERS,
+  );
+}
+
+/**
+ * Extracts a safe, human-readable preview while the model's strict JSON object
+ * is still incomplete. Structured Outputs preserves schema key order, so the
+ * preview is deliberately the first field and becomes useful early in the SSE
+ * stream. Incomplete escape sequences are ignored until their next chunk.
+ */
+export function analysisPreviewFromPartialJSON(value: string): string | null {
+  const key = /"analysis_preview"\s*:\s*"/.exec(value);
+  if (!key || key.index === undefined) return null;
+
+  const start = key.index + key[0].length;
+  let decoded = "";
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === '"') break;
+    if (character !== "\\") {
+      decoded += character;
+      continue;
+    }
+
+    const escaped = value[index + 1];
+    if (escaped === undefined) break;
+    const simpleEscapes: Record<string, string> = {
+      '"': '"',
+      "\\": "\\",
+      "/": "/",
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+    };
+    if (escaped in simpleEscapes) {
+      decoded += simpleEscapes[escaped];
+      index += 1;
+      continue;
+    }
+    if (escaped === "u") {
+      const code = value.slice(index + 2, index + 6);
+      if (code.length < 4 || !/^[0-9a-f]{4}$/i.test(code)) break;
+      decoded += String.fromCharCode(Number.parseInt(code, 16));
+      index += 5;
+      continue;
+    }
+
+    // Strict JSON can never contain another escape form. Stop at the partial
+    // boundary rather than displaying provider syntax to the user.
+    break;
+  }
+
+  return normalizeAnalysisPreview(decoded) || null;
+}
 
 export function responseOutputText(response: Record<string, unknown>): string {
   if (typeof response.output_text === "string" && response.output_text) {
@@ -149,6 +228,15 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
   }
   const title = nonemptyString(object.title, "title");
   if (title.length > 120) throw new Error("Invalid analysis value: title");
+  const analysisPreview = nonemptyString(
+    object.analysis_preview,
+    "analysis_preview",
+  ).replace(/\s+/g, " ");
+  if (
+    Array.from(analysisPreview).length > ANALYSIS_PREVIEW_MAX_CHARACTERS
+  ) {
+    throw new Error("Invalid analysis value: analysis_preview");
+  }
   if (!("notes" in object)) throw new Error("Analysis notes were missing");
   if (object.notes !== null && typeof object.notes !== "string") {
     throw new Error("Invalid analysis value: notes");
@@ -158,6 +246,7 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
     : null;
   const totalValues = totals as Record<string, unknown>;
   return {
+    analysis_preview: analysisPreview,
     title,
     items: object.items.map(parseItem),
     totals: {

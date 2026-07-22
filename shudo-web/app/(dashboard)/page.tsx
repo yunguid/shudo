@@ -6,10 +6,12 @@ import { getCurrentUser } from '@/lib/auth'
 import {
   fetchDayData,
   fetchDayTotals,
+  fetchDailyTargetHistory,
   fetchProfileSettings,
   summarizeEntry,
 } from '@/lib/supabase/queries'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { effectiveMacroTarget } from '@/lib/targets'
 import {
   clampPercent,
   formatEntryTime,
@@ -34,12 +36,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const requestedDay = Array.isArray(day) ? day[0] : day
   const selectedDay = isLocalDay(requestedDay) && requestedDay <= todayDay ? requestedDay : todayDay
 
-  const [{ totals, entries }, recentDays] = await Promise.all([
+  const [{ totals, entries }, recentDays, targetHistory] = await Promise.all([
     fetchDayData(supabase, user.id, selectedDay),
     fetchDayTotals(supabase, user.id, selectedDay),
+    fetchDailyTargetHistory(supabase, user.id, selectedDay),
   ])
 
-  const target = profile.dailyMacroTarget
+  const target = effectiveMacroTarget(targetHistory, selectedDay, profile.dailyMacroTarget)
   const calorieProgress = clampPercent((totals.total_calories / target.calories_kcal) * 100)
   const macroMetrics = [
     { label: 'Protein', value: totals.total_protein, target: target.protein_g, color: 'text-protein' },
@@ -139,7 +142,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <div className="rounded-[1.75rem] bg-surface/60 px-4 pb-4 pt-6">
             <div className="grid h-36 grid-cols-7 items-end gap-2">
               {recentDays.map((dayTotal) => {
-                const height = clampPercent((dayTotal.total_calories / target.calories_kcal) * 100)
+                const dayTarget = effectiveMacroTarget(
+                  targetHistory,
+                  dayTotal.local_day,
+                  profile.dailyMacroTarget,
+                )
+                const height = clampPercent(
+                  (dayTotal.total_calories / dayTarget.calories_kcal) * 100,
+                )
                 const isSelected = dayTotal.local_day === selectedDay
                 return (
                   <Link

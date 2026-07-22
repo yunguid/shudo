@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js@2.110.7/edge-runtime.d.ts";
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
-import { dispatchStoredEntry } from "../_shared/dispatch.ts";
+import { scheduleStoredEntryDispatch } from "../_shared/dispatch.ts";
 import { drainStorageCleanup } from "../_shared/storage_cleanup.ts";
 import {
   incompleteMediaMessage,
@@ -207,14 +207,7 @@ Deno.serve(async (req: Request) => {
     // The queued transition is already durable. A transient nested-function
     // failure must not make the phone keep showing the old terminal state;
     // polling can request another dispatch if this one did not land.
-    try {
-      await dispatchStoredEntry(req, resumedEntryId);
-    } catch (dispatchError) {
-      console.error("entry_processing_dispatch_failed", {
-        entryId: resumedEntryId,
-        message: String(dispatchError),
-      });
-    }
+    scheduleStoredEntryDispatch(req, resumedEntryId);
     runInBackground(
       drainStorageCleanup(admin, 10).catch((cleanupError) => {
         console.error("opportunistic_storage_cleanup_failed", {

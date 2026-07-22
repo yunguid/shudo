@@ -9,6 +9,26 @@ import Testing
 import Foundation
 @testable import shudo
 
+private enum DeletionTestError: Error {
+    case failed
+}
+
+private struct DeletionServiceStub: AccountDeletionServicing {
+    let error: Error?
+
+    func deleteAccount(accessToken: String) async throws {
+        #expect(accessToken == "access-token")
+        if let error { throw error }
+    }
+}
+
+private actor DeletionTestFlag {
+    private var cleared = false
+
+    func markCleared() { cleared = true }
+    func wasCleared() -> Bool { cleared }
+}
+
 struct AuthSessionManagerTests {
 
     @Test func publicAuthRequestUsesPublishableKeyWithoutBogusBearerToken() throws {
@@ -21,6 +41,285 @@ struct AuthSessionManagerTests {
         #expect(request.value(forHTTPHeaderField: "apikey") == "sb_publishable_example")
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    }
+
+    @Test func passwordRecoveryUsesCanonicalRedirectAndPublicHeaders() throws {
+        let baseURL = try #require(URL(string: "https://example.supabase.co"))
+        let redirectURL = SupabaseAuthService.passwordRecoveryRedirectURL
+        let request = try SupabaseAuthService.makePasswordRecoveryRequest(
+            email: "luke@yng.sh",
+            redirectURL: redirectURL,
+            baseURL: baseURL,
+            apiKey: "sb_publishable_example"
+        )
+
+        let components = try #require(URLComponents(url: request.url!, resolvingAgainstBaseURL: false))
+        let body = try #require(
+            JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String]
+        )
+
+        #expect(request.httpMethod == "POST")
+        #expect(components.path == "/auth/v1/recover")
+        #expect(
+            components.queryItems?.first(where: { $0.name == "redirect_to" })?.value
+            == "https://shudo.yng.sh/reset-password"
+        )
+        #expect(body == ["email": "luke@yng.sh"])
+        #expect(request.value(forHTTPHeaderField: "apikey") == "sb_publishable_example")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test func emailSignUpUsesConfirmationRedirectAndPublicHeaders() throws {
+        let baseURL = try #require(URL(string: "https://example.supabase.co"))
+        let request = try SupabaseAuthService.makeSignUpRequest(
+            email: "new@example.com",
+            password: "a-long-test-password",
+            redirectURL: SupabaseAuthService.emailConfirmationRedirectURL,
+            baseURL: baseURL,
+            apiKey: "sb_publishable_example"
+        )
+        let components = try #require(
+            URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+        )
+        let body = try #require(
+            JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String]
+        )
+
+        #expect(components.path == "/auth/v1/signup")
+        #expect(
+            components.queryItems?.first(where: { $0.name == "redirect_to" })?.value
+            == "https://shudo.yng.sh/auth/confirm"
+        )
+        #expect(body["email"] == "new@example.com")
+        #expect(request.value(forHTTPHeaderField: "apikey") == "sb_publishable_example")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test func resendConfirmationUsesSignupTypeAndDedicatedLanding() throws {
+        let request = try SupabaseAuthService.makeSignUpConfirmationRequest(
+            email: "new@example.com",
+            redirectURL: SupabaseAuthService.emailConfirmationRedirectURL,
+            baseURL: try #require(URL(string: "https://example.supabase.co")),
+            apiKey: "sb_publishable_example"
+        )
+        let components = try #require(
+            URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+        )
+        let body = try #require(
+            JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String]
+        )
+
+        #expect(components.path == "/auth/v1/resend")
+        #expect(components.queryItems?.first(where: { $0.name == "redirect_to" })?.value
+                == "https://shudo.yng.sh/auth/confirm")
+        #expect(body == ["type": "signup", "email": "new@example.com"])
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+
+        let error = SupabaseAuthService.FriendlyAuthError(
+            httpStatus: 400,
+            supabaseErrorCode: "email_not_confirmed",
+            serverMessage: "Email not confirmed",
+            friendlyMessage: "Confirm your account."
+        )
+        #expect(SupabaseAuthService.isEmailNotConfirmed(error))
+    }
+
+    @Test func oauthAuthorizationUsesPKCEAndNativeCallback() throws {
+        let url = try SupabaseAuthService.makeOAuthAuthorizationURL(
+            provider: .google,
+            redirectURL: SupabaseAuthService.oauthCallbackURL,
+            codeVerifier: String(repeating: "v", count: 43),
+            baseURL: try #require(URL(string: "https://example.supabase.co"))
+        )
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let query = Dictionary(
+            uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+        )
+
+        #expect(components.path == "/auth/v1/authorize")
+        #expect(query["provider"] == "google")
+        #expect(query["redirect_to"] == "shudo://auth/callback")
+        #expect(query["code_challenge_method"] == "s256")
+        #expect(query["code_challenge"]?.isEmpty == false)
+    }
+
+    @Test func authSettingsExposeOnlyConfiguredOAuthProviders() throws {
+        let configured = try JSONSerialization.data(withJSONObject: [
+            "external": ["email": true, "apple": false, "google": true, "github": true]
+        ])
+        let disabled = Data("""
+            {"external":{"apple":false,"google":false}}
+            """.utf8)
+        let bothEnabled = Data("""
+            {"external":{"google":true,"apple":true}}
+            """.utf8)
+        let noKnownProviders = Data("""
+            {"external":{}}
+            """.utf8)
+
+        #expect(try SupabaseAuthService.parseEnabledOAuthProviders(configured) == [.google])
+        #expect(
+            try SupabaseAuthService.parseEnabledOAuthProviders(bothEnabled) == [.apple, .google]
+        )
+        #expect(try SupabaseAuthService.parseEnabledOAuthProviders(disabled).isEmpty)
+        #expect(try SupabaseAuthService.parseEnabledOAuthProviders(noKnownProviders).isEmpty)
+
+        #expect(throws: SupabaseAuthService.OAuthProviderDiscoveryError.self) {
+            try SupabaseAuthService.parseEnabledOAuthProviders(Data("{}".utf8))
+        }
+        #expect(throws: SupabaseAuthService.OAuthProviderDiscoveryError.self) {
+            try SupabaseAuthService.parseEnabledOAuthProviders(
+                Data("{\"external\":{\"apple\":\"yes\"}}".utf8)
+            )
+        }
+        #expect(throws: SupabaseAuthService.OAuthProviderDiscoveryError.self) {
+            try SupabaseAuthService.parseEnabledOAuthProviders(configured, statusCode: 503)
+        }
+    }
+
+    @Test func authSettingsRequestUsesPublicGetContractAndFiniteTimeout() throws {
+        let request = SupabaseAuthService.makeOAuthProviderSettingsRequest(
+            baseURL: try #require(URL(string: "https://example.supabase.co")),
+            apiKey: "sb_publishable_example"
+        )
+
+        #expect(request.url?.path == "/auth/v1/settings")
+        #expect(request.httpMethod == "GET")
+        #expect(request.value(forHTTPHeaderField: "apikey") == "sb_publishable_example")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(request.timeoutInterval == 10)
+    }
+
+    @Test func oauthDiscoveryStateKeepsDisabledSeparateFromFailure() {
+        let disabled = OAuthProviderDiscoveryState.loaded([])
+        #expect(disabled != .failed)
+        #expect(disabled != .loading)
+    }
+
+    @Test func profileCacheCanBePurgedWithLocalAccountState() throws {
+        let userId = "profile-cache-test-\(UUID().uuidString)"
+        ProfileCache.save(Profile(
+            userId: userId,
+            timezone: "UTC",
+            dailyMacroTarget: .defaultDaily,
+            weightKG: 82
+        ))
+        #expect(ProfileCache.load(userId: userId)?.weightKG == 82)
+        ProfileCache.clear(userId: userId)
+        #expect(ProfileCache.load(userId: userId) == nil)
+    }
+
+    @Test func accountDeletionRequestUsesAuthenticatedEdgeRoute() throws {
+        let request = try SupabaseAuthService.makeDeleteAccountRequest(
+            accessToken: "access-token",
+            baseURL: try #require(URL(string: "https://example.supabase.co")),
+            apiKey: "sb_publishable_example"
+        )
+        let body = try #require(
+            JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String]
+        )
+
+        #expect(request.url?.path == "/functions/v1/delete_account")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer access-token")
+        #expect(request.value(forHTTPHeaderField: "apikey") == "sb_publishable_example")
+        #expect(body == ["confirmation": "DELETE"])
+    }
+
+    @Test func typedProfileUpdateCoversGoalsAndBodyMeasurements() throws {
+        let payload = try SupabaseService.profileUpdatePayload(
+            ProfileSettingsUpdate(
+                timezone: "America/New_York",
+                units: "imperial",
+                displayName: " Luke ",
+                heightCM: 181,
+                weightKG: 82,
+                targetWeightKG: 78,
+                activityLevel: .active,
+                goalType: .lose,
+                goalNotes: "Slow and steady",
+                dailyMacroTarget: MacroTarget(
+                    caloriesKcal: 2_300,
+                    proteinG: 170,
+                    carbsG: 250,
+                    fatG: 70
+                )
+            )
+        )
+
+        #expect(payload["display_name"] as? String == "Luke")
+        #expect(payload["timezone"] as? String == "America/New_York")
+        #expect(payload["units"] as? String == "imperial")
+        #expect(payload["height_cm"] as? Double == 181)
+        #expect(payload["activity_level"] as? String == "active")
+        #expect(payload["goal_type"] as? String == "lose")
+        #expect(payload["goal_notes"] as? String == "Slow and steady")
+        #expect(payload["daily_macro_target"] as? [String: Double] != nil)
+
+        #expect(throws: Error.self) {
+            try SupabaseService.profileUpdatePayload(
+                ProfileSettingsUpdate(heightCM: 10)
+            )
+        }
+    }
+
+    @Test @MainActor func appRouterRecognizesNativeAuthCallback() throws {
+        let callback = try #require(
+            URL(string: "shudo://auth/callback?code=authorization-code")
+        )
+        AppRouter.shared.handle(url: callback)
+        #expect(AppRouter.shared.authCallbackURL == callback)
+        AppRouter.shared.consumeAuthCallback(callback)
+        #expect(AppRouter.shared.authCallbackURL == nil)
+    }
+
+    @Test func confirmedAccountDeletionClearsLocalStateOnlyAfterSuccess() async throws {
+        let successFlag = DeletionTestFlag()
+        try await AuthSessionManager.completeAccountDeletion(
+            accessToken: "access-token",
+            using: DeletionServiceStub(error: nil)
+        ) {
+            await successFlag.markCleared()
+        }
+        #expect(await successFlag.wasCleared())
+
+        let failureFlag = DeletionTestFlag()
+        do {
+            try await AuthSessionManager.completeAccountDeletion(
+                accessToken: "access-token",
+                using: DeletionServiceStub(error: DeletionTestError.failed)
+            ) {
+                await failureFlag.markCleared()
+            }
+            Issue.record("Expected deletion failure")
+        } catch {
+            #expect(!(await failureFlag.wasCleared()))
+        }
+    }
+
+    @Test func recoveryDoesNotRevealWhetherEmailExists() {
+        let missingUser = SupabaseAuthService.FriendlyAuthError(
+            httpStatus: 400,
+            supabaseErrorCode: "user_not_found",
+            serverMessage: "User not found",
+            friendlyMessage: "No account found for this email."
+        )
+        let rateLimited = SupabaseAuthService.FriendlyAuthError(
+            httpStatus: 429,
+            supabaseErrorCode: "over_email_send_rate_limit",
+            serverMessage: "Too many requests",
+            friendlyMessage: "Please try again later."
+        )
+
+        #expect(SupabaseAuthService.masksRecoveryLookupFailure(missingUser))
+        #expect(!SupabaseAuthService.masksRecoveryLookupFailure(rateLimited))
+    }
+
+    @Test func authEmailValidationAcceptsAndNormalizesUsersAddress() {
+        #expect(AuthEmailInput.isValid("  Luke@YNG.sh\n"))
+        #expect(AuthEmailInput.normalized("  Luke@YNG.sh\n") == "luke@yng.sh")
+        #expect(!AuthEmailInput.isValid("luke@yng"))
+        #expect(!AuthEmailInput.isValid("luke@@yng.sh"))
+        #expect(!AuthEmailInput.isValid("@yng.sh"))
     }
 
     // MARK: - isAuthenticationError Tests

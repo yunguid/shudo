@@ -52,10 +52,58 @@ final class AuthSessionManager: ObservableObject {
         await apply(session)
     }
 
+    @discardableResult
+    func signUp(
+        email: String,
+        password: String
+    ) async throws -> SupabaseAuthService.SignUpOutcome {
+        let outcome = try await service.signUp(email: email, password: password)
+        if case let .signedIn(session) = outcome {
+            await apply(session)
+        }
+        return outcome
+    }
+
+    func completeOAuth(
+        callbackURL: URL,
+        codeVerifier: String
+    ) async throws {
+        let session = try await service.exchangeOAuthCallback(
+            callbackURL,
+            codeVerifier: codeVerifier
+        )
+        await apply(session)
+    }
+
+    /// Deletes the remote account first, then clears Keychain/local state only
+    /// after the server confirms success. The protocol parameter keeps the
+    /// destructive boundary deterministic in unit tests.
+    func deleteAccount(
+        using accountService: AccountDeletionServicing = SupabaseAuthService()
+    ) async throws {
+        let accessToken = try await getAccessToken()
+        try await Self.completeAccountDeletion(
+            accessToken: accessToken,
+            using: accountService
+        ) {
+            await MainActor.run { self.signOut() }
+        }
+    }
+
+    static func completeAccountDeletion(
+        accessToken: String,
+        using accountService: AccountDeletionServicing,
+        clearLocalSession: () async -> Void
+    ) async throws {
+        try await accountService.deleteAccount(accessToken: accessToken)
+        await clearLocalSession()
+    }
+
     @MainActor
     func signOut() {
         session = nil
         deleteFromKeychain()
+        ProfileCache.clearAll()
     }
 
     func getAccessToken() async throws -> String {

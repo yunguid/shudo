@@ -8,14 +8,14 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        paper: '#090b0a',
-        surface: '#111411',
-        'surface-strong': '#181c18',
-        ink: '#f6f8f3',
-        muted: '#98a098',
-        subtle: '#818a81',
-        accent: '#76dda7',
-        'accent-bright': '#95ebbd',
+        paper: '#0b0a09',
+        surface: '#141210',
+        'surface-strong': '#1d1a17',
+        ink: '#f4efe6',
+        muted: '#aaa196',
+        subtle: '#7f776d',
+        accent: '#e8ded0',
+        'accent-bright': '#fff8ec',
         danger: '#ff8f8f',
         protein: '#8eb8ff',
         carbs: '#76dda7',

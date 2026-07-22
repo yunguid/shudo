@@ -44,6 +44,7 @@ public struct Entry: Identifiable, Codable, Equatable {
     public var errorMessage: String?
     public var statusUpdatedAt: Date?
     public var processingAttempts: Int
+    public var analysisPreview: String?
 
     public init(
         id: UUID,
@@ -59,7 +60,8 @@ public struct Entry: Identifiable, Codable, Equatable {
         statusMessage: String? = nil,
         errorMessage: String? = nil,
         statusUpdatedAt: Date? = nil,
-        processingAttempts: Int = 0
+        processingAttempts: Int = 0,
+        analysisPreview: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -75,6 +77,7 @@ public struct Entry: Identifiable, Codable, Equatable {
         self.errorMessage = errorMessage
         self.statusUpdatedAt = statusUpdatedAt
         self.processingAttempts = processingAttempts
+        self.analysisPreview = analysisPreview
     }
 
     public var displayStatusMessage: String {

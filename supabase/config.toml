@@ -156,11 +156,21 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+site_url = "https://shudo.yng.sh"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+additional_redirect_urls = [
+  "http://127.0.0.1:3000/auth/callback",
+  "http://127.0.0.1:3000/reset-password",
+  "https://shudo.yng.sh/auth/callback",
+  "https://shudo.yng.sh/auth/confirm",
+  "https://shudo.yng.sh/reset-password",
+  "https://shudo.vercel.app/auth/callback",
+  "https://shudo.vercel.app/auth/confirm",
+  "https://shudo.vercel.app/reset-password",
+  "shudo://auth/callback",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
@@ -173,7 +183,7 @@ enable_refresh_token_rotation = true
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
-enable_signup = false
+enable_signup = true
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
@@ -218,12 +228,12 @@ web3 = 30
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.
-enable_signup = false
+enable_signup = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
@@ -334,6 +344,17 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
+[auth.external.google]
+enabled = false
+client_id = ""
+# Keep the hosted provider secret out of version control. Enable this provider
+# only after SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET and client_id are configured.
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = ""
+url = ""
+skip_nonce_check = false
+email_optional = false
+
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
 [auth.web3.solana]
@@ -387,10 +408,20 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/create_entry/index.ts"
 
+[functions.correct_entry]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/correct_entry/index.ts"
+
 [functions.delete_entry]
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/delete_entry/index.ts"
+
+[functions.delete_account]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/delete_account/index.ts"
 
 [functions.drain_storage_cleanup]
 enabled = true
@@ -404,10 +435,27 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/process_entry/index.ts"
 
+[functions.onboard_profile]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/onboard_profile/index.ts"
+
+[functions.reanalyze_entry]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/reanalyze_entry/index.ts"
+
 [functions.resume_entry]
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/resume_entry/index.ts"
+
+[functions.generate_weekly_summaries]
+enabled = true
+# Scheduled calls use x-shudo-weekly-secret; user JWTs are never accepted by
+# this maintenance endpoint.
+verify_jwt = false
+entrypoint = "./functions/generate_weekly_summaries/index.ts"
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"

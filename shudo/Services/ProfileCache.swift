@@ -14,6 +14,18 @@ enum ProfileCache {
         UserDefaults.standard.set(data, forKey: keyPrefix + profile.userId)
     }
 
+    static func clear(userId: String?) {
+        guard let key = key(userId: userId) else { return }
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    static func clearAll() {
+        for key in UserDefaults.standard.dictionaryRepresentation().keys
+        where key.hasPrefix(keyPrefix) {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
     static func fallback(userId: String?) -> Profile {
         Profile(
             userId: userId ?? "pending",

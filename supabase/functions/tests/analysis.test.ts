@@ -1,4 +1,6 @@
 import {
+  ANALYSIS_PREVIEW_MAX_CHARACTERS,
+  analysisPreviewFromPartialJSON,
   parseAnalysis,
   responseOutputText,
   RESULT_SCHEMA,
@@ -7,6 +9,7 @@ import { assertEquals, assertThrows } from "./assertions.ts";
 
 function validAnalysis(): Record<string, unknown> {
   return {
+    analysis_preview: "  Looks like a chicken and rice bowl.  ",
     title: "  Chicken rice bowl  ",
     items: [{
       name: " Chicken breast ",
@@ -31,6 +34,7 @@ function validAnalysis(): Record<string, unknown> {
 Deno.test("meal analysis schema remains strict and fully required", () => {
   assertEquals(RESULT_SCHEMA.additionalProperties, false);
   assertEquals(RESULT_SCHEMA.required, [
+    "analysis_preview",
     "title",
     "items",
     "totals",
@@ -38,6 +42,10 @@ Deno.test("meal analysis schema remains strict and fully required", () => {
     "notes",
   ]);
   assertEquals(RESULT_SCHEMA.properties.items.maxItems, 30);
+  assertEquals(
+    RESULT_SCHEMA.properties.analysis_preview.maxLength,
+    ANALYSIS_PREVIEW_MAX_CHARACTERS,
+  );
   assertEquals(
     RESULT_SCHEMA.properties.items.items.additionalProperties,
     false,
@@ -48,6 +56,7 @@ Deno.test("meal analysis schema remains strict and fully required", () => {
 Deno.test("analysis parser validates and normalizes the complete payload", () => {
   const parsed = parseAnalysis(validAnalysis());
   assertEquals(parsed, {
+    analysis_preview: "Looks like a chicken and rice bowl.",
     title: "Chicken rice bowl",
     items: [{
       name: "Chicken breast",
@@ -67,6 +76,31 @@ Deno.test("analysis parser validates and normalizes the complete payload", () =>
     confidence: 0.9,
     notes: "Portion estimated from the photo.",
   });
+});
+
+Deno.test("partial structured JSON yields only a bounded natural preview", () => {
+  assertEquals(
+    analysisPreviewFromPartialJSON(
+      '{"analysis_preview":"A warm bowl with rice, chicken, and \\uD83E\\uDD66',
+    ),
+    "A warm bowl with rice, chicken, and 🥦",
+  );
+  assertEquals(
+    analysisPreviewFromPartialJSON(
+      '{"analysis_preview":"Chicken \\n bowl with \\"extra\\" sauce",' +
+        '"title":"Bowl"}',
+    ),
+    'Chicken bowl with "extra" sauce',
+  );
+  assertEquals(analysisPreviewFromPartialJSON('{"title":"Meal"}'), null);
+  assertEquals(
+    Array.from(
+      analysisPreviewFromPartialJSON(
+        `{"analysis_preview":"${"x".repeat(260)}`,
+      ) ?? "",
+    ).length,
+    ANALYSIS_PREVIEW_MAX_CHARACTERS,
+  );
 });
 
 Deno.test("Responses output text supports convenience and nested shapes", () => {
@@ -140,6 +174,22 @@ Deno.test("analysis parser rejects missing or mistyped required fields", () => {
   const longTitle = validAnalysis();
   longTitle.title = "x".repeat(121);
   assertThrows(() => parseAnalysis(longTitle), undefined, "title");
+
+  const missingPreview = validAnalysis();
+  delete missingPreview.analysis_preview;
+  assertThrows(
+    () => parseAnalysis(missingPreview),
+    undefined,
+    "analysis_preview",
+  );
+
+  const longPreview = validAnalysis();
+  longPreview.analysis_preview = "x".repeat(241);
+  assertThrows(
+    () => parseAnalysis(longPreview),
+    undefined,
+    "analysis_preview",
+  );
 
   const missingNotes = validAnalysis();
   delete missingNotes.notes;

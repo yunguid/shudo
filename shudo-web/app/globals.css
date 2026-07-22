@@ -9,25 +9,25 @@
 
   html {
     min-height: 100%;
-    background: #090b0a;
+    background: #0b0a09;
   }
 
   body {
     min-height: 100vh;
     margin: 0;
     background:
-      radial-gradient(circle at 15% -10%, rgba(118, 221, 167, 0.08), transparent 30rem),
-      radial-gradient(circle at 90% 20%, rgba(142, 184, 255, 0.055), transparent 28rem),
-      #090b0a;
-    color: #f6f8f3;
+      radial-gradient(circle at 18% -10%, rgba(236, 227, 211, 0.055), transparent 32rem),
+      radial-gradient(circle at 92% 18%, rgba(255, 248, 236, 0.025), transparent 30rem),
+      #0b0a09;
+    color: #f4efe6;
     font-family: var(--font-geist-sans), system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
   ::selection {
-    background: rgba(118, 221, 167, 0.28);
-    color: #f6f8f3;
+    background: rgba(232, 222, 208, 0.24);
+    color: #fffaf2;
   }
 
   button,

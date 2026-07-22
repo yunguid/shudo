@@ -287,7 +287,7 @@ struct EntryComposerView: View {
             if note.isEmpty {
                 Text("Optional note — portions, ingredients, anything useful")
                     .font(.body)
-                    .foregroundStyle(Design.Color.subtle)
+                    .foregroundStyle(Design.Color.muted)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 15)
                     .allowsHitTesting(false)
@@ -327,7 +327,7 @@ struct EntryComposerView: View {
             .background(
                 LinearGradient(
                     colors: canSubmit
-                        ? [Design.Color.accentPrimary, Design.Color.accentSecondary]
+                        ? [Design.Color.ctaPrimary, Design.Color.ctaSecondary]
                         : [Design.Color.subtle, Design.Color.subtle],
                     startPoint: .leading,
                     endPoint: .trailing
@@ -356,7 +356,7 @@ struct EntryComposerView: View {
 
     private var voiceHeadline: String {
         if audio.isRecording { return formatTime(audio.elapsedTime) }
-        return hasAudio ? "Voice note ready" : "Tell Shudo what you ate"
+        return hasAudio ? "Voice note ready" : "Describe what you ate"
     }
 
     private var voiceDetail: String {
@@ -364,9 +364,9 @@ struct EntryComposerView: View {
             return "\(formatTime(audio.remainingTime)) remaining · tap when done"
         }
         if hasAudio && audio.didReachMaximumDuration {
-            return "Stopped automatically at the 15-minute limit"
+            return "Recording stopped at the time limit"
         }
-        return hasAudio ? formatTime(audio.elapsedTime) : "Record up to 15 minutes"
+        return hasAudio ? formatTime(audio.elapsedTime) : "Tap to record a voice note"
     }
 
     private var recordingButtonLabel: String {

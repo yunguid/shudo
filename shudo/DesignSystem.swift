@@ -10,7 +10,7 @@ enum Design {
         
         // Text
         static let ink   = SwiftUI.Color.white                                             // Primary text
-        static let muted = SwiftUI.Color(red: 0.478, green: 0.502, blue: 0.565)            // #7A80A0 - muted blue-gray
+        static let muted = SwiftUI.Color(red: 0.478, green: 0.502, blue: 0.565)            // #7A8090 - muted blue-gray
         static let subtle = SwiftUI.Color(red: 0.318, green: 0.345, blue: 0.408)           // #515868
 
         // Surface / Fills
@@ -20,6 +20,11 @@ enum Design {
         // Primary accent - Electric Blue
         static let accentPrimary   = SwiftUI.Color(red: 0.263, green: 0.522, blue: 0.957)  // #4385F4 - vibrant blue
         static let accentSecondary = SwiftUI.Color(red: 0.392, green: 0.616, blue: 0.965)  // #649DF6 - lighter blue
+
+        // CTA blues retain the electric-blue character while keeping white
+        // text above a 4.5:1 contrast ratio throughout the gradient.
+        static let ctaPrimary   = SwiftUI.Color(red: 0.208, green: 0.435, blue: 0.780)      // #356FC7
+        static let ctaSecondary = SwiftUI.Color(red: 0.180, green: 0.435, blue: 0.816)      // #2E6FD0
         
         // Success / Positive - Fresh Green
         static let success = SwiftUI.Color(red: 0.275, green: 0.824, blue: 0.475)          // #46D279 - fresh green
@@ -84,7 +89,14 @@ struct PrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(.white)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(Design.Color.accentPrimary, in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous))
+            .background(
+                LinearGradient(
+                    colors: [Design.Color.ctaPrimary, Design.Color.ctaSecondary],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+            )
             .opacity(configuration.isPressed ? 0.8 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
