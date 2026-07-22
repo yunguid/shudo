@@ -19,6 +19,7 @@ summary.
 - `scripts/verify-release.zsh` — complete local release gate
 - `scripts/verify-ios-release.zsh` — iPhone metadata and Release-build gate
 - `docs/ios-release-readiness.md` — Apple/TestFlight handoff checklist
+- `docs/morning-handoff.md` — minimal owner inputs for the friends beta
 
 ## Product flow
 

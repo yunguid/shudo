@@ -1,6 +1,6 @@
 # Shudo iOS release readiness
 
-Last audited: 2026-07-21
+Last audited: 2026-07-22
 
 This document separates the build that can be installed directly from Xcode
 today from the credentials and App Store Connect work needed for TestFlight or
@@ -11,7 +11,8 @@ public distribution. It does not authorize changes to Luke's Apple account.
 - Product: `Shudo` / bundle identifier `luke.shudo`
 - Version: `1.0` / build `2`
 - Platform: iPhone, portrait, iOS 18.5 or later
-- Signing mode: automatic, with the existing development team selected
+- Signing mode: automatic, with Luke's Personal Team selected and a dedicated
+  local `ShudoSigning` keychain ahead of the stale login-keychain identity
 - Deep links: `shudo://capture` and the `shudo://auth/callback` OAuth callback
 - Permission prompts: microphone and camera only
 - Photo selection: SwiftUI `PhotosPicker`; it does not request unrestricted
@@ -41,12 +42,15 @@ compiled app contains the privacy manifest and asset catalog.
 
 ## Current distribution blockers that require Luke
 
-1. **Apple Developer Program access.** This Mac currently has one Apple
-   Development identity and a device-only development provisioning profile.
-   The profile expires on 2026-07-28 at 12:54 UTC and has `get-task-allow`
-   enabled. There is no Apple Distribution identity or App Store provisioning
-   profile. Luke needs an active paid Apple Developer Program membership and an
-   App Store Connect role that can create or manage the app.
+1. **Apple Developer Program access.** Xcode's supported repair flow revoked the
+   inaccessible development certificate and created a replacement identity in
+   the dedicated `ShudoSigning` keychain. Shudo 1.0 (2) was then signed,
+   installed, and launched on Luke's iPhone. Its device-only development profile
+   expires on 2026-07-29 at 00:05 EST and has `get-task-allow` enabled. There is
+   still no Apple Distribution identity or App Store provisioning profile. Luke
+   needs an active paid Apple Developer Program membership and an App Store
+   Connect role that can create or manage the app before friends can use
+   TestFlight or Sign in with Apple.
 2. **Permanent App ID and app record.** An Account Holder or Admin must confirm
    that `luke.shudo` belongs to the paid team, then create the App Store Connect
    app record with that exact bundle ID. Do not change the bundle ID casually:
