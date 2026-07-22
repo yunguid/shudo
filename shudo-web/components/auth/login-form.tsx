@@ -7,10 +7,15 @@ import {
   fetchEnabledOAuthProviders,
   type ShudoOAuthProvider,
 } from '@/lib/auth-oauth'
+import {
+  initialMagicLinkErrorMessage,
+  magicLinkRequestErrorMessage,
+} from '@/lib/auth-errors'
 import { getBrowserClient } from '@/lib/supabase/client'
 
 interface LoginFormProps {
   initialError: boolean
+  initialErrorReason?: string
 }
 
 type PendingMethod = 'email' | ShudoOAuthProvider | null
@@ -20,12 +25,12 @@ const PROVIDER_LABELS: Record<ShudoOAuthProvider, string> = {
   apple: 'Apple',
 }
 
-export function LoginForm({ initialError }: LoginFormProps) {
+export function LoginForm({ initialError, initialErrorReason }: LoginFormProps) {
   const [email, setEmail] = useState('')
   const [pendingMethod, setPendingMethod] = useState<PendingMethod>(null)
   const [enabledProviders, setEnabledProviders] = useState<ShudoOAuthProvider[]>([])
   const [message, setMessage] = useState(
-    initialError ? 'This sign-in link is invalid or expired. Request a new link.' : '',
+    initialError ? initialMagicLinkErrorMessage(initialErrorReason) : '',
   )
   const [isSuccess, setIsSuccess] = useState(false)
 
@@ -57,8 +62,8 @@ export function LoginForm({ initialError }: LoginFormProps) {
 
       setMessage('Sign-in link sent. Check your email.')
       setIsSuccess(true)
-    } catch {
-      setMessage('Sign-in link unavailable. Check the address and try again.')
+    } catch (error) {
+      setMessage(magicLinkRequestErrorMessage(error))
     } finally {
       setPendingMethod(null)
     }

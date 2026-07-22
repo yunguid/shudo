@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import type { EmailOtpType } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { authCallbackErrorReason } from '@/lib/auth-errors'
 import { getSupabasePublicConfig } from '@/lib/supabase/config'
 import { safeInternalPath } from '@/lib/utils'
 import type { Database } from '@/types/database'
@@ -28,6 +29,7 @@ export async function GET(request: Request) {
   const { url, key } = getSupabasePublicConfig()
   const authCookies: AuthCookie[] = []
   const authHeaders: Record<string, string> = {}
+  let callbackError: unknown
 
   function redirectWithAuthState(path: string) {
     const response = NextResponse.redirect(new URL(path, origin))
@@ -61,6 +63,7 @@ export async function GET(request: Request) {
     if (!error) {
       return redirectWithAuthState(returnPath)
     }
+    callbackError = error
   }
 
   // Handle magic link token hash (email OTP)
@@ -72,8 +75,10 @@ export async function GET(request: Request) {
     if (!error) {
       return redirectWithAuthState(returnPath)
     }
+    callbackError = error
   }
 
   // Return the user to an error page with instructions
-  return redirectWithAuthState('/auth/login?error=auth')
+  const reason = authCallbackErrorReason(callbackError)
+  return redirectWithAuthState(`/auth/login?error=auth&reason=${reason}`)
 }

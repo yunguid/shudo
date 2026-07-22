@@ -9,7 +9,7 @@ interface AuthShellProps {
 export function AuthShell({ children }: AuthShellProps) {
   return (
     <main
-      className="relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-12 sm:px-8"
+      className="auth-page relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-12 sm:px-8"
       id="main-content"
       tabIndex={-1}
     >
@@ -30,14 +30,12 @@ export function AuthShell({ children }: AuthShellProps) {
           >
             Shudo
           </Link>
-          <p className="mt-1 text-xs tracking-wide text-subtle">Voice-first nutrition log</p>
         </header>
 
         {children}
 
-        <footer className="mt-7 text-center text-xs text-subtle">
-          <p>Voice-first nutrition logging</p>
-          <nav aria-label="Legal and support" className="mt-3 flex justify-center gap-4">
+        <footer className="mt-6 text-center text-xs text-subtle">
+          <nav aria-label="Legal and support" className="flex justify-center gap-4">
             {PUBLIC_INFORMATION_LINKS.map((item) => (
               <Link
                 className="rounded-md text-muted transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
