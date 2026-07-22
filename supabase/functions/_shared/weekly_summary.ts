@@ -1,7 +1,13 @@
 import { responseOutputText } from "./analysis.ts";
+import {
+  assertNeutralGeneratedCopy,
+  NEUTRAL_PRODUCT_COPY_INSTRUCTION,
+} from "./generated_copy.ts";
 import { requiredEnv } from "./http.ts";
 
 export const WEEKLY_SUMMARY_MODEL = "gpt-5.6-sol";
+export const WEEKLY_COPY_INSTRUCTION =
+  `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Use direct, concise observations and suggestions.`;
 
 export const WEEKLY_SUMMARY_SCHEMA = {
   type: "object",
@@ -219,10 +225,11 @@ export function aggregateWeeklyEntries(
 }
 
 function boundedString(value: unknown, label: string, max: number): string {
-  if (typeof value !== "string" || !value.trim() || value.trim().length > max) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized || Array.from(normalized).length > max) {
     throw new Error(`Invalid weekly summary ${label}`);
   }
-  return value.trim();
+  return normalized;
 }
 
 function boundedStrings(
@@ -247,10 +254,20 @@ export function parseWeeklyNarrative(value: unknown): {
   }
   const object = value as Record<string, unknown>;
   return {
-    headline: boundedString(object.headline, "headline", 120),
-    narrative: boundedString(object.narrative, "narrative", 600),
-    patterns: boundedStrings(object.patterns, "patterns", 4),
-    suggestions: boundedStrings(object.suggestions, "suggestions", 3),
+    headline: assertNeutralGeneratedCopy(
+      boundedString(object.headline, "headline", 120),
+      "weekly summary headline",
+    ),
+    narrative: assertNeutralGeneratedCopy(
+      boundedString(object.narrative, "narrative", 600),
+      "weekly summary narrative",
+    ),
+    patterns: boundedStrings(object.patterns, "patterns", 4).map((item) =>
+      assertNeutralGeneratedCopy(item, "weekly summary pattern")
+    ),
+    suggestions: boundedStrings(object.suggestions, "suggestions", 3).map(
+      (item) => assertNeutralGeneratedCopy(item, "weekly summary suggestion"),
+    ),
   };
 }
 
@@ -306,6 +323,7 @@ export async function writeWeeklyNarrative(
             "Do not recalculate or contradict the metrics. Mention incomplete logging plainly.",
             "Use the bounded food candidate list to notice obviously similar meal patterns (for example variations of a wrap or bowl), but cluster conservatively and never invent a frequency.",
             "Offer practical food-logging or meal-pattern suggestions only. Do not diagnose, prescribe treatment, or make medical claims.",
+            WEEKLY_COPY_INSTRUCTION,
             `Week starting: ${weekStart}`,
             `Computed adherence: ${JSON.stringify(adherence)}`,
             `Repeated foods: ${JSON.stringify(repeatedFoods)}`,

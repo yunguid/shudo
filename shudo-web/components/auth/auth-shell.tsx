@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { BrandMark } from '@/components/brand-mark'
 import { PUBLIC_INFORMATION_LINKS } from '@/lib/public-information'
 
 interface AuthShellProps {
@@ -25,9 +26,10 @@ export function AuthShell({ children }: AuthShellProps) {
       <div className="relative w-full max-w-[26rem]">
         <header className="mb-8 text-center">
           <Link
-            className="inline-flex rounded-xl px-2 py-1 text-xl font-semibold tracking-[-0.035em] text-ink transition hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            className="inline-flex items-center gap-3 rounded-xl px-2 py-1 text-xl font-semibold tracking-[-0.035em] text-ink transition hover:text-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             href="/auth/login"
           >
+            <BrandMark className="h-7 w-7 text-accent" />
             Shudo
           </Link>
         </header>
@@ -38,7 +40,7 @@ export function AuthShell({ children }: AuthShellProps) {
           <nav aria-label="Legal and support" className="flex justify-center gap-4">
             {PUBLIC_INFORMATION_LINKS.map((item) => (
               <Link
-                className="rounded-md text-muted transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                className="inline-flex min-h-11 items-center rounded-md text-muted transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
                 href={item.href}
                 key={item.href}
               >

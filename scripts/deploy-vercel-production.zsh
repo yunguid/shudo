@@ -110,8 +110,14 @@ npm run typecheck
 print "Pulling current production settings into the disposable snapshot..."
 npx --offline --yes vercel@$vercel_version pull \
   --yes --environment=production --scope "$team_slug"
-jq -e --arg project "$project_id" --arg org "$org_id" \
-  '.projectId == $project and .orgId == $org' .vercel/project.json >/dev/null
+if ! jq -e --arg project "$project_id" --arg org "$org_id" \
+  '.projectId == $project and
+   .orgId == $org and
+   .settings.rootDirectory == null' \
+  .vercel/project.json >/dev/null; then
+  print -u2 "Vercel project must use its project root while releases run from shudo-web."
+  exit 1
+fi
 
 production_env=".vercel/.env.production.local"
 production_inventory="$audit_dir/production-env-inventory.json"

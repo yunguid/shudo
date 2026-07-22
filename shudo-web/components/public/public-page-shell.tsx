@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { BrandMark } from '@/components/brand-mark'
 import {
   PUBLIC_INFORMATION_LINKS,
   SHUDO_POLICY_UPDATED,
@@ -37,13 +38,14 @@ export function PublicPageShell({
         <header>
           <div className="flex items-center justify-between gap-4">
             <Link
-              className="rounded-xl px-2 py-2 text-xl font-semibold tracking-[-0.035em] text-ink transition hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              className="flex items-center gap-3 rounded-xl px-2 py-2 text-xl font-semibold tracking-[-0.035em] text-ink transition hover:text-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
               href="/auth/login"
             >
+              <BrandMark className="h-7 w-7 text-accent" />
               Shudo
             </Link>
             <Link
-              className="rounded-xl bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-surface-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              className="inline-flex min-h-11 items-center rounded-xl bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-surface-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
               href="/auth/login"
             >
               Sign in
@@ -54,9 +56,9 @@ export function PublicPageShell({
             {PUBLIC_INFORMATION_LINKS.map((item) => (
               <Link
                 aria-current={item.href === currentPath ? 'page' : undefined}
-                className={`rounded-xl px-3 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 ${
+                className={`inline-flex min-h-11 items-center rounded-xl px-3 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 ${
                   item.href === currentPath
-                    ? 'bg-accent text-paper'
+                    ? 'bg-accent text-paper shadow-[0_7px_24px_rgba(220,152,64,0.17)]'
                     : 'bg-surface/75 text-muted hover:bg-surface-strong hover:text-ink'
                 }`}
                 href={item.href}
@@ -68,7 +70,7 @@ export function PublicPageShell({
           </nav>
         </header>
 
-        <article className="mt-8 rounded-[2rem] bg-surface/88 px-6 py-8 shadow-[0_28px_90px_rgba(0,0,0,0.34)] backdrop-blur-xl sm:px-10 sm:py-11">
+        <article className="mt-8 rounded-[2rem] border border-white/[0.045] bg-surface/88 px-6 py-8 shadow-[0_28px_90px_rgba(0,0,0,0.4)] backdrop-blur-xl sm:px-10 sm:py-11">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-subtle">{eyebrow}</p>
           <h1 className="mt-3 text-4xl font-semibold tracking-[-0.045em] text-ink sm:text-5xl">
             {title}
@@ -80,9 +82,9 @@ export function PublicPageShell({
         </article>
 
         <footer className="flex flex-col gap-2 px-2 py-8 text-xs text-subtle sm:flex-row sm:items-center sm:justify-between">
-          <p>Private, voice-first nutrition logging.</p>
+          <p>Calm, voice-first nutrition logging.</p>
           <a
-            className="rounded-lg text-muted transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            className="inline-flex min-h-11 items-center rounded-lg text-muted transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             href={SHUDO_SUPPORT_MAILTO}
           >
             {SHUDO_SUPPORT_EMAIL}

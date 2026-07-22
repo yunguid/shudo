@@ -29,6 +29,38 @@ struct TodayViewModelTests {
         #expect(!EntryStatus.failed.isProcessing)
     }
 
+    @Test func correctionPlaceholderKeepsThePreviousEstimateAvailableForRollback() {
+        let timestamp = Date(timeIntervalSince1970: 1_800_000_000)
+        let original = Entry(
+            id: UUID(),
+            createdAt: timestamp.addingTimeInterval(-300),
+            summary: "Chicken and rice",
+            imageURL: nil,
+            proteinG: 48,
+            carbsG: 72,
+            fatG: 14,
+            caloriesKcal: 620,
+            status: .complete,
+            statusMessage: "Ready",
+            analysisPreview: "Old preview"
+        )
+
+        let processing = EntryCorrectionPresentation.processingEntry(
+            from: original,
+            at: timestamp
+        )
+
+        #expect(processing.status == .analyzing)
+        #expect(processing.statusMessage == "Updating nutrition estimate")
+        #expect(processing.statusUpdatedAt == timestamp)
+        #expect(processing.analysisPreview == nil)
+        #expect(processing.proteinG == original.proteinG)
+        #expect(processing.carbsG == original.carbsG)
+        #expect(processing.fatG == original.fatG)
+        #expect(processing.caloriesKcal == original.caloriesKcal)
+        #expect(EntryCorrectionPresentation.rollbackMessage.contains("previous estimate was restored"))
+    }
+
     @Test func deletionStatesNeverOfferAnalysisRetry() {
         let deleting = Entry(
             id: UUID(),

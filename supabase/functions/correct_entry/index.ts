@@ -15,6 +15,7 @@ import {
   parseEntryCorrectionForm,
   validateCorrectionContentLength,
 } from "../_shared/entry_correction.ts";
+import { NEUTRAL_PRODUCT_COPY_INSTRUCTION } from "../_shared/generated_copy.ts";
 import {
   authenticate,
   CORS_HEADERS,
@@ -103,6 +104,7 @@ async function analyzeCorrection(
       "Preserve every original fact that the correction does not change. Do not invent new ingredients, quantities, or preparation details.",
       "Use realistic portion assumptions only when a necessary quantity is still unavailable.",
       "Write analysis_preview first as one short natural-language sentence describing what changed.",
+      `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Describe only the corrected meal, what changed, and any clearly labeled estimate assumptions.`,
       "Keep the title short and make item totals internally consistent with meal totals.",
       `Original meal description and transcript:\n${
         baseDescription ||

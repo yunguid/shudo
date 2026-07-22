@@ -175,6 +175,10 @@ Deno.test("analysis parser rejects missing or mistyped required fields", () => {
   longTitle.title = "x".repeat(121);
   assertThrows(() => parseAnalysis(longTitle), undefined, "title");
 
+  const unicodeTitle = validAnalysis();
+  unicodeTitle.title = "🥗".repeat(120);
+  assertEquals(parseAnalysis(unicodeTitle).title, unicodeTitle.title as string);
+
   const missingPreview = validAnalysis();
   delete missingPreview.analysis_preview;
   assertThrows(
@@ -202,4 +206,30 @@ Deno.test("analysis parser rejects missing or mistyped required fields", () => {
   const invalidNotes = validAnalysis();
   invalidNotes.notes = { text: "not a string" };
   assertThrows(() => parseAnalysis(invalidNotes), undefined, "notes");
+});
+
+Deno.test("meal analysis rejects personified copy in every prose field", () => {
+  const preview = validAnalysis();
+  preview.analysis_preview = "Shudo observed a chicken and rice bowl.";
+  assertThrows(
+    () => parseAnalysis(preview),
+    undefined,
+    "personified product copy",
+  );
+
+  const title = validAnalysis();
+  title.title = "Our estimate for the chicken bowl";
+  assertThrows(
+    () => parseAnalysis(title),
+    undefined,
+    "personified product copy",
+  );
+
+  const notes = validAnalysis();
+  notes.notes = "The app noticed that the portion is unclear.";
+  assertThrows(
+    () => parseAnalysis(notes),
+    undefined,
+    "personified product copy",
+  );
 });

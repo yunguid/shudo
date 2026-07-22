@@ -4,24 +4,33 @@ import UIKit
 
 struct DesignSystemTests {
     @Test func callToActionGradientMeetsWCAGAAForWhiteText() throws {
-        for color in [Design.Color.ctaPrimary, Design.Color.ctaSecondary] {
-            let ratio = try contrastRatio(
-                foreground: .white,
-                background: UIColor(color)
-            )
-            #expect(ratio >= 4.5)
+        for theme in AppTheme.allCases {
+            for color in [theme.palette.ctaPrimary, theme.palette.ctaSecondary] {
+                let ratio = try contrastRatio(
+                    foreground: .white,
+                    background: UIColor(color)
+                )
+                #expect(ratio >= 4.5, "\(theme.title) CTA contrast was \(ratio)")
+            }
         }
     }
 
     @Test func secondaryCopyMeetsWCAGAAOnAppSurfaces() throws {
-        let foreground = UIColor(Design.Color.muted)
-        for background in [Design.Color.paper, Design.Color.elevated] {
-            let ratio = try contrastRatio(
-                foreground: foreground,
-                background: UIColor(background)
-            )
-            #expect(ratio >= 4.5)
+        for theme in AppTheme.allCases {
+            let foreground = UIColor(theme.palette.muted)
+            for background in [theme.palette.paper, theme.palette.elevated] {
+                let ratio = try contrastRatio(
+                    foreground: foreground,
+                    background: UIColor(background)
+                )
+                #expect(ratio >= 4.5, "\(theme.title) secondary contrast was \(ratio)")
+            }
         }
+    }
+
+    @Test func themeSelectionHasAStableGrooveboxDefault() {
+        #expect(AppTheme.defaultTheme == .groovebox)
+        #expect(Set(AppTheme.allCases.map(\.rawValue)).count == AppTheme.allCases.count)
     }
 
     private func contrastRatio(

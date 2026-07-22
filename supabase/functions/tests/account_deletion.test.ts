@@ -43,6 +43,7 @@ Deno.test("storage-first account deletion is idempotent across retries", async (
   const objects = new Map<string, Set<string>>([
     ["entry-images", new Set([`${userId}/photo.jpg`])],
     ["entry-audio", new Set([`u_${userId}/voice.m4a`])],
+    ["profile-photos", new Set([`${userId}/avatar.jpg`])],
   ]);
   const admin = {
     storage: {
@@ -67,6 +68,6 @@ Deno.test("storage-first account deletion is idempotent across retries", async (
     },
   };
 
-  assertEquals(await deleteAccountStorage(admin as never, userId), 2);
+  assertEquals(await deleteAccountStorage(admin as never, userId), 3);
   assertEquals(await deleteAccountStorage(admin as never, userId), 0);
 });

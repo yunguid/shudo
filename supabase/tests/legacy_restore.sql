@@ -203,6 +203,7 @@ values
 \ir ../migrations/20260721234531_add_voice_entry_correction_requests.sql
 \ir ../migrations/20260722001415_project_ai_budget_timezone.sql
 \ir ../migrations/20260722015329_restrict_beta_signups_to_allowlist.sql
+\ir ../migrations/20260722224247_add_private_profile_photos.sql
 
 do $$
 declare
@@ -470,6 +471,8 @@ $$;
 \ir beta_signup_allowlist.sql
 
 \ir voice_corrections.sql
+
+\ir profile_photos.sql
 
 insert into storage.objects (bucket_id, name)
 values

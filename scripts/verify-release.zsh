@@ -20,10 +20,16 @@ shudo_budget_migration="$shudo_repo_root/supabase/migrations/20260722001415_proj
 shudo_budget_migration_sha="ce7c138b6196d9b4a9ce6f93e8017458ef0707c065802ff80877d9ee93ab3be8"
 shudo_beta_signup_migration="$shudo_repo_root/supabase/migrations/20260722015329_restrict_beta_signups_to_allowlist.sql"
 shudo_beta_signup_migration_sha="9ca9a33afc91e370a2f1a469b8291fdc637a4ddd79b9f56aeb8e636c628decf2"
+shudo_profile_photos_migration="$shudo_repo_root/supabase/migrations/20260722224247_add_private_profile_photos.sql"
+shudo_profile_photos_migration_sha="8049c69efd841cf00c1fa1588f76281bc98eeaaf063159c24bf27d1a07b6a595"
 shudo_node24_dir="/Users/luke/.nvm/versions/node/v24.16.0/bin"
 shudo_node24_sha="1ee75375e33b94fc34b3b19aede049e11dae90efb63b374dc96d6bdace70c4b8"
 shudo_supabase_cli="/opt/homebrew/Cellar/supabase/2.109.1/bin/supabase"
 shudo_supabase_cli_sha="b7be23f4e211b75c00a3df5fcd1f96f3905983c74ff3189bfc69ad5b0f7132c4"
+shudo_vercel_version="56.4.1"
+shudo_vercel_team="ekuls-projects"
+shudo_vercel_project_id="prj_TYVMUzLGdkP8RkaL27wRdwX9Br4I"
+shudo_vercel_org_id="team_T0jbOZn2SkfEsSDj44ILJ57y"
 
 if [[ -x "$shudo_node24_dir/node" ]]; then
   export PATH="$shudo_node24_dir:$PATH"
@@ -53,6 +59,7 @@ verify_migration_sha "$shudo_hardening_migration" "$shudo_hardening_migration_sh
 verify_migration_sha "$shudo_voice_correction_migration" "$shudo_voice_correction_migration_sha"
 verify_migration_sha "$shudo_budget_migration" "$shudo_budget_migration_sha"
 verify_migration_sha "$shudo_beta_signup_migration" "$shudo_beta_signup_migration_sha"
+verify_migration_sha "$shudo_profile_photos_migration" "$shudo_profile_photos_migration_sha"
 
 cd "$shudo_repo_root"
 git diff --check
@@ -102,19 +109,73 @@ npm run lint
 npm run typecheck
 npm run build
 npm audit --audit-level=moderate
-npx --offline --yes vercel@56.4.1 build --prod --yes --scope ekuls-projects
-# An absent .env.local is not listed in Vercel's ignored array. The included-file
-# scan remains fail-closed if one is ever uploaded.
-npx --offline --yes vercel@56.4.1 deploy --dry --format=json \
-  --scope ekuls-projects | jq -e '
-    . as $manifest
-    | ([".next", ".vercel", "node_modules", "tsconfig.tsbuildinfo"] - .ignored) as $missing
-    | [.files[].path | select(test("(^|/)(\\.env\\.local|\\.next|\\.vercel|node_modules|.*\\.tsbuildinfo)(/|$)"))] as $included
-    | if (($missing | length) == 0 and ($included | length) == 0)
-      then {fileCount, totalSize, missingRequiredIgnored: $missing, sensitiveIncluded: $included}
-      else error("unsafe Vercel upload manifest")
-      end
-  '
+
+# Exercise Vercel from a disposable copy of shudo-web, matching the immutable
+# release wrapper and the hosted project's current standalone-root layout.
+(
+  shudo_vercel_tmp_root="${TMPDIR:-/tmp}"
+  shudo_vercel_tmp_root="${shudo_vercel_tmp_root%/}"
+  shudo_vercel_snapshot="$(mktemp -d "$shudo_vercel_tmp_root/shudo-vercel-verify.XXXXXX")"
+  cleanup_shudo_vercel_snapshot() {
+    case "$shudo_vercel_snapshot" in
+      "$shudo_vercel_tmp_root"/shudo-vercel-verify.*)
+        /bin/rm -rf -- "$shudo_vercel_snapshot"
+        ;;
+      *)
+        print -u2 "Refusing to remove unexpected Vercel verification snapshot."
+        ;;
+    esac
+  }
+  trap cleanup_shudo_vercel_snapshot EXIT
+
+  cd "$shudo_repo_root"
+  git ls-files --cached --others --exclude-standard -z -- shudo-web |
+    tar --null -T - -cf - |
+    tar -xf - -C "$shudo_vercel_snapshot"
+  if [[ -n "$(find "$shudo_vercel_snapshot" -type l -print -quit)" ]]; then
+    print -u2 "Refusing symlinks in the Vercel verification snapshot."
+    exit 1
+  fi
+
+  cd "$shudo_vercel_snapshot/shudo-web"
+  mkdir .vercel
+  jq -n --arg projectId "$shudo_vercel_project_id" --arg orgId "$shudo_vercel_org_id" \
+    '{projectId: $projectId, orgId: $orgId, projectName: "shudo"}' \
+    > .vercel/project.json
+  npx --offline --yes vercel@$shudo_vercel_version pull \
+    --yes --environment=production --scope "$shudo_vercel_team"
+  if ! jq -e --arg project "$shudo_vercel_project_id" --arg org "$shudo_vercel_org_id" \
+    '.projectId == $project and
+     .orgId == $org and
+     .settings.rootDirectory == null' \
+    .vercel/project.json >/dev/null; then
+    print -u2 "Vercel project must use its project root while verification runs from shudo-web."
+    exit 1
+  fi
+
+  npx --offline --yes vercel@$shudo_vercel_version build \
+    --prod --yes --scope "$shudo_vercel_team"
+  # An absent .env.local is not listed in Vercel's ignored array. The included-file
+  # scan remains fail-closed if one is ever uploaded.
+  npx --offline --yes vercel@$shudo_vercel_version deploy --dry --format=json \
+    --scope "$shudo_vercel_team" | jq -e '
+      . as $manifest
+      # Require build/dependency directories that exist in every Vercel build
+      # to be ignored. A tsbuildinfo file is optional; the included-file scan
+      # below still fails closed if one is ever present in an upload.
+      | [".next", ".vercel", "node_modules"] as $required
+      | [
+          $required[] as $name
+          | select(any($manifest.ignored[]; . == $name or endswith("/" + $name)) | not)
+          | $name
+        ] as $missing
+      | [.files[].path | select(test("(^|/)(\\.env\\.local|\\.next|\\.vercel|node_modules|.*\\.tsbuildinfo)(/|$)"))] as $included
+      | if (($missing | length) == 0 and ($included | length) == 0)
+        then {fileCount, totalSize, missingRequiredIgnored: $missing, sensitiveIncluded: $included}
+        else error("unsafe Vercel upload manifest")
+        end
+    '
+)
 
 cd "$shudo_repo_root"
 npx --yes deno@2.5.6 fmt --check supabase/functions

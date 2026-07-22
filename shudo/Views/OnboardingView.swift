@@ -72,10 +72,10 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 26) {
             VStack(alignment: .leading, spacing: 9) {
                 Text("Set your daily targets")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .foregroundStyle(Design.Color.ink)
 
-                Text("Describe your height, weight, activity, and goal. Speak naturally; you can edit everything before it’s saved.")
+                Text("Describe your height, weight, activity, diet, and goal. Speak naturally—you can edit everything before saving.")
                     .font(.title3)
                     .foregroundStyle(Design.Color.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -90,7 +90,7 @@ struct OnboardingView: View {
 
                 ZStack(alignment: .topLeading) {
                     if context.isEmpty {
-                        Text("Example: I’m 5'10\", 165 lb, fairly active, and want to gain muscle slowly.")
+                        Text("Example: I’m 5'10\", 165 lb, fairly active, vegetarian, and want to gain muscle slowly.")
                             .font(.body)
                             .foregroundStyle(Design.Color.muted)
                             .padding(.horizontal, 16)
@@ -100,6 +100,7 @@ struct OnboardingView: View {
                     TextEditor(text: $context)
                         .font(.body)
                         .foregroundStyle(Design.Color.ink)
+                        .accessibilityLabel("Profile description")
                         .scrollContentBackground(.hidden)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 8)
@@ -245,7 +246,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 26) {
             VStack(alignment: .leading, spacing: 9) {
                 Text("Review your targets")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .foregroundStyle(Design.Color.ink)
 
                 Text(result.proposal.summary)
@@ -298,7 +299,7 @@ struct OnboardingView: View {
                 .frame(minHeight: 44)
             }
 
-            sectionCard(title: "Goal") {
+            sectionCard(title: "Goal, diet & preferences") {
                 Picker("Goal", selection: binding(\.goalType, fallback: .maintain)) {
                     ForEach(NutritionGoalType.allCases, id: \.self) { goal in
                         Text(goal.onboardingTitle).tag(goal)
@@ -308,7 +309,7 @@ struct OnboardingView: View {
 
                 ZStack(alignment: .topLeading) {
                     if draft?.goalNotes.isEmpty != false {
-                        Text("Optional details about pace, routine, or preferences")
+                        Text("Diet, allergies, routine, or goal details")
                             .foregroundStyle(Design.Color.muted)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 9)
@@ -316,6 +317,7 @@ struct OnboardingView: View {
                     }
                     TextEditor(text: binding(\.goalNotes, fallback: ""))
                         .foregroundStyle(Design.Color.ink)
+                        .accessibilityLabel("Diet, allergies, routine, or goal details")
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 88, maxHeight: 140)
                         .focused($focusedField, equals: .goalNotes)
@@ -574,7 +576,7 @@ struct OnboardingView: View {
                     if isPreparing {
                         ProgressView().tint(.white)
                     } else {
-                        Image(systemName: "sparkles")
+                        Image(systemName: "gauge.with.dots.needle.67percent")
                     }
                     Text(isPreparing ? "Preparing…" : "Create my targets")
                 }

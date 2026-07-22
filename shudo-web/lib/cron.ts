@@ -2,6 +2,11 @@ import { timingSafeEqual } from 'node:crypto'
 
 const minimumSecretLength = 32
 
+// One user can create up to 30 captures per day, and every voice capture can
+// enqueue an audio deletion. Keep the daily fallback above that normal maximum
+// so interrupted opportunistic drains cannot create a steadily growing queue.
+export const scheduledCleanupLimit = 50
+
 export function isValidMaintenanceSecret(secret: string | undefined): secret is string {
   return Boolean(secret && secret.length >= minimumSecretLength)
 }

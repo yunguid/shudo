@@ -9,25 +9,41 @@
 
   html {
     min-height: 100%;
-    background: #0b0a09;
+    background: #0d0c0a;
   }
 
   body {
+    position: relative;
     min-height: 100vh;
     margin: 0;
     background:
-      radial-gradient(circle at 18% -10%, rgba(236, 227, 211, 0.055), transparent 32rem),
-      radial-gradient(circle at 92% 18%, rgba(255, 248, 236, 0.025), transparent 30rem),
-      #0b0a09;
-    color: #f4efe6;
+      radial-gradient(circle at 18% -10%, rgba(220, 152, 64, 0.11), transparent 34rem),
+      radial-gradient(circle at 92% 18%, rgba(255, 201, 104, 0.035), transparent 30rem),
+      #0d0c0a;
+    color: #fff3dd;
     font-family: var(--font-geist-sans), system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
+  body::before {
+    position: fixed;
+    z-index: -1;
+    inset: 0;
+    pointer-events: none;
+    content: '';
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.01) 1px, transparent 1px),
+      repeating-linear-gradient(117deg, transparent 0 7px, rgba(255, 255, 255, 0.008) 8px 9px);
+    background-size: 24px 24px, 24px 24px, 11px 11px;
+    mask-image: linear-gradient(to bottom, black, transparent 78%);
+    opacity: 0.58;
+  }
+
   ::selection {
-    background: rgba(232, 222, 208, 0.24);
-    color: #fffaf2;
+    background: rgba(220, 152, 64, 0.35);
+    color: #fff8eb;
   }
 
   button,
@@ -55,9 +71,15 @@
     position: absolute;
     inset: 0;
     content: '';
-    background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.055) 45%, transparent 70%);
+    background: linear-gradient(100deg, transparent 20%, rgba(255, 201, 104, 0.09) 45%, transparent 70%);
     transform: translateX(-100%);
     animation: shimmer 1.8s ease-in-out infinite;
+  }
+}
+
+@media (forced-colors: active) {
+  body::before {
+    display: none;
   }
 }
 

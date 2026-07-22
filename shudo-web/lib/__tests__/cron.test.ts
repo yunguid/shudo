@@ -4,6 +4,7 @@ import {
   cleanupFunctionURL,
   isAuthorizedCronRequest,
   isValidMaintenanceSecret,
+  scheduledCleanupLimit,
   weeklySummaryFunctionURL,
 } from '../cron'
 
@@ -30,6 +31,11 @@ describe('cron authorization', () => {
 })
 
 describe('cleanup function URL', () => {
+  it('keeps the daily fallback above one user daily capture ceiling', () => {
+    assert.equal(scheduledCleanupLimit, 50)
+    assert.ok(scheduledCleanupLimit > 30)
+  })
+
   it('pins the request to the configured Supabase origin', () => {
     assert.equal(
       cleanupFunctionURL('https://example.supabase.co/ignored').href,

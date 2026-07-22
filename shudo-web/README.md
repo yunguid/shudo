@@ -42,7 +42,10 @@ cannot enter the upload manifest.
 
 The production project is `shudo` in the `ekuls-projects` team, with
 `https://shudo.yng.sh` as its preferred hostname. Its root directory is this
-folder. Git integration is optional; authenticated CLI deployment is sufficient.
+folder and the hosted Root Directory remains `.` because releases start here.
+Git integration is optional; authenticated CLI deployment is sufficient. If
+the GitHub monorepo is connected later, migrate the hosted Root Directory and
+release tooling together instead of changing one side independently.
 
 Configure the two public Supabase variables plus three distinct server-only
 secrets:

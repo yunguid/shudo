@@ -2,38 +2,35 @@ import SwiftUI
 
 struct RootView: View {
     @ObservedObject private var session = AuthSessionManager.shared
+    @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
     @State private var profile: Profile?
     @State private var refreshGeneration = UUID()
     @State private var profileError: String?
 
     var body: some View {
         Group {
-            if session.session == nil {
-                AuthView()
-            } else if let profile {
-                switch ProfileLaunchPolicy.destination(for: profile) {
-                case .onboarding:
-                    OnboardingView(initialProfile: profile) { updatedProfile in
-                        ProfileCache.save(updatedProfile)
-                        self.profile = updatedProfile
-                    }
-                    .id("onboarding-\(profile.userId)")
-                case .loading:
-                    loadingView
-                case .today:
-                    TodayView(profile: profile)
-                        .id(profile.userId)
-                }
+            #if DEBUG
+            if let previewScreen = PolishPreviewScreen.launchValue {
+                PolishPreviewView(screen: previewScreen)
             } else {
-                loadingView
+                sessionContent
             }
+            #else
+            sessionContent
+            #endif
         }
         .background(AppBackground())
         .preferredColorScheme(.dark)
         .onAppear {
+            #if DEBUG
+            guard PolishPreviewScreen.launchValue == nil else { return }
+            #endif
             if session.session != nil { prepareProfile() }
         }
         .onChange(of: session.session) { _, newSession in
+            #if DEBUG
+            guard PolishPreviewScreen.launchValue == nil else { return }
+            #endif
             if newSession == nil {
                 profile = nil
                 profileError = nil
@@ -41,6 +38,29 @@ struct RootView: View {
             } else {
                 prepareProfile()
             }
+        }
+    }
+
+    @ViewBuilder
+    private var sessionContent: some View {
+        if session.session == nil {
+            AuthView()
+        } else if let profile {
+            switch ProfileLaunchPolicy.destination(for: profile) {
+            case .onboarding:
+                OnboardingView(initialProfile: profile) { updatedProfile in
+                    ProfileCache.save(updatedProfile)
+                    self.profile = updatedProfile
+                }
+                .id("onboarding-\(profile.userId)")
+            case .loading:
+                loadingView
+            case .today:
+                TodayView(profile: profile)
+                    .id(profile.userId)
+            }
+        } else {
+            loadingView
         }
     }
 

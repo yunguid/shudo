@@ -1,13 +1,21 @@
 import {
   aggregateWeeklyEntries,
+  parseWeeklyNarrative,
   priorCompletedWeekStart,
   safePriorCompletedWeekStart,
+  WEEKLY_COPY_INSTRUCTION,
   WEEKLY_SUMMARY_MODEL,
+  WEEKLY_SUMMARY_SCHEMA,
 } from "../_shared/weekly_summary.ts";
-import { assertEquals } from "./assertions.ts";
+import { assertEquals, assertThrows } from "./assertions.ts";
 
 Deno.test("weekly generation is pinned and chooses the completed local week", () => {
   assertEquals(WEEKLY_SUMMARY_MODEL, "gpt-5.6-sol");
+  assertEquals(WEEKLY_SUMMARY_SCHEMA.additionalProperties, false);
+  assertEquals(
+    [...WEEKLY_SUMMARY_SCHEMA.required].sort(),
+    Object.keys(WEEKLY_SUMMARY_SCHEMA.properties).sort(),
+  );
   assertEquals(
     priorCompletedWeekStart(
       new Date("2026-07-21T02:00:00.000Z"),
@@ -21,6 +29,57 @@ Deno.test("weekly generation is pinned and chooses the completed local week", ()
       "Not/A_Timezone",
     ),
     null,
+  );
+});
+
+Deno.test("weekly copy stays neutral and does not personify Shudo", () => {
+  assertEquals(WEEKLY_COPY_INSTRUCTION.includes("Never speak as Shudo"), true);
+  assertThrows(
+    () =>
+      parseWeeklyNarrative({
+        headline: "A consistent week",
+        narrative: "Shudo noticed three protein-forward lunches.",
+        patterns: [],
+        suggestions: [],
+      }),
+    undefined,
+    "personified product copy",
+  );
+  assertThrows(
+    () =>
+      parseWeeklyNarrative({
+        headline: "A consistent week",
+        narrative: "Three lunches included a clear protein source.",
+        patterns: [],
+        suggestions: ["My suggestion is to prepare another wrap."],
+      }),
+    undefined,
+    "personified product copy",
+  );
+
+  assertThrows(
+    () =>
+      parseWeeklyNarrative({
+        headline: "A consistent week",
+        narrative: "The tracker observed three protein-forward lunches.",
+        patterns: [],
+        suggestions: [],
+      }),
+    undefined,
+    "personified product copy",
+  );
+});
+
+Deno.test("weekly parser follows JSON Schema Unicode length semantics", () => {
+  const headline = "🥗".repeat(120);
+  assertEquals(
+    parseWeeklyNarrative({
+      headline,
+      narrative: "Three lunches included a clear protein source.",
+      patterns: [],
+      suggestions: [],
+    }).headline,
+    headline,
   );
 });
 

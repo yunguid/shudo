@@ -214,6 +214,12 @@ The authenticated group is `create_entry`, `correct_entry`, `delete_entry`,
 `delete_account`, `process_entry`, `onboard_profile`, `reanalyze_entry`, and
 `resume_entry`. Only `drain_storage_cleanup` and `generate_weekly_summaries`
 disable gateway JWT verification because they enforce dedicated server secrets.
+Migration `20260722224247_add_private_profile_photos.sql` adds the nullable
+profile photo path plus a private, 2 MB JPEG-only `profile-photos` bucket with
+owner-scoped Storage policies. Deploy that migration and the updated
+`delete_account` function in the same release so account deletion also removes
+profile photos. It needs no new environment variable and does not rewrite
+existing profiles or meal data.
 The wrapper pins the exact CLI binary, releases only committed Supabase inputs
 from an immutable Git snapshot, applies and re-reads the exact friends-beta Auth
 hook, deploys one function at a time, never uses `--prune`, verifies JWT
@@ -248,9 +254,12 @@ settings. It never prints the access token or places it in command arguments.
 
 `verify-release.zsh` verifies immutable migration hashes, the prompt-free Auth
 tooling tests, clean diffs, web tests/lint/typecheck/production build/audit,
-safe Vercel upload contents, Deno format/lint/check/tests, fresh and restored
-PostgreSQL shapes, and native unit/UI tests with compiler warnings treated as
-errors. The focused unsigned device Release check is:
+safe Vercel upload contents from a disposable `shudo-web` snapshot, Deno
+format/lint/check/tests, fresh and restored PostgreSQL shapes, and native
+unit/UI tests with compiler warnings treated as errors. The Vercel check pulls
+the hosted project settings into the disposable snapshot and fails unless they
+still match the current standalone project-root layout. The focused unsigned
+device Release check is:
 
 ```bash
 scripts/verify-ios-release.zsh
@@ -278,12 +287,15 @@ privacy/listing details, and a verified physical-iPhone archive.
 ## Deployment policy
 
 - Production deployment does not require Vercel Git integration; the current
-  project can be deployed through the authenticated CLI. Connecting the GitHub
-  repository is optional and should be a deliberate account-level choice.
+  project is intentionally deployed through the authenticated CLI from
+  `shudo-web`. Connecting the monorepo later is optional and should include a
+  deliberate Root Directory migration rather than silently changing the live
+  project's build layout.
 - Use `scripts/deploy-vercel-production.zsh` for a disposable immutable
-  production build, and add `--apply` only after the Supabase release is live.
-  The apply path verifies both public domains and performs an authorized
-  maintenance-cron smoke without placing its bearer secret in process arguments.
+  `shudo-web` production snapshot, and add `--apply` only after the Supabase
+  release is live. The apply path verifies both public domains and performs an
+  authorized maintenance-cron smoke without placing its bearer secret in
+  process arguments.
 - Never print, commit, or paste recovery codes, API keys, database passwords,
   OAuth secrets, service-role keys, or maintenance credentials into logs.
 - Do not rewrite or delete historical migrations after they reach production.

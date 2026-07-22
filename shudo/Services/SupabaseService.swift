@@ -2,6 +2,7 @@ import Foundation
 
 struct SupabaseService: Sendable, WeeklySummaryProviding {
     static let signedImageConcurrencyLimit = 4
+    static let maximumProfilePhotoBytes = 2_097_152
     static let entryListColumns = "id,local_day,occurred_at,created_at,updated_at,status,status_message,analysis_preview,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"
 
     private struct ParsedEntry {
@@ -213,8 +214,173 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
             goalNotes: obj["goal_notes"] as? String,
             onboardingStatus: (obj["onboarding_status"] as? String)
                 .flatMap(OnboardingStatus.init(rawValue:)),
-            onboardingCompletedAt: Self.parseDate(obj["onboarding_completed_at"])
+            onboardingCompletedAt: Self.parseDate(obj["onboarding_completed_at"]),
+            avatarPath: obj["avatar_path"] as? String
         )
+    }
+
+    static func profilePhotoPath(userId: String, fileId: UUID = UUID()) throws -> String {
+        guard UUID(uuidString: userId)?.uuidString.lowercased() == userId.lowercased() else {
+            throw ServiceError.parseError(message: "Invalid profile photo owner")
+        }
+        return "\(userId.lowercased())/\(fileId.uuidString.lowercased()).jpg"
+    }
+
+    static func profilePhotoDataIsJPEG(_ data: Data) -> Bool {
+        data.count >= 4
+            && data.starts(with: [0xFF, 0xD8])
+            && data.suffix(2).elementsEqual([0xFF, 0xD9])
+    }
+
+    func uploadProfilePhoto(_ jpegData: Data, replacing oldPath: String?) async throws -> Profile {
+        guard jpegData.count <= Self.maximumProfilePhotoBytes,
+              Self.profilePhotoDataIsJPEG(jpegData) else {
+            throw ServiceError.parseError(message: "Profile photo must be a JPEG under 2 MB")
+        }
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        let newPath = try Self.profilePhotoPath(userId: userId)
+        var request = URLRequest(url: storageObjectURL(operation: "object", path: newPath))
+        request.httpMethod = "POST"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.setValue("false", forHTTPHeaderField: "x-upsert")
+        request.httpBody = jpegData
+        try await performProfilePhotoRequest(request, failureMessage: "Couldn’t upload profile photo")
+
+        do {
+            let updated = try await setAvatarPath(newPath, jwt: jwt, userId: userId)
+            if let oldPath, oldPath != newPath {
+                try? await deleteProfilePhotoObject(path: oldPath, jwt: jwt, userId: userId)
+            }
+            return updated
+        } catch {
+            try? await deleteProfilePhotoObject(path: newPath, jwt: jwt, userId: userId)
+            throw error
+        }
+    }
+
+    func removeProfilePhoto(path: String) async throws -> Profile {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        guard Self.profilePhotoPathBelongsToUser(path, userId: userId) else {
+            throw ServiceError.parseError(message: "Invalid profile photo path")
+        }
+        let updated = try await setAvatarPath(nil, jwt: jwt, userId: userId)
+        try? await deleteProfilePhotoObject(path: path, jwt: jwt, userId: userId)
+        return updated
+    }
+
+    func fetchProfilePhoto(path: String) async throws -> Data {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        guard Self.profilePhotoPathBelongsToUser(path, userId: userId) else {
+            throw ServiceError.parseError(message: "Invalid profile photo path")
+        }
+        var request = URLRequest(
+            url: storageObjectURL(operation: "object/authenticated", path: path)
+        )
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode),
+              data.count <= Self.maximumProfilePhotoBytes,
+              Self.profilePhotoDataIsJPEG(data) else {
+            throw ServiceError.serverError(
+                statusCode: http.statusCode,
+                message: "Couldn’t load profile photo"
+            )
+        }
+        return data
+    }
+
+    static func profilePhotoPathBelongsToUser(_ path: String, userId: String) -> Bool {
+        guard UUID(uuidString: userId) != nil else { return false }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              parts[0].lowercased() == userId.lowercased(),
+              parts[1].hasSuffix(".jpg") else { return false }
+        return UUID(uuidString: String(parts[1].dropLast(4))) != nil
+    }
+
+    private func setAvatarPath(_ path: String?, jwt: String, userId: String) async throws -> Profile {
+        var components = URLComponents(
+            url: supabaseUrl.appendingPathComponent("/rest/v1/profiles"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "user_id", value: "eq.\(userId)")]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        let avatarValue: Any
+        if let path {
+            avatarValue = path
+        } else {
+            avatarValue = NSNull()
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "avatar_path": avatarValue
+        ])
+        try await performProfilePhotoRequest(request, failureMessage: "Couldn’t save profile photo")
+        guard let profile = try await fetchProfile(userId: userId) else {
+            throw ServiceError.parseError(message: "Updated profile was missing")
+        }
+        return profile
+    }
+
+    private func deleteProfilePhotoObject(path: String, jwt: String, userId: String) async throws {
+        guard Self.profilePhotoPathBelongsToUser(path, userId: userId) else { return }
+        var request = URLRequest(url: storageObjectURL(operation: "object", path: path))
+        request.httpMethod = "DELETE"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        try await performProfilePhotoRequest(request, failureMessage: "Couldn’t remove profile photo")
+    }
+
+    private func storageObjectURL(operation: String, path: String) -> URL {
+        operation.split(separator: "/").reduce(
+            supabaseUrl.appendingPathComponent("storage/v1")
+        ) { url, component in
+            url.appendingPathComponent(String(component))
+        }
+        .appendingPathComponent("profile-photos")
+        .appendingPathComponent(path)
+    }
+
+    private func performProfilePhotoRequest(
+        _ request: URLRequest,
+        failureMessage: String
+    ) async throws {
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ServiceError.networkError(underlying: error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.parseError(message: "Invalid response type")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let serverMessage = object?["message"] as? String
+            throw ServiceError.serverError(
+                statusCode: http.statusCode,
+                message: serverMessage ?? failureMessage
+            )
+        }
     }
 
     static func profileUpdatePayload(_ update: ProfileSettingsUpdate) throws -> [String: Any] {
