@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
-import { chmod, lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  open,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -61,6 +69,15 @@ const SMTP_ENV = [
   "SHUDO_SMTP_PASS",
   "SHUDO_SMTP_SENDER_NAME",
 ];
+
+const CREDENTIAL_INPUT_ENV = [
+  "SUPABASE_ACCESS_TOKEN",
+  ...GOOGLE_ENV,
+  ...SMTP_ENV,
+];
+const CREDENTIAL_INPUT_DIRECTORY_ENV = "SHUDO_AUTH_INPUT_DIRECTORY";
+const MAX_CREDENTIAL_INPUT_BYTES = 32 * 1024;
+const MAX_ACCESS_TOKEN_BYTES = 4 * 1024;
 
 const USAGE = `Usage: configure-supabase-auth.zsh [--apply] [--google] [--smtp]
 
@@ -161,6 +178,51 @@ export function buildPatch(options, env) {
   return patch;
 }
 
+function requireOwnerOnly(stats, label, expectedMode) {
+  if ((stats.mode & 0o777) !== expectedMode) {
+    fail(`${label} must have mode ${expectedMode.toString(8)}.`);
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    fail(`${label} is owned by another user.`);
+  }
+}
+
+export async function loadCredentialEnvironment(env) {
+  const directoryValue = env[CREDENTIAL_INPUT_DIRECTORY_ENV];
+  if (typeof directoryValue !== "string" || directoryValue.length === 0) {
+    return { ...env };
+  }
+
+  const directory = path.resolve(directoryValue);
+  const directoryStats = await lstat(directory);
+  if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink()) {
+    fail("The Auth credential input path must be a real directory.");
+  }
+  requireOwnerOnly(directoryStats, "The Auth credential input directory", 0o700);
+
+  const entries = await readdir(directory);
+  const unexpected = entries.filter((name) => !CREDENTIAL_INPUT_ENV.includes(name));
+  if (unexpected.length > 0) {
+    fail("The Auth credential input directory contains an unexpected file.");
+  }
+
+  const merged = { ...env };
+  delete merged[CREDENTIAL_INPUT_DIRECTORY_ENV];
+  for (const name of CREDENTIAL_INPUT_ENV) {
+    const inputPath = path.join(directory, name);
+    try {
+      merged[name] = await readOwnerOnlyCredentialFile(inputPath, {
+        label: `Auth credential input ${name}`,
+        maxBytes: MAX_CREDENTIAL_INPUT_BYTES,
+      });
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+  }
+  return merged;
+}
+
 export function redactPatch(patch) {
   return Object.fromEntries(
     Object.entries(patch).map(([key, value]) => [
@@ -216,6 +278,36 @@ function validateToken(token, source) {
   return token;
 }
 
+export async function readOwnerOnlyCredentialFile(
+  inputPath,
+  {
+    label = "Credential file",
+    maxBytes = MAX_CREDENTIAL_INPUT_BYTES,
+    openImpl = open,
+  } = {},
+) {
+  let handle;
+  try {
+    handle = await openImpl(
+      inputPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (error?.code === "ELOOP") fail(`${label} must be a regular file, not a symbolic link.`);
+    throw error;
+  }
+
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) fail(`${label} must be a regular file.`);
+    requireOwnerOnly(stats, label, 0o600);
+    if (stats.size > maxBytes) fail(`${label} is too large.`);
+    return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function loadAccessToken(env) {
   if (typeof env.SUPABASE_ACCESS_TOKEN === "string") {
     return validateToken(env.SUPABASE_ACCESS_TOKEN, "SUPABASE_ACCESS_TOKEN");
@@ -227,9 +319,14 @@ export async function loadAccessToken(env) {
     fail("HOME or SUPABASE_HOME is required to locate the access token.");
   }
   const tokenPath = path.resolve(tokenHome, "access-token");
-  let stats;
   try {
-    stats = await lstat(tokenPath);
+    return validateToken(
+      await readOwnerOnlyCredentialFile(tokenPath, {
+        label: "Supabase token file",
+        maxBytes: MAX_ACCESS_TOKEN_BYTES,
+      }),
+      "Supabase token file",
+    );
   } catch (error) {
     if (error?.code === "ENOENT") {
       fail(
@@ -238,16 +335,16 @@ export async function loadAccessToken(env) {
     }
     throw error;
   }
+}
 
-  if (!stats.isFile()) fail("Refusing a non-regular Supabase token file.");
-  if ((stats.mode & 0o777) !== 0o600) {
-    fail("Refusing a Supabase token file whose mode is not 600.");
-  }
-  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
-    fail("Refusing a Supabase token file owned by another user.");
-  }
-
-  return validateToken(await readFile(tokenPath, "utf8"), "Supabase token file");
+export async function stageAccessToken(env, outputPath) {
+  const token = await loadAccessToken(env);
+  await writeFile(outputPath, token, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  await chmod(outputPath, 0o600);
 }
 
 async function requestJson(fetchImpl, token, method, body) {
@@ -342,15 +439,24 @@ export async function run({ argv, env, fetchImpl = globalThis.fetch, log = conso
 }
 
 async function main() {
-  const env = { ...process.env };
+  const argv = process.argv.slice(2);
+  const rawEnv = { ...process.env };
   for (const name of [
     "SUPABASE_ACCESS_TOKEN",
     "SHUDO_GOOGLE_CLIENT_SECRET",
     "SHUDO_SMTP_PASS",
+    CREDENTIAL_INPUT_DIRECTORY_ENV,
   ]) {
     delete process.env[name];
   }
-  await run({ argv: process.argv.slice(2), env });
+  if (argv[0] === "stage-access-token") {
+    if (argv.length !== 2) fail("Usage: configure-supabase-auth.mjs stage-access-token OUTPUT", 64);
+    await stageAccessToken(rawEnv, argv[1]);
+    console.log("Staged an owner-only Supabase access token.");
+    return;
+  }
+  const env = await loadCredentialEnvironment(rawEnv);
+  await run({ argv, env });
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;

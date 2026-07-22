@@ -71,6 +71,18 @@ zsh -n scripts/configure-supabase-auth.zsh
   scripts/configure-supabase-auth.mjs
 /usr/bin/env -i "$shudo_node24_dir/node" --test \
   scripts/configure-supabase-auth.test.mjs
+[[ -x scripts/manage-beta-invite.zsh ]]
+zsh -n scripts/manage-beta-invite.zsh
+/usr/bin/env -i "$shudo_node24_dir/node" --check \
+  scripts/manage-beta-invite.mjs
+/usr/bin/env -i "$shudo_node24_dir/node" --test \
+  scripts/manage-beta-invite.test.mjs
+[[ -x scripts/deploy-vercel-production.zsh ]]
+zsh -n scripts/deploy-vercel-production.zsh
+/usr/bin/env -i "$shudo_node24_dir/node" --check \
+  scripts/verify-vercel-env.mjs
+/usr/bin/env -i "$shudo_node24_dir/node" --test \
+  scripts/verify-vercel-env.test.mjs
 
 cd "$shudo_web_root"
 npm ci

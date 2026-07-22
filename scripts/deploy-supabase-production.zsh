@@ -4,6 +4,8 @@ set -euo pipefail
 umask 077
 
 provided_access_token="${SUPABASE_ACCESS_TOKEN:-}"
+provided_home="${HOME:-}"
+provided_supabase_home="${SUPABASE_HOME:-}"
 unset SUPABASE_ACCESS_TOKEN
 
 repo_root="${0:A:h:h}"
@@ -112,25 +114,50 @@ export SUPABASE_WORKDIR="$release_root"
 print "Prepared immutable Supabase release commit $release_commit."
 print "Release snapshots: $release_tmp"
 
-supabase_access_token="$provided_access_token"
-if [[ -z "$supabase_access_token" ]]; then
-  token_file="${SUPABASE_HOME:-$HOME/.supabase}/access-token"
-  if [[ ! -f "$token_file" || ! -r "$token_file" ]]; then
-    print -u2 "No non-Keychain Supabase token is available. Run scripts/login-supabase-no-keyring.zsh first."
+credential_root="${TMPDIR:-/tmp}"
+credential_root="${credential_root%/}"
+auth_input_directory=""
+
+cleanup_auth_input() {
+  [[ -n "$auth_input_directory" ]] || return 0
+  case "$auth_input_directory" in
+    "$credential_root"/shudo-supabase-auth-input.*)
+      /bin/rm -rf -- "$auth_input_directory"
+      ;;
+    *)
+      print -u2 "Refusing to remove unexpected Auth credential path."
+      ;;
+  esac
+}
+trap cleanup_auth_input EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+auth_input_directory="$(mktemp -d "$credential_root/shudo-supabase-auth-input.XXXXXX")"
+staged_token_path="$auth_input_directory/SUPABASE_ACCESS_TOKEN"
+if [[ -n "$provided_access_token" ]]; then
+  if [[ "$provided_access_token" == *[[:space:]]* ]]; then
+    print -u2 "SUPABASE_ACCESS_TOKEN must contain exactly one token without whitespace."
     exit 1
   fi
-
-  token_mode="$(stat -f '%Lp' "$token_file")"
-  if [[ "$token_mode" != "600" ]]; then
-    print -u2 "Refusing token file with mode $token_mode; expected 600."
-    exit 1
-  fi
-
-  IFS= read -r supabase_access_token < "$token_file" || [[ -n "$supabase_access_token" ]]
+  print -rn -- "$provided_access_token" > "$staged_token_path"
+  chmod 600 "$staged_token_path"
+else
+  token_environment=()
+  [[ -n "$provided_home" ]] && token_environment+=("HOME=$provided_home")
+  [[ -n "$provided_supabase_home" ]] && \
+    token_environment+=("SUPABASE_HOME=$provided_supabase_home")
+  /usr/bin/env -i "${token_environment[@]}" \
+    "$node_cli" "$release_root/scripts/configure-supabase-auth.mjs" \
+    stage-access-token "$staged_token_path"
 fi
 
-if [[ -z "$supabase_access_token" ]]; then
-  print -u2 "The Supabase access token is empty."
+supabase_access_token=""
+IFS= read -r supabase_access_token < "$staged_token_path" || \
+  [[ -n "$supabase_access_token" ]]
+if [[ -z "$supabase_access_token" || "$supabase_access_token" == *[[:space:]]* ]]; then
+  print -u2 "The staged Supabase access token is invalid."
   exit 1
 fi
 
@@ -311,7 +338,7 @@ done
 
 print "Inspecting the exact hosted Auth configuration plan..."
 /usr/bin/env -i TMPDIR="$release_tmp" \
-  SUPABASE_ACCESS_TOKEN="$supabase_access_token" \
+  SHUDO_AUTH_INPUT_DIRECTORY="$auth_input_directory" \
   "$node_cli" "$release_root/scripts/configure-supabase-auth.mjs"
 
 if [[ "$apply_changes" != true ]]; then
@@ -342,7 +369,7 @@ fi
 
 print "Applying and verifying the friends-beta hosted Auth configuration..."
 /usr/bin/env -i TMPDIR="$release_tmp" \
-  SUPABASE_ACCESS_TOKEN="$supabase_access_token" \
+  SHUDO_AUTH_INPUT_DIRECTORY="$auth_input_directory" \
   "$node_cli" "$release_root/scripts/configure-supabase-auth.mjs" --apply
 
 for function_name in $authenticated_functions; do

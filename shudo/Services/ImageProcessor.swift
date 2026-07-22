@@ -4,6 +4,7 @@ import UIKit
 enum ImageProcessor {
     static let uploadMaxPixelSize = 1_600
     static let uploadJPEGQuality: CGFloat = 0.78
+    static let maximumPhotoCount = 4
 
     static func downsample(data: Data, maxPixelSize: Int = uploadMaxPixelSize) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
@@ -48,5 +49,71 @@ enum ImageProcessor {
     ) -> Data? {
         resizedForUpload(image, maxPixelSize: maxPixelSize)
             .jpegData(compressionQuality: quality)
+    }
+
+    static func collageForUpload(
+        _ images: [UIImage],
+        maxPixelSize: Int = uploadMaxPixelSize
+    ) -> UIImage? {
+        let selected = Array(images.prefix(maximumPhotoCount))
+        guard let first = selected.first, maxPixelSize > 0 else { return nil }
+        if selected.count == 1 {
+            return resizedForUpload(first, maxPixelSize: maxPixelSize)
+        }
+
+        let columns = 2
+        let rows = Int(ceil(Double(selected.count) / Double(columns)))
+        let cellSize = CGFloat(maxPixelSize) / CGFloat(columns)
+        let outputSize = CGSize(
+            width: CGFloat(maxPixelSize),
+            height: cellSize * CGFloat(rows)
+        )
+        let gutter = max(2, CGFloat(maxPixelSize) * 0.004)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+
+        return UIGraphicsImageRenderer(size: outputSize, format: format).image { context in
+            UIColor.black.setFill()
+            context.cgContext.fill(CGRect(origin: .zero, size: outputSize))
+
+            for (index, image) in selected.enumerated() {
+                let column = index % columns
+                let row = index / columns
+                let cell = CGRect(
+                    x: CGFloat(column) * cellSize,
+                    y: CGFloat(row) * cellSize,
+                    width: cellSize,
+                    height: cellSize
+                ).insetBy(dx: gutter, dy: gutter)
+                drawAspectFill(image, in: cell, context: context.cgContext)
+            }
+        }
+    }
+
+    private static func drawAspectFill(
+        _ image: UIImage,
+        in destination: CGRect,
+        context: CGContext
+    ) {
+        guard image.size.width > 0, image.size.height > 0 else { return }
+        let scale = max(
+            destination.width / image.size.width,
+            destination.height / image.size.height
+        )
+        let drawSize = CGSize(
+            width: image.size.width * scale,
+            height: image.size.height * scale
+        )
+        let drawRect = CGRect(
+            x: destination.midX - drawSize.width / 2,
+            y: destination.midY - drawSize.height / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        )
+        context.saveGState()
+        context.clip(to: destination)
+        image.draw(in: drawRect)
+        context.restoreGState()
     }
 }

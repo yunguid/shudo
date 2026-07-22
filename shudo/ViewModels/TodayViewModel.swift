@@ -1,6 +1,11 @@
 import Foundation
 import UIKit
 
+enum EntrySubmissionResult: Equatable {
+    case accepted
+    case rejected(String)
+}
+
 @MainActor
 final class TodayViewModel: ObservableObject {
     @Published var profile: Profile?
@@ -95,11 +100,11 @@ final class TodayViewModel: ObservableObject {
         errorMessage = nil
 
         do {
-            async let entryRequest = supabase.fetchEntries(for: day, timezone: timezone)
-            async let targetRequest = supabase.fetchDailyMacroTargetHistory()
-            let (items, loadedTargetHistory) = try await (entryRequest, targetRequest)
+            // Target history improves progress accuracy, but it must not make the
+            // primary meal log unavailable or keep its loading skeleton visible.
+            async let targetRequest = try? supabase.fetchDailyMacroTargetHistory()
+            let items = try await supabase.fetchEntries(for: day, timezone: timezone)
             guard loadGeneration == generation else { return }
-            targetHistory = loadedTargetHistory
             entries = items
             todayTotals = Self.totals(for: items)
             effectiveTarget = NutritionProgressPolicy.effectiveTarget(
@@ -112,6 +117,18 @@ final class TodayViewModel: ObservableObject {
             for item in items where item.status.isProcessing {
                 startPolling(entryId: item.id, localDay: item.localDay ?? localDay(for: day))
             }
+
+            let loadedTargetHistory = await targetRequest
+            guard loadGeneration == generation else { return }
+            targetHistory = Self.targetHistoryAfterLoad(
+                loaded: loadedTargetHistory,
+                current: targetHistory
+            )
+            effectiveTarget = NutritionProgressPolicy.effectiveTarget(
+                on: requestedLocalDay,
+                history: targetHistory,
+                fallback: profile?.dailyMacroTarget ?? .defaultDaily
+            )
         } catch {
             guard loadGeneration == generation else { return }
             let fallback = Self.visibleStateAfterLoadFailure(
@@ -149,6 +166,13 @@ final class TodayViewModel: ObservableObject {
         )
     }
 
+    static func targetHistoryAfterLoad(
+        loaded: [DailyMacroTargetSnapshot]?,
+        current: [DailyMacroTargetSnapshot]
+    ) -> [DailyMacroTargetSnapshot] {
+        loaded ?? current
+    }
+
     func deleteEntry(_ entry: Entry) async {
         guard entry.canDelete else { return }
         let previousEntries = entries
@@ -172,14 +196,13 @@ final class TodayViewModel: ObservableObject {
         }
     }
 
-    @discardableResult
     func submitEntry(
         text: String?,
         audioData: Data?,
         image: UIImage?,
         for targetDay: Date? = nil,
         clientRequestId: UUID = UUID()
-    ) async -> Bool {
+    ) async -> EntrySubmissionResult {
         let timezone = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier
         let day = targetDay ?? currentDay
         let targetLocalDay = supabase.localDayString(for: day, timezone: timezone)
@@ -234,13 +257,24 @@ final class TodayViewModel: ObservableObject {
             }
             todayTotals = Self.totals(for: entries)
             startPolling(entryId: result.entryId, localDay: targetLocalDay)
-            return true
+            return .accepted
         } catch {
             entries.removeAll { $0.id == temporaryId }
             todayTotals = Self.totals(for: entries)
-            errorMessage = error.localizedDescription
-            return false
+            let message = Self.submissionErrorMessage(error)
+            errorMessage = message
+            return .rejected(message)
         }
+    }
+
+    static func submissionErrorMessage(_ error: Error) -> String {
+        if let apiError = error as? APIService.APIError {
+            return apiError.localizedDescription
+        }
+        if error is URLError {
+            return "Couldn’t reach the server. Check your connection and try again."
+        }
+        return "The meal wasn’t sent. Please try again."
     }
 
     func retryEntry(_ entry: Entry) async {

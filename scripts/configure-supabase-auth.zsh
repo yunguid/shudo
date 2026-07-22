@@ -42,28 +42,49 @@ if [[ ! -f "$configurator" || -L "$configurator" ]]; then
   exit 1
 fi
 
-safe_environment=()
+credential_root="${TMPDIR:-/tmp}"
+credential_root="${credential_root%/}"
+credential_directory=""
+
+cleanup_credentials() {
+  [[ -n "$credential_directory" ]] || return 0
+  case "$credential_directory" in
+    "$credential_root"/shudo-auth-input.*)
+      /bin/rm -rf -- "$credential_directory"
+      ;;
+    *)
+      print -u2 "Refusing to remove unexpected credential path."
+      ;;
+  esac
+}
+trap cleanup_credentials EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+credential_directory="$(mktemp -d "$credential_root/shudo-auth-input.XXXXXX")"
+
+write_credential() {
+  local name="$1"
+  local value="$2"
+  [[ -n "$value" ]] || return 0
+  print -rn -- "$value" > "$credential_directory/$name"
+}
+
+write_credential SUPABASE_ACCESS_TOKEN "$provided_access_token"
+write_credential SHUDO_GOOGLE_CLIENT_ID "$provided_google_client_id"
+write_credential SHUDO_GOOGLE_CLIENT_SECRET "$provided_google_client_secret"
+write_credential SHUDO_SMTP_ADMIN_EMAIL "$provided_smtp_admin_email"
+write_credential SHUDO_SMTP_HOST "$provided_smtp_host"
+write_credential SHUDO_SMTP_PORT "$provided_smtp_port"
+write_credential SHUDO_SMTP_USER "$provided_smtp_user"
+write_credential SHUDO_SMTP_PASS "$provided_smtp_pass"
+write_credential SHUDO_SMTP_SENDER_NAME "$provided_smtp_sender_name"
+
+safe_environment=("SHUDO_AUTH_INPUT_DIRECTORY=$credential_directory")
 [[ -n "$provided_home" ]] && safe_environment+=("HOME=$provided_home")
 [[ -n "$provided_supabase_home" ]] && \
   safe_environment+=("SUPABASE_HOME=$provided_supabase_home")
-[[ -n "$provided_access_token" ]] && \
-  safe_environment+=("SUPABASE_ACCESS_TOKEN=$provided_access_token")
-[[ -n "$provided_google_client_id" ]] && \
-  safe_environment+=("SHUDO_GOOGLE_CLIENT_ID=$provided_google_client_id")
-[[ -n "$provided_google_client_secret" ]] && \
-  safe_environment+=("SHUDO_GOOGLE_CLIENT_SECRET=$provided_google_client_secret")
-[[ -n "$provided_smtp_admin_email" ]] && \
-  safe_environment+=("SHUDO_SMTP_ADMIN_EMAIL=$provided_smtp_admin_email")
-[[ -n "$provided_smtp_host" ]] && \
-  safe_environment+=("SHUDO_SMTP_HOST=$provided_smtp_host")
-[[ -n "$provided_smtp_port" ]] && \
-  safe_environment+=("SHUDO_SMTP_PORT=$provided_smtp_port")
-[[ -n "$provided_smtp_user" ]] && \
-  safe_environment+=("SHUDO_SMTP_USER=$provided_smtp_user")
-[[ -n "$provided_smtp_pass" ]] && \
-  safe_environment+=("SHUDO_SMTP_PASS=$provided_smtp_pass")
-[[ -n "$provided_smtp_sender_name" ]] && \
-  safe_environment+=("SHUDO_SMTP_SENDER_NAME=$provided_smtp_sender_name")
 
-exec /usr/bin/env -i "${safe_environment[@]}" \
+/usr/bin/env -i "${safe_environment[@]}" \
   "$node_cli" "$configurator" "$@"

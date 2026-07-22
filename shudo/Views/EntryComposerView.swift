@@ -3,6 +3,8 @@ import SwiftUI
 import UIKit
 
 enum EntryComposerPolicy {
+    static let maximumNoteLength = 12_000
+
     static func canSubmit(
         isSubmitting: Bool,
         isPreparingImage: Bool,
@@ -12,7 +14,19 @@ enum EntryComposerPolicy {
     ) -> Bool {
         !isSubmitting
             && !isPreparingImage
+            && note.utf16.count <= maximumNoteLength
             && (hasAudio || hasImage || !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    static func boundedNote(_ note: String) -> String {
+        guard note.utf16.count > maximumNoteLength else { return note }
+        let utf16 = note.utf16
+        var end = utf16.index(utf16.startIndex, offsetBy: maximumNoteLength)
+        while String.Index(end, within: note) == nil {
+            end = utf16.index(before: end)
+        }
+        guard let stringEnd = String.Index(end, within: note) else { return "" }
+        return String(note[..<stringEnd])
     }
 
     static func shouldDiscardRecording(
@@ -29,12 +43,13 @@ struct EntryComposerView: View {
     @StateObject private var audio = AudioRecorder()
 
     @State private var note = ""
-    @State private var pickedImage: PhotosPickerItem?
-    @State private var image: UIImage?
+    @State private var pickedImages: [PhotosPickerItem] = []
+    @State private var images: [UIImage] = []
     @State private var isShowingCamera = false
     @State private var isShowingPhotoPicker = false
     @State private var isPreparingImage = false
     @State private var imageLoadGeneration = UUID()
+    @State private var imagePreparationTask: Task<Void, Never>?
     @State private var isSubmitting = false
     @State private var localError: String?
     @State private var didAutoStart = false
@@ -43,13 +58,13 @@ struct EntryComposerView: View {
     let selectedDay: Date
     let timezone: String
     let autoStartRecording: Bool
-    let onSubmit: (String?, Data?, UIImage?, UUID) async -> Bool
+    let onSubmit: (String?, Data?, UIImage?, UUID) async -> EntrySubmissionResult
 
     init(
         selectedDay: Date,
         timezone: String,
         autoStartRecording: Bool = false,
-        onSubmit: @escaping (String?, Data?, UIImage?, UUID) async -> Bool
+        onSubmit: @escaping (String?, Data?, UIImage?, UUID) async -> EntrySubmissionResult
     ) {
         self.selectedDay = selectedDay
         self.timezone = timezone
@@ -63,7 +78,7 @@ struct EntryComposerView: View {
             isSubmitting: isSubmitting,
             isPreparingImage: isPreparingImage,
             hasAudio: hasAudio,
-            hasImage: image != nil,
+            hasImage: !images.isEmpty,
             note: note
         )
     }
@@ -108,16 +123,18 @@ struct EntryComposerView: View {
         .preferredColorScheme(.dark)
         .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { selected in
-                withAnimation(.snappy) { image = selected }
+                guard images.count < ImageProcessor.maximumPhotoCount else { return }
+                withAnimation(.snappy) { images.append(selected) }
             }
             .ignoresSafeArea()
         }
         .photosPicker(
             isPresented: $isShowingPhotoPicker,
-            selection: $pickedImage,
+            selection: $pickedImages,
+            maxSelectionCount: max(1, ImageProcessor.maximumPhotoCount - images.count),
             matching: .images
         )
-        .onChange(of: pickedImage) { _, item in preparePickedImage(item) }
+        .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
         .task {
             guard autoStartRecording, !didAutoStart else { return }
             didAutoStart = true
@@ -138,6 +155,8 @@ struct EntryComposerView: View {
                 isShowingCamera: isShowingCamera,
                 isShowingPhotoPicker: isShowingPhotoPicker
             ) else { return }
+            imagePreparationTask?.cancel()
+            imagePreparationTask = nil
             imageLoadGeneration = UUID()
             isPreparingImage = false
             audio.discardRecording()
@@ -223,43 +242,49 @@ struct EntryComposerView: View {
 
     private var imageCapture: some View {
         VStack(spacing: 12) {
-            if let image {
-                ZStack(alignment: .topTrailing) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 190)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            if !images.isEmpty {
+                LazyVGrid(
+                    columns: images.count == 1
+                        ? [GridItem(.flexible())]
+                        : [GridItem(.flexible()), GridItem(.flexible())],
+                    spacing: 8
+                ) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                        ZStack(alignment: .topTrailing) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: images.count == 1 ? 190 : 122)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
-                    Button {
-                        withAnimation(.snappy) {
-                            self.image = nil
-                            pickedImage = nil
+                            Button {
+                                removePhoto(at: index)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 30, height: 30)
+                                    .background(.black.opacity(0.58), in: Circle())
+                            }
+                            .padding(8)
+                            .accessibilityLabel("Remove photo \(index + 1)")
                         }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 30, height: 30)
-                            .background(.black.opacity(0.58), in: Circle())
                     }
-                    .padding(10)
-                    .accessibilityLabel("Remove photo")
                 }
             }
 
             HStack(spacing: 12) {
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    mediaButton(title: image == nil ? "Camera" : "Retake", systemImage: "camera.fill") {
+                    mediaButton(title: "Camera", systemImage: "camera.fill") {
                         if audio.isRecording { audio.stopRecording() }
                         isShowingCamera = true
                     }
                 }
 
                 mediaButton(
-                    title: image == nil ? "Photo" : "Replace",
+                    title: images.isEmpty ? "Photos" : "Add photos",
                     systemImage: "photo.on.rectangle"
                 ) {
                     if audio.isRecording { audio.stopRecording() }
@@ -279,7 +304,11 @@ struct EntryComposerView: View {
                 .background(Design.Color.elevated, in: Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(isSubmitting || isPreparingImage)
+        .disabled(
+            isSubmitting
+                || isPreparingImage
+                || images.count >= ImageProcessor.maximumPhotoCount
+        )
     }
 
     private var noteField: some View {
@@ -300,6 +329,10 @@ struct EntryComposerView: View {
                 .padding(.horizontal, 11)
                 .padding(.vertical, 8)
                 .frame(minHeight: 104, maxHeight: 150)
+                .onChange(of: note) { _, value in
+                    let bounded = EntryComposerPolicy.boundedNote(value)
+                    if bounded != value { note = bounded }
+                }
         }
         .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
@@ -317,7 +350,7 @@ struct EntryComposerView: View {
                 Text(
                     isSubmitting
                         ? "Sending…"
-                        : isPreparingImage ? "Preparing photo…" : "Log meal"
+                        : isPreparingImage ? "Preparing photos…" : "Log meal"
                 )
             }
             .font(.headline)
@@ -386,34 +419,56 @@ struct EntryComposerView: View {
         }
     }
 
-    private func preparePickedImage(_ item: PhotosPickerItem?) {
+    private func preparePickedImages(_ items: [PhotosPickerItem]) {
+        imagePreparationTask?.cancel()
         let generation = UUID()
         imageLoadGeneration = generation
-        guard let item else {
+        guard !items.isEmpty else {
+            imagePreparationTask = nil
             isPreparingImage = false
             return
         }
 
         isPreparingImage = true
         localError = nil
-        Task {
-            let prepared: UIImage?
-            if let data = try? await item.loadTransferable(type: Data.self) {
-                prepared = ImageProcessor.downsample(data: data)
-            } else {
-                prepared = nil
+        let availableSlots = max(0, ImageProcessor.maximumPhotoCount - images.count)
+        imagePreparationTask = Task.detached(priority: .userInitiated) {
+            var prepared: [UIImage] = []
+            for item in items.prefix(availableSlots) {
+                guard !Task.isCancelled else { return }
+                guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+                guard !Task.isCancelled else { return }
+                guard let image = ImageProcessor.downsample(data: data) else { continue }
+                prepared.append(image)
             }
 
+            guard !Task.isCancelled else { return }
+            let preparedImages = prepared
             await MainActor.run {
                 guard imageLoadGeneration == generation else { return }
+                imagePreparationTask = nil
                 isPreparingImage = false
-                guard let prepared else {
-                    localError = "That photo couldn’t be loaded."
+                pickedImages = []
+                guard !preparedImages.isEmpty else {
+                    localError = "Those photos couldn’t be loaded."
                     return
                 }
-                withAnimation(.snappy) { image = prepared }
-                localError = nil
+                let remainingSlots = max(0, ImageProcessor.maximumPhotoCount - images.count)
+                withAnimation(.snappy) {
+                    images.append(contentsOf: preparedImages.prefix(remainingSlots))
+                }
+                localError = preparedImages.count < min(items.count, availableSlots)
+                    ? "Some photos couldn’t be loaded."
+                    : nil
             }
+        }
+    }
+
+    private func removePhoto(at offset: Int) {
+        guard images.indices.contains(offset) else { return }
+        withAnimation(.snappy) {
+            let index = images.index(images.startIndex, offsetBy: offset)
+            images.remove(at: index)
         }
     }
 
@@ -422,20 +477,21 @@ struct EntryComposerView: View {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = trimmed.isEmpty ? nil : trimmed
         let audioData = audio.recordedData()
-        let selectedImage = image
+        let selectedImage = ImageProcessor.collageForUpload(images)
 
         isSubmitting = true
         localError = nil
         Task {
-            let accepted = await onSubmit(text, audioData, selectedImage, clientRequestId)
+            let result = await onSubmit(text, audioData, selectedImage, clientRequestId)
             await MainActor.run {
                 isSubmitting = false
-                if accepted {
+                switch result {
+                case .accepted:
                     audio.discardRecording()
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                     dismiss()
-                } else {
-                    localError = "The meal wasn’t sent. Check your connection and try again."
+                case .rejected(let message):
+                    localError = message
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                 }
             }

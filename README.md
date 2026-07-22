@@ -53,8 +53,8 @@ the short onboarding flow.
   idempotency keys, bounded inputs, per-user quotas, and fenced retries.
 - Raw audio is detached and queued for deletion after transcription. Photos and
   meal records remain until their meal or account is deleted.
-- Account deletion first removes Auth access and database ownership, then drains
-  any recoverable Storage cleanup work.
+- Account deletion removes the user's private Storage objects first, then
+  deletes the Auth user so owned database rows cascade in one transaction.
 
 Nutrition output is an estimate, not medical advice. Shudo does not diagnose,
 treat, or provide allergy or emergency guidance.
@@ -137,6 +137,19 @@ historical Auth rows are not implicitly admitted. Add a friend's normalized
 email to `public.beta_signup_allowlist` before they create an email/password or
 social account; uninvited signups fail closed without consuming shared AI
 capacity.
+
+Use the guarded no-Keychain invite helper instead of pasting ad hoc SQL:
+
+```bash
+scripts/manage-beta-invite.zsh list
+scripts/manage-beta-invite.zsh add friend@example.com "Friend beta"
+scripts/manage-beta-invite.zsh add friend@example.com "Friend beta" --apply
+scripts/manage-beta-invite.zsh disable friend@example.com --apply
+```
+
+Every mutation is a dry run unless `--apply` is present. The helper pins the
+production project, uses fixed parameterized queries, re-reads the row after a
+write, and reads the same owner-only token file as the deployment tooling.
 
 After that migration is live, inspect and apply only Shudo's owned hosted Auth
 fields with the prompt-free Management API helper:
@@ -249,6 +262,10 @@ privacy/listing details, and a verified physical-iPhone archive.
 - Production deployment does not require Vercel Git integration; the current
   project can be deployed through the authenticated CLI. Connecting the GitHub
   repository is optional and should be a deliberate account-level choice.
+- Use `scripts/deploy-vercel-production.zsh` for a disposable immutable
+  production build, and add `--apply` only after the Supabase release is live.
+  The apply path verifies both public domains and performs an authorized
+  maintenance-cron smoke without placing its bearer secret in process arguments.
 - Never print, commit, or paste recovery codes, API keys, database passwords,
   OAuth secrets, service-role keys, or maintenance credentials into logs.
 - Do not rewrite or delete historical migrations after they reach production.

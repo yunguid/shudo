@@ -108,6 +108,24 @@ struct CapturePipelineTests {
         #expect(ImageProcessor.jpegData(from: original)?.isEmpty == false)
     }
 
+    @Test func upToFourPhotosBecomeOneBoundedUploadCollage() throws {
+        func image(_ color: UIColor) -> UIImage {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 400))
+            return renderer.image { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 600, height: 400))
+            }
+        }
+
+        let collage = try #require(ImageProcessor.collageForUpload([
+            image(.red), image(.green), image(.blue), image(.yellow), image(.purple)
+        ]))
+        #expect(ImageProcessor.maximumPhotoCount == 4)
+        #expect(collage.cgImage?.width == 1_600)
+        #expect(collage.cgImage?.height == 1_600)
+        #expect(ImageProcessor.jpegData(from: collage)?.isEmpty == false)
+    }
+
     @Test func localDayUsesProfileTimezoneAtUTCBoundary() {
         let formatter = ISO8601DateFormatter()
         let date = formatter.date(from: "2026-07-20T02:30:00Z")!
@@ -188,6 +206,35 @@ struct CapturePipelineTests {
             hasImage: false,
             note: "salmon and rice"
         ))
+    }
+
+    @Test func mealNoteIsBoundedToTheServerContractWithoutSplittingUnicode() {
+        let exact = String(repeating: "a", count: EntryComposerPolicy.maximumNoteLength)
+        #expect(EntryComposerPolicy.boundedNote(exact) == exact)
+
+        let overLimit = String(repeating: "a", count: EntryComposerPolicy.maximumNoteLength - 1)
+            + "🍕"
+        let bounded = EntryComposerPolicy.boundedNote(overLimit)
+        #expect(bounded.utf16.count <= EntryComposerPolicy.maximumNoteLength)
+        #expect(!bounded.contains("�"))
+
+        #expect(!EntryComposerPolicy.canSubmit(
+            isSubmitting: false,
+            isPreparingImage: false,
+            hasAudio: false,
+            hasImage: false,
+            note: String(repeating: "b", count: EntryComposerPolicy.maximumNoteLength + 1)
+        ))
+    }
+
+    @MainActor
+    @Test func mealSubmissionSurfacesActionableServerErrors() {
+        #expect(TodayViewModel.submissionErrorMessage(
+            APIService.APIError.server(statusCode: 413, message: "Voice note is too large")
+        ) == "Voice note is too large")
+        #expect(TodayViewModel.submissionErrorMessage(
+            URLError(.notConnectedToInternet)
+        ) == "Couldn’t reach the server. Check your connection and try again.")
     }
 
     @Test func systemMediaPickerDoesNotDiscardFinishedVoiceNote() {

@@ -231,6 +231,41 @@ struct TodayViewModelTests {
     }
 
     @MainActor
+    @Test func targetHistoryFailureKeepsTheLastKnownTargets() {
+        let current = [
+            DailyMacroTargetSnapshot(
+                targetDay: "2026-07-01",
+                target: MacroTarget(
+                    caloriesKcal: 2_200,
+                    proteinG: 160,
+                    carbsG: 230,
+                    fatG: 70
+                )
+            )
+        ]
+        let refreshed = [
+            DailyMacroTargetSnapshot(
+                targetDay: "2026-07-20",
+                target: MacroTarget(
+                    caloriesKcal: 2_000,
+                    proteinG: 170,
+                    carbsG: 190,
+                    fatG: 65
+                )
+            )
+        ]
+
+        #expect(TodayViewModel.targetHistoryAfterLoad(
+            loaded: nil,
+            current: current
+        ) == current)
+        #expect(TodayViewModel.targetHistoryAfterLoad(
+            loaded: refreshed,
+            current: current
+        ) == refreshed)
+    }
+
+    @MainActor
     @Test func exhaustedResumeConflictBecomesUsefulRowStatus() {
         let message = TodayViewModel.resumeConflictMessage(
             "This meal could not be recovered. Delete it and log it again.",

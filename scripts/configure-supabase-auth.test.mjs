@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import {
   chmod,
+  mkdir,
   mkdtemp,
+  open,
   readFile,
+  rename,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -17,11 +21,14 @@ import {
   REDIRECT_ALLOW_LIST,
   buildPatch,
   createPlan,
+  loadCredentialEnvironment,
   loadAccessToken,
   nonSecretSnapshot,
   parseArgs,
+  readOwnerOnlyCredentialFile,
   redactPatch,
   run,
+  stageAccessToken,
   verifyOwnedNonSecretFields,
 } from "./configure-supabase-auth.mjs";
 
@@ -138,21 +145,128 @@ test("verification checks every owned non-secret field but not write-only secret
   );
 });
 
-test("token loader accepts only a regular owner-only file", async () => {
+test("token loader accepts only a regular owner-only non-symlink file", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "shudo-auth-token-test."));
   const tokenPath = path.join(directory, "access-token");
-  await writeFile(tokenPath, "sbp_testtoken", { mode: 0o600 });
-  await chmod(tokenPath, 0o600);
-  assert.equal(
-    await loadAccessToken({ SUPABASE_HOME: directory }),
-    "sbp_testtoken",
-  );
+  const realTokenPath = path.join(directory, "real-token");
+  try {
+    await writeFile(tokenPath, "sbp_testtoken", { mode: 0o600 });
+    await chmod(tokenPath, 0o600);
+    assert.equal(
+      await loadAccessToken({ SUPABASE_HOME: directory }),
+      "sbp_testtoken",
+    );
 
-  await chmod(tokenPath, 0o644);
-  await assert.rejects(
-    loadAccessToken({ SUPABASE_HOME: directory }),
-    /mode is not 600/,
-  );
+    await chmod(tokenPath, 0o644);
+    await assert.rejects(
+      loadAccessToken({ SUPABASE_HOME: directory }),
+      /mode 600/,
+    );
+
+    await rm(tokenPath);
+    await writeFile(realTokenPath, "sbp_symlink_target", { mode: 0o600 });
+    await symlink(realTokenPath, tokenPath);
+    await assert.rejects(
+      loadAccessToken({ SUPABASE_HOME: directory }),
+      /symbolic link|regular file/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("credential reader validates the opened descriptor and resists path replacement", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "shudo-auth-fd-test."));
+  const tokenPath = path.join(directory, "access-token");
+  const openedPath = path.join(directory, "opened-token");
+  try {
+    await writeFile(tokenPath, "sbp_original", { mode: 0o600 });
+    const value = await readOwnerOnlyCredentialFile(tokenPath, {
+      label: "Test token",
+      openImpl: async (inputPath, flags) => {
+        const handle = await open(inputPath, flags);
+        await rename(inputPath, openedPath);
+        await writeFile(inputPath, "sbp_replacement", { mode: 0o600 });
+        return handle;
+      },
+    });
+    assert.equal(value, "sbp_original");
+
+    let readAttempted = false;
+    let closed = false;
+    const wrongOwnerHandle = {
+      stat: async () => ({
+        isFile: () => true,
+        mode: 0o100600,
+        uid: (typeof process.getuid === "function" ? process.getuid() : 0) + 1,
+        size: 12,
+      }),
+      readFile: async () => {
+        readAttempted = true;
+        return "must-not-read";
+      },
+      close: async () => {
+        closed = true;
+      },
+    };
+    await assert.rejects(
+      readOwnerOnlyCredentialFile(tokenPath, {
+        label: "Test token",
+        openImpl: async () => wrongOwnerHandle,
+      }),
+      /owned by another user/,
+    );
+    assert.equal(readAttempted, false);
+    assert.equal(closed, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("token staging creates a new owner-only copy", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "shudo-auth-stage-test."));
+  const sourceDirectory = path.join(directory, "source");
+  const destination = path.join(directory, "staged-token");
+  await mkdir(sourceDirectory, { mode: 0o700 });
+  const source = path.join(sourceDirectory, "access-token");
+  try {
+    await writeFile(source, "sbp_staged", { mode: 0o600 });
+    await stageAccessToken({ SUPABASE_HOME: sourceDirectory }, destination);
+    assert.equal(await readFile(destination, "utf8"), "sbp_staged");
+    assert.equal((await stat(destination)).mode & 0o777, 0o600);
+    await assert.rejects(
+      stageAccessToken({ SUPABASE_HOME: sourceDirectory }, destination),
+      /EEXIST/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("credential files carry secrets without putting them in process arguments", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "shudo-auth-input-test."));
+  const secret = "not-visible-in-argv";
+  const secretPath = path.join(directory, "SHUDO_GOOGLE_CLIENT_SECRET");
+  await writeFile(secretPath, secret, { mode: 0o600 });
+  await chmod(secretPath, 0o600);
+
+  try {
+    const env = await loadCredentialEnvironment({
+      SHUDO_AUTH_INPUT_DIRECTORY: directory,
+      HOME: "/safe/home",
+    });
+    assert.equal(env.SHUDO_GOOGLE_CLIENT_SECRET, secret);
+    assert.equal(env.HOME, "/safe/home");
+    assert.equal(Object.hasOwn(env, "SHUDO_AUTH_INPUT_DIRECTORY"), false);
+
+    await chmod(secretPath, 0o644);
+    await assert.rejects(
+      loadCredentialEnvironment({ SHUDO_AUTH_INPUT_DIRECTORY: directory }),
+      /mode 600/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("dry-run performs one GET, redacts output, and writes only 600 snapshots", async () => {
