@@ -18,6 +18,7 @@ summary.
 - `supabase/functions/` — authenticated Edge Functions
 - `scripts/verify-release.zsh` — complete local release gate
 - `scripts/verify-ios-release.zsh` — iPhone metadata and Release-build gate
+- `scripts/install-ios-device.zsh` — guarded signed install for Luke's iPhone
 - `docs/ios-release-readiness.md` — Apple/TestFlight handoff checklist
 - `docs/morning-handoff.md` — minimal owner inputs for the friends beta
 
@@ -261,8 +262,16 @@ and authorized responses, email confirmation/recovery, provider sign-in, meal
 capture, correction rollback, onboarding, weekly generation, and account deletion
 with disposable users.
 
-Direct Xcode installation works with the registered development device and
-profile. TestFlight and public distribution require an active Apple Developer
+Direct installation works with the registered development device and profile:
+
+```bash
+scripts/install-ios-device.zsh
+```
+
+The installer unlocks only the dedicated owner-only Shudo signing keychain,
+builds the Release, installs and launches it, verifies the phone's reported
+version, and removes only its own temporary build directory. TestFlight and
+public distribution require an active Apple Developer
 Program team, Apple Distribution signing, an App Store Connect record, completed
 privacy/listing details, and a verified physical-iPhone archive.
 

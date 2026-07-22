@@ -6,6 +6,8 @@ Updated: 2026-07-22
 
 - Shudo 1.0 (2) is signed, installed, and verified running on Luke's iPhone.
 - A second signed Release build passed without a Keychain password prompt.
+- Future signed updates use `scripts/install-ios-device.zsh`; it builds,
+  installs, launches, and verifies the connected phone in one command.
 - The replacement Personal Team profile is active through 2026-07-29 00:05 EST.
 - Supabase and Vercel production releases are live at `https://shudo.yng.sh`.
 - The complete release gate passed and `agent/rebuild-shudo` is published to
@@ -59,7 +61,7 @@ uses existing secure sessions or a brief owner-controlled login/MFA handoff.
 
 ## Fast morning acceptance check
 
-1. Open Shudo and confirm Settings shows version 1.0 (2).
+1. Open Shudo and confirm the Today screen and Settings load normally.
 2. Record a short meal, optionally attach one photo, and wait for the streamed
    result.
 3. Add a correction to that meal and confirm its totals update.

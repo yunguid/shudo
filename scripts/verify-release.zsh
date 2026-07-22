@@ -64,6 +64,15 @@ plutil -lint shudo/Info.plist shudo.xcodeproj/project.pbxproj
 zsh -n scripts/login-supabase-no-keyring.zsh
 [[ -x scripts/deploy-supabase-production.zsh ]]
 zsh -n scripts/deploy-supabase-production.zsh
+[[ -x scripts/install-ios-device.zsh ]]
+zsh -n scripts/install-ios-device.zsh
+[[ -f scripts/unlock-shudo-keychain.swift && ! -L scripts/unlock-shudo-keychain.swift ]]
+xcrun swiftc -suppress-warnings -typecheck scripts/unlock-shudo-keychain.swift
+! rg -q 'default-keychain|set-key-partition-list|unlock-keychain[[:space:]]+-p' \
+  scripts/install-ios-device.zsh
+rg -q 'SecKeychainUnlock' scripts/unlock-shudo-keychain.swift
+rg -q 'devicectl device install app' scripts/install-ios-device.zsh
+rg -q 'devicectl device process launch' scripts/install-ios-device.zsh
 [[ -f scripts/configure-supabase-auth.mjs && ! -L scripts/configure-supabase-auth.mjs ]]
 [[ -x scripts/configure-supabase-auth.zsh ]]
 zsh -n scripts/configure-supabase-auth.zsh
@@ -94,10 +103,12 @@ npm run typecheck
 npm run build
 npm audit --audit-level=moderate
 npx --offline --yes vercel@56.4.1 build --prod --yes --scope ekuls-projects
+# An absent .env.local is not listed in Vercel's ignored array. The included-file
+# scan remains fail-closed if one is ever uploaded.
 npx --offline --yes vercel@56.4.1 deploy --dry --format=json \
   --scope ekuls-projects | jq -e '
     . as $manifest
-    | ([".env.local", ".next", ".vercel", "node_modules", "tsconfig.tsbuildinfo"] - .ignored) as $missing
+    | ([".next", ".vercel", "node_modules", "tsconfig.tsbuildinfo"] - .ignored) as $missing
     | [.files[].path | select(test("(^|/)(\\.env\\.local|\\.next|\\.vercel|node_modules|.*\\.tsbuildinfo)(/|$)"))] as $included
     | if (($missing | length) == 0 and ($included | length) == 0)
       then {fileCount, totalSize, missingRequiredIgnored: $missing, sensitiveIncluded: $included}
