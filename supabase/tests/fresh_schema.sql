@@ -17,6 +17,7 @@ $$;
 \ir ../migrations/20260721234531_add_voice_entry_correction_requests.sql
 \ir ../migrations/20260722001415_project_ai_budget_timezone.sql
 \ir ../migrations/20260722015329_restrict_beta_signups_to_allowlist.sql
+\ir ../migrations/20260722224247_add_private_profile_photos.sql
 
 insert into auth.users (id, email)
 values
@@ -166,6 +167,8 @@ $$;
 \ir beta_signup_allowlist.sql
 
 \ir voice_corrections.sql
+
+\ir profile_photos.sql
 
 -- Streamed previews stay bounded and are replaced/terminalized under the same
 -- attempt fence as the durable processor state.

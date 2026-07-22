@@ -70,15 +70,9 @@ struct AuthView: View {
                 VStack(spacing: 30) {
                     Spacer(minLength: 62)
 
-                    VStack(spacing: 7) {
-                        Text("Shudo")
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
-                            .foregroundStyle(Design.Color.ink)
-
-                        Text("Voice-first nutrition log")
-                            .font(.subheadline)
-                            .foregroundStyle(Design.Color.muted)
-                    }
+                    Text("Shudo")
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                        .foregroundStyle(Design.Color.ink)
 
                     VStack(spacing: 12) {
                         VStack(spacing: 0) {
@@ -257,7 +251,7 @@ struct AuthView: View {
 
     private var canSubmit: Bool {
         !isBusy && isEmailValid
-            && (isCreatingAccount ? password.count >= 10 : !password.isEmpty)
+            && password.count >= (isCreatingAccount ? 10 : 1)
     }
 
     private var isEmailValid: Bool {

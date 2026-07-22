@@ -3,6 +3,29 @@ import Testing
 @testable import shudo
 
 struct NativeExperienceTests {
+    @Test func profilePhotoInputRejectsOversizedOrDecompressionHeavyImages() {
+        #expect(ProfilePhotoInputPolicy.accepts(
+            byteCount: 2_000_000,
+            pixelWidth: 6_000,
+            pixelHeight: 6_000
+        ))
+        #expect(!ProfilePhotoInputPolicy.accepts(
+            byteCount: 25_000_001,
+            pixelWidth: 512,
+            pixelHeight: 512
+        ))
+        #expect(!ProfilePhotoInputPolicy.accepts(
+            byteCount: 1_000_000,
+            pixelWidth: 10_000,
+            pixelHeight: 10_000
+        ))
+        #expect(!ProfilePhotoInputPolicy.accepts(
+            byteCount: 1_000_000,
+            pixelWidth: .infinity,
+            pixelHeight: 512
+        ))
+    }
+
     @Test func weeklySummaryKeepsTwoToThreeUsefulItemsAndSupportsEmptyProviders() async throws {
         let start = Date(timeIntervalSince1970: 100)
         let summary = WeeklyInsightSummary(
@@ -262,6 +285,60 @@ struct NativeExperienceTests {
         #expect(EntryDetailLayoutPolicy.stacksMacroCards(for: .accessibility1))
     }
 
+    @Test func daySwipeRequiresTheCorrectScreenEdgeDirectionAndDistance() {
+        let width: CGFloat = 390
+
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 8,
+            translation: CGSize(width: 80, height: 12),
+            predictedEndTranslation: CGSize(width: 96, height: 14),
+            containerWidth: width
+        ) == -1)
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 382,
+            translation: CGSize(width: -80, height: 9),
+            predictedEndTranslation: CGSize(width: -94, height: 10),
+            containerWidth: width
+        ) == 1)
+
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 60,
+            translation: CGSize(width: 110, height: 4),
+            predictedEndTranslation: CGSize(width: 150, height: 5),
+            containerWidth: width
+        ) == nil)
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 8,
+            translation: CGSize(width: -90, height: 4),
+            predictedEndTranslation: CGSize(width: -140, height: 5),
+            containerWidth: width
+        ) == nil)
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 382,
+            translation: CGSize(width: 90, height: 4),
+            predictedEndTranslation: CGSize(width: 140, height: 5),
+            containerWidth: width
+        ) == nil)
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 8,
+            translation: CGSize(width: 45, height: 48),
+            predictedEndTranslation: CGSize(width: 160, height: 150),
+            containerWidth: width
+        ) == nil)
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 8,
+            translation: CGSize(width: 27, height: 1),
+            predictedEndTranslation: CGSize(width: 180, height: 3),
+            containerWidth: width
+        ) == nil)
+        #expect(DayEdgeSwipePolicy.dayDelta(
+            startX: 8,
+            translation: CGSize(width: 40, height: 2),
+            predictedEndTranslation: CGSize(width: 150, height: 3),
+            containerWidth: width
+        ) == -1)
+    }
+
     @Test func macroDraftRequiresSensibleValuesAndDetectsChanges() {
         var draft = MacroTargetDraft(target: .defaultDaily)
         #expect(draft.validatedTarget == .defaultDaily)
@@ -273,6 +350,30 @@ struct NativeExperienceTests {
 
         draft.calories = "100"
         #expect(draft.validatedTarget == nil)
+    }
+
+    @Test func profilePhotoPathsAreVersionedAndStrictlyUserScoped() throws {
+        let userID = "00000000-0000-4000-8000-000000000001"
+        let fileID = try #require(UUID(uuidString: "11111111-2222-4333-8444-555555555555"))
+        let path = try SupabaseService.profilePhotoPath(userId: userID, fileId: fileID)
+
+        #expect(path == "00000000-0000-4000-8000-000000000001/11111111-2222-4333-8444-555555555555.jpg")
+        #expect(SupabaseService.profilePhotoPathBelongsToUser(path, userId: userID))
+        #expect(!SupabaseService.profilePhotoPathBelongsToUser(
+            path,
+            userId: "00000000-0000-4000-8000-000000000002"
+        ))
+        #expect(!SupabaseService.profilePhotoPathBelongsToUser(
+            "\(userID)/../private.jpg",
+            userId: userID
+        ))
+        #expect(throws: SupabaseService.ServiceError.self) {
+            try SupabaseService.profilePhotoPath(userId: "not-a-user", fileId: fileID)
+        }
+
+        #expect(SupabaseService.profilePhotoDataIsJPEG(Data([0xFF, 0xD8, 0x00, 0xFF, 0xD9])))
+        #expect(!SupabaseService.profilePhotoDataIsJPEG(Data([0x89, 0x50, 0x4E, 0x47])))
+        #expect(!SupabaseService.profilePhotoDataIsJPEG(Data([0xFF, 0xD8, 0x00, 0x00])))
     }
 
     @Test func reanalysisRequestUsesInjectableSessionAndBoundedContext() throws {

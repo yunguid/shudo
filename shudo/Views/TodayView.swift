@@ -1,8 +1,77 @@
 import SwiftUI
+import UIKit
+
+enum DayEdgeSwipePolicy {
+    enum Edge: Equatable {
+        case left
+        case right
+    }
+
+    static let edgeWidth: CGFloat = 24
+    static let minimumTravel: CGFloat = 72
+    static let minimumFlickTravel: CGFloat = 28
+    static let projectedFlickTravel: CGFloat = 130
+    static let horizontalDominance: CGFloat = 1.35
+
+    static func originatingEdge(startX: CGFloat, containerWidth: CGFloat) -> Edge? {
+        guard containerWidth > edgeWidth * 2 else { return nil }
+        if startX <= edgeWidth { return .left }
+        if startX >= containerWidth - edgeWidth { return .right }
+        return nil
+    }
+
+    static func dayDelta(
+        startX: CGFloat,
+        translation: CGSize,
+        predictedEndTranslation: CGSize,
+        containerWidth: CGFloat
+    ) -> Int? {
+        guard let edge = originatingEdge(startX: startX, containerWidth: containerWidth) else {
+            return nil
+        }
+
+        let horizontal = abs(translation.width)
+        let vertical = abs(translation.height)
+        guard horizontal >= minimumFlickTravel,
+              horizontal >= vertical * horizontalDominance else { return nil }
+
+        let directionMatchesEdge = switch edge {
+        case .left:
+            translation.width > 0 && predictedEndTranslation.width > 0
+        case .right:
+            translation.width < 0 && predictedEndTranslation.width < 0
+        }
+        guard directionMatchesEdge else { return nil }
+
+        let passedDistance = horizontal >= minimumTravel
+        let passedVelocityProjection = abs(predictedEndTranslation.width) >= projectedFlickTravel
+        guard passedDistance || passedVelocityProjection else { return nil }
+        return edge == .left ? -1 : 1
+    }
+
+    static func previewOffset(
+        startX: CGFloat,
+        translation: CGSize,
+        containerWidth: CGFloat
+    ) -> CGFloat {
+        guard let edge = originatingEdge(startX: startX, containerWidth: containerWidth),
+              abs(translation.width) > abs(translation.height) * 1.1 else { return 0 }
+        switch edge {
+        case .left where translation.width > 0:
+            return min(18, translation.width * 0.12)
+        case .right where translation.width < 0:
+            return max(-18, translation.width * 0.12)
+        default:
+            return 0
+        }
+    }
+}
 
 struct TodayView: View {
     let profile: Profile
+    private let loadsRemotely: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var vm: TodayViewModel
     @ObservedObject private var router = AppRouter.shared
@@ -12,9 +81,11 @@ struct TodayView: View {
     @State private var composerAutoStartsRecording = false
     @State private var showErrorAlert = false
     @State private var entryPendingDeletion: Entry?
+    @GestureState private var daySwipePreview: CGFloat = 0
 
     init(profile: Profile) {
         self.profile = profile
+        loadsRemotely = true
         _vm = StateObject(wrappedValue: TodayViewModel(
             profile: profile,
             api: APIService(
@@ -25,28 +96,40 @@ struct TodayView: View {
         ))
     }
 
+    init(profile: Profile, previewViewModel: TodayViewModel) {
+        self.profile = profile
+        loadsRemotely = false
+        _vm = StateObject(wrappedValue: previewViewModel)
+    }
+
     var body: some View {
         NavigationStack {
-            ZStack {
-                AppBackground()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        dayNavigator
-                        macroStrip
-                        mealList
+            GeometryReader { geometry in
+                ZStack {
+                    AppBackground()
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            dayNavigator
+                            macroStrip
+                            mealList
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 10)
+                        .padding(.bottom, 110)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 10)
-                    .padding(.bottom, 110)
+                    .refreshable {
+                        guard loadsRemotely else { return }
+                        await vm.load(day: vm.currentDay)
+                    }
+                    .offset(x: daySwipePreview)
                 }
-                .refreshable { await vm.load(day: vm.currentDay) }
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    daySwipeGesture(containerWidth: geometry.size.width),
+                    including: daySwipeIsEnabled ? .all : .none
+                )
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Text("shudo")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(Design.Color.ink)
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { isShowingAccount = true } label: {
                         Image(systemName: "person.crop.circle")
@@ -104,17 +187,24 @@ struct TodayView: View {
         .onAppear { handleCaptureRequest(router.captureRequest) }
         .onChange(of: router.captureRequest) { _, request in handleCaptureRequest(request) }
         .onChange(of: profile) { _, updated in
+            guard loadsRemotely else { return }
             Task { await vm.loadFor(profile: updated) }
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
+            guard loadsRemotely, phase == .active else { return }
             Task { await vm.reconcileAfterActivation() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            guard loadsRemotely else { return }
             Task { await vm.reconcileAfterActivation() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .entryReanalysisRequested)) { _ in
-            Task { await vm.load(day: vm.currentDay) }
+        .onReceive(NotificationCenter.default.publisher(for: .entryReanalysisRequested)) { notification in
+            guard loadsRemotely else { return }
+            guard let entryId = notification.object as? UUID else {
+                Task { await vm.load(day: vm.currentDay) }
+                return
+            }
+            vm.beginEntryCorrection(entryId: entryId)
         }
         .onChange(of: vm.errorMessage) { _, message in showErrorAlert = message != nil }
         .alert("Couldn’t finish that", isPresented: $showErrorAlert) {
@@ -134,7 +224,7 @@ struct TodayView: View {
             }
             Button("Cancel", role: .cancel) { entryPendingDeletion = nil }
         } message: {
-            Text("This action cannot be undone.")
+            Text("This removes the meal from your log and can’t be undone.")
         }
     }
 
@@ -162,7 +252,8 @@ struct TodayView: View {
     }
 
     private func dayArrow(systemImage: String, delta: Int, disabled: Bool) -> some View {
-        Button {
+        let direction = delta < 0 ? "earlier" : "later"
+        return Button {
             shiftDay(delta)
         } label: {
             Image(systemName: systemImage)
@@ -173,6 +264,8 @@ struct TodayView: View {
         }
         .buttonStyle(.plain)
         .disabled(disabled)
+        .accessibilityLabel(delta < 0 ? "Previous day" : "Next day")
+        .accessibilityHint(disabled ? "Already showing today" : "Shows one day \(direction)")
     }
 
     private var macroStrip: some View {
@@ -207,10 +300,18 @@ struct TodayView: View {
                 )
             }
 
-            HStack(alignment: .top, spacing: 12) {
-                macroMetric("Protein", vm.todayTotals.proteinG, target.proteinG, Design.Color.ringProtein)
-                macroMetric("Carbs", vm.todayTotals.carbsG, target.carbsG, Design.Color.ringCarb)
-                macroMetric("Fat", vm.todayTotals.fatG, target.fatG, Design.Color.ringFat)
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 14) {
+                    macroMetric("Protein", vm.todayTotals.proteinG, target.proteinG, Design.Color.ringProtein)
+                    macroMetric("Carbs", vm.todayTotals.carbsG, target.carbsG, Design.Color.ringCarb)
+                    macroMetric("Fat", vm.todayTotals.fatG, target.fatG, Design.Color.ringFat)
+                }
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    macroMetric("Protein", vm.todayTotals.proteinG, target.proteinG, Design.Color.ringProtein)
+                    macroMetric("Carbs", vm.todayTotals.carbsG, target.carbsG, Design.Color.ringCarb)
+                    macroMetric("Fat", vm.todayTotals.fatG, target.fatG, Design.Color.ringFat)
+                }
             }
         }
         .padding(18)
@@ -294,7 +395,7 @@ struct TodayView: View {
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(vm.entries.enumerated()), id: \.element.id) { index, entry in
-                        HStack(spacing: 2) {
+                        HStack(alignment: .center, spacing: 8) {
                             if entry.status == .complete {
                                 NavigationLink {
                                     EntryDetailView(entryId: entry.id)
@@ -369,19 +470,20 @@ struct TodayView: View {
 
     private func deleteButton(for entry: Entry) -> some View {
         Button { entryPendingDeletion = entry } label: {
-            Image(systemName: "xmark")
-                .font(.caption.weight(.bold))
+            Image(systemName: "trash")
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(Design.Color.muted)
-                .frame(width: 44, height: 44)
+                .frame(width: 40, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Delete entry")
+        .accessibilityLabel("Delete meal: " + entry.summary)
+        .accessibilityHint("Asks for confirmation before removing this meal")
     }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "waveform")
+            Image(systemName: "fork.knife")
                 .font(.title2)
                 .foregroundStyle(Design.Color.accentPrimary)
             Text("Nothing logged yet")
@@ -398,7 +500,7 @@ struct TodayView: View {
     private var captureDock: some View {
         HStack(spacing: 12) {
             Button { openComposer(autoStartRecording: true) } label: {
-                Image(systemName: "waveform")
+                Image(systemName: "mic.fill")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 54, height: 54)
@@ -456,6 +558,41 @@ struct TodayView: View {
         guard let candidate = calendar.date(byAdding: .day, value: delta, to: vm.currentDay),
               calendar.compare(candidate, to: Date(), toGranularity: .day) != .orderedDescending else { return }
         Task { await vm.load(day: candidate) }
+    }
+
+    private var daySwipeIsEnabled: Bool {
+        !vm.isPresentingComposer && !isShowingAccount && !isShowingDatePicker
+    }
+
+    private func daySwipeGesture(containerWidth: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .updating($daySwipePreview) { value, preview, _ in
+                let startsAtRightEdge = DayEdgeSwipePolicy.originatingEdge(
+                    startX: value.startLocation.x,
+                    containerWidth: containerWidth
+                ) == .right
+                guard !(vm.isPinnedToToday && startsAtRightEdge) else {
+                    preview = 0
+                    return
+                }
+                preview = DayEdgeSwipePolicy.previewOffset(
+                    startX: value.startLocation.x,
+                    translation: value.translation,
+                    containerWidth: containerWidth
+                )
+            }
+            .onEnded { value in
+                guard daySwipeIsEnabled,
+                      let delta = DayEdgeSwipePolicy.dayDelta(
+                        startX: value.startLocation.x,
+                        translation: value.translation,
+                        predictedEndTranslation: value.predictedEndTranslation,
+                        containerWidth: containerWidth
+                      ),
+                      !(delta > 0 && vm.isPinnedToToday) else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                shiftDay(delta)
+            }
     }
 
     private func openComposer(autoStartRecording: Bool) {

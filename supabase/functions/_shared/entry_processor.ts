@@ -5,6 +5,10 @@ import {
   RESULT_SCHEMA,
 } from "./analysis.ts";
 import { AnalysisPreviewPublisher } from "./analysis_preview.ts";
+import {
+  assertNeutralGeneratedCopy,
+  NEUTRAL_PRODUCT_COPY_INSTRUCTION,
+} from "./generated_copy.ts";
 import { requiredEnv } from "./http.ts";
 import { readResponsesEventStream } from "./responses_stream.ts";
 import { drainStorageCleanup } from "./storage_cleanup.ts";
@@ -15,6 +19,8 @@ export const PROCESSING_BUDGET_MS = 150_000;
 export const TRANSCRIPTION_TIMEOUT_MS = 60_000;
 export const ANALYSIS_TIMEOUT_MS = 65_000;
 export const PROCESSING_OVERHEAD_RESERVE_MS = 25_000;
+export const MEAL_COPY_INSTRUCTION =
+  `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Describe only the meal and any clearly labeled estimate assumptions.`;
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MAX_COMBINED_TEXT_LENGTH = 30_000;
 
@@ -138,6 +144,7 @@ async function analyze(
       "Estimate the nutrition for this meal from the description and photo.",
       "Use realistic portion assumptions when exact amounts are unavailable.",
       "Write analysis_preview first as a short, warm, natural-language sentence summarizing the meal and its likely quantities. Never put JSON syntax in that sentence.",
+      MEAL_COPY_INSTRUCTION,
       "Keep the title short and useful in a meal history.",
       "Make item totals internally consistent with the meal totals.",
       `Description and transcript:\n${
@@ -289,6 +296,9 @@ export async function processStoredEntry(
       entry.analysis_context?.trim() || null,
       signedImageUrl,
       async (preview) => {
+        // Streaming output is visible before the complete JSON object reaches
+        // parseAnalysis, so enforce the same copy policy at this boundary too.
+        assertNeutralGeneratedCopy(preview, "analysis preview");
         try {
           await updateEntry(
             admin,

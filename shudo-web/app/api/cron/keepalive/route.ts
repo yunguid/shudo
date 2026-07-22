@@ -2,6 +2,7 @@ import {
   cleanupFunctionURL,
   isAuthorizedCronRequest,
   isValidMaintenanceSecret,
+  scheduledCleanupLimit,
   weeklySummaryFunctionURL,
 } from '@/lib/cron'
 import { getSupabasePublicConfig } from '@/lib/supabase/config'
@@ -75,7 +76,7 @@ export async function GET(request: Request) {
           'Content-Type': 'application/json',
           'x-shudo-cleanup-secret': cleanupSecret,
         },
-        body: JSON.stringify({ limit: 25 }),
+        body: JSON.stringify({ limit: scheduledCleanupLimit }),
         cache: 'no-store',
         signal: AbortSignal.timeout(20_000),
       }),

@@ -1,3 +1,5 @@
+import { assertNeutralGeneratedCopy } from "./generated_copy.ts";
+
 export const ANALYSIS_PREVIEW_MAX_CHARACTERS = 240;
 
 export const RESULT_SCHEMA = {
@@ -226,12 +228,20 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
   if (!totals || typeof totals !== "object" || Array.isArray(totals)) {
     throw new Error("Analysis totals were missing");
   }
-  const title = nonemptyString(object.title, "title");
-  if (title.length > 120) throw new Error("Invalid analysis value: title");
-  const analysisPreview = nonemptyString(
-    object.analysis_preview,
-    "analysis_preview",
-  ).replace(/\s+/g, " ");
+  const title = assertNeutralGeneratedCopy(
+    nonemptyString(object.title, "title"),
+    "analysis title",
+  );
+  if (Array.from(title).length > 120) {
+    throw new Error("Invalid analysis value: title");
+  }
+  const analysisPreview = assertNeutralGeneratedCopy(
+    nonemptyString(object.analysis_preview, "analysis_preview").replace(
+      /\s+/g,
+      " ",
+    ),
+    "analysis preview",
+  );
   if (
     Array.from(analysisPreview).length > ANALYSIS_PREVIEW_MAX_CHARACTERS
   ) {
@@ -241,9 +251,12 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
   if (object.notes !== null && typeof object.notes !== "string") {
     throw new Error("Invalid analysis value: notes");
   }
-  const notes = typeof object.notes === "string"
-    ? object.notes.trim().slice(0, 1_000) || null
+  const normalizedNotes = typeof object.notes === "string"
+    ? unicodePrefix(object.notes.trim(), 1_000) || null
     : null;
+  const notes = normalizedNotes === null
+    ? null
+    : assertNeutralGeneratedCopy(normalizedNotes, "analysis notes");
   const totalValues = totals as Record<string, unknown>;
   return {
     analysis_preview: analysisPreview,

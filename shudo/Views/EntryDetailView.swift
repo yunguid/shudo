@@ -18,20 +18,21 @@ enum EntryDetailLayoutPolicy {
 }
 
 struct EntryDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 40
     let entryId: UUID
     private let reanalysisService: any EntryReanalysisServing
+    private let loadsRemotely: Bool
     @State private var detail: SupabaseService.EntryDetail?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var expandedItemIndices: Set<Int> = []
     @State private var isShowingCorrection = false
-    @State private var reanalysisNotice: String?
-    @State private var reanalysisGeneration: UUID?
 
     init(entryId: UUID) {
         self.entryId = entryId
+        loadsRemotely = true
         reanalysisService = APIService(
             supabaseUrl: AppConfig.supabaseURL,
             supabaseAnonKey: AppConfig.supabaseAnonKey,
@@ -41,7 +42,20 @@ struct EntryDetailView: View {
 
     init(entryId: UUID, reanalysisService: any EntryReanalysisServing) {
         self.entryId = entryId
+        loadsRemotely = true
         self.reanalysisService = reanalysisService
+    }
+
+    init(
+        entryId: UUID,
+        previewDetail: SupabaseService.EntryDetail,
+        reanalysisService: any EntryReanalysisServing
+    ) {
+        self.entryId = entryId
+        loadsRemotely = false
+        self.reanalysisService = reanalysisService
+        _detail = State(initialValue: previewDetail)
+        _isLoading = State(initialValue: false)
     }
 
     var body: some View {
@@ -64,18 +78,7 @@ struct EntryDetailView: View {
 
                             macroSummary(detail)
 
-                            if let reanalysisNotice {
-                                Label(reanalysisNotice, systemImage: "arrow.triangle.2.circlepath")
-                                    .font(.footnote.weight(.medium))
-                                    .foregroundStyle(Design.Color.accentSecondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 15)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        Design.Color.accentPrimary.opacity(0.1),
-                                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    )
-                            }
+                            correctionAction
 
                             if !detail.items.isEmpty {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -92,16 +95,28 @@ struct EntryDetailView: View {
                             }
 
                             if let notes = nonempty(detail.analysisNotes) {
-                                ExpandableDetailText(title: "Notes", text: notes)
+                                DetailTextSection(
+                                    title: "Analysis notes",
+                                    systemImage: "doc.text.magnifyingglass",
+                                    text: notes
+                                )
                             }
 
                             if let transcript = nonempty(detail.transcript) {
-                                ExpandableDetailText(title: "Transcript", text: transcript)
+                                DetailTextSection(
+                                    title: "Transcript",
+                                    systemImage: "text.quote",
+                                    text: transcript,
+                                    collapsedByDefault: true
+                                )
                             } else if let rawText = nonempty(detail.rawText) {
-                                ExpandableDetailText(title: "Description", text: rawText)
+                                DetailTextSection(
+                                    title: "Description",
+                                    systemImage: "text.bubble",
+                                    text: rawText,
+                                    collapsedByDefault: true
+                                )
                             }
-
-                            correctionAction
                         }
                         // A vertical ScrollView otherwise adopts a wide child's ideal width.
                         // Keep collages and nutrition rows inside the visible phone viewport.
@@ -122,19 +137,22 @@ struct EntryDetailView: View {
         }
         .navigationTitle("Meal")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
-        .task(id: reanalysisGeneration) {
-            guard let generation = reanalysisGeneration else { return }
-            await pollForReanalysis(generation: generation)
+        .task {
+            guard loadsRemotely else { return }
+            await load()
         }
         .sheet(isPresented: $isShowingCorrection) {
-            EntryCorrectionSheet(entryTitle: detail?.title ?? "this meal") { text, audioData, requestId in
-                try await submitCorrection(
-                    text: text,
-                    audioData: audioData,
-                    clientRequestId: requestId
-                )
-            }
+            EntryCorrectionSheet(
+                entryTitle: detail?.title ?? "this meal",
+                onSubmit: { text, audioData, requestId in
+                    try await submitCorrection(
+                        text: text,
+                        audioData: audioData,
+                        clientRequestId: requestId
+                    )
+                },
+                onAccepted: returnToSelectedDay
+            )
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(28)
         }
@@ -346,24 +364,40 @@ struct EntryDetailView: View {
     }
 
     private var correctionAction: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Need to adjust this meal?")
-                .font(.headline)
-                .foregroundStyle(Design.Color.ink)
-            Text("Speak or type a missing ingredient, portion change, or other correction.")
-                .font(.footnote)
-                .foregroundStyle(Design.Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            Button { isShowingCorrection = true } label: {
-                Label("Correct this meal", systemImage: "waveform")
-                    .font(.subheadline.weight(.semibold))
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Something look off?")
+                    .font(.headline)
                     .foregroundStyle(Design.Color.ink)
+                Text("Adjust an ingredient, portion, or preparation detail.")
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button { isShowingCorrection = true } label: {
+                Label("Update meal", systemImage: "slider.horizontal.3")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(Design.Color.elevated, in: Capsule())
+                    .background(
+                        LinearGradient(
+                            colors: [Design.Color.ctaPrimary, Design.Color.ctaSecondary],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        in: Capsule()
+                    )
             }
             .buttonStyle(.plain)
+            .accessibilityHint("Add a voice recording or note to revise the estimate")
         }
+        .padding(16)
+        .background(
+            Design.Color.elevated,
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
     }
 
     private var loadingView: some View {
@@ -416,54 +450,20 @@ struct EntryDetailView: View {
             audioData: audioData,
             clientRequestId: clientRequestId
         )
-        NotificationCenter.default.post(name: .entryReanalysisRequested, object: entryId)
-
-        if result.status == .complete {
-            reanalysisNotice = "Analysis updated"
-            await load()
-        } else if result.status == .failed {
+        if result.status == .failed {
             throw APIService.APIError.server(
                 statusCode: 409,
                 message: "The correction couldn’t be applied. Try again."
             )
-        } else {
-            reanalysisNotice = "Updating the nutrition estimate…"
-            reanalysisGeneration = UUID()
         }
+        NotificationCenter.default.post(name: .entryReanalysisRequested, object: entryId)
     }
 
-    private func pollForReanalysis(generation: UUID) async {
-        for _ in 0..<60 {
-            do {
-                try await Task.sleep(nanoseconds: 1_500_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled, reanalysisGeneration == generation else { return }
-
-            do {
-                guard let entry = try await SupabaseService().fetchEntry(id: entryId) else { return }
-                if entry.status == .complete {
-                    await load()
-                    guard reanalysisGeneration == generation else { return }
-                    reanalysisNotice = "Analysis updated"
-                    reanalysisGeneration = nil
-                    return
-                }
-                if entry.status == .failed {
-                    reanalysisNotice = entry.errorMessage ?? "The update couldn’t be completed."
-                    reanalysisGeneration = nil
-                    return
-                }
-            } catch {
-                // The durable background job may still be running. Keep the
-                // existing detail visible and retry without flashing an error.
-            }
+    private func returnToSelectedDay() {
+        Task { @MainActor in
+            await Task.yield()
+            dismiss()
         }
-
-        guard reanalysisGeneration == generation else { return }
-        reanalysisNotice = "Still updating — pull to refresh shortly"
-        reanalysisGeneration = nil
     }
 
     private func nonempty(_ value: String?) -> String? {
@@ -473,10 +473,25 @@ struct EntryDetailView: View {
     }
 }
 
-private struct ExpandableDetailText: View {
+private struct DetailTextSection: View {
     let title: String
+    let systemImage: String
     let text: String
-    @State private var isExpanded = false
+    let collapsedByDefault: Bool
+    @State private var isExpanded: Bool
+
+    init(
+        title: String,
+        systemImage: String,
+        text: String,
+        collapsedByDefault: Bool = false
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.text = text
+        self.collapsedByDefault = collapsedByDefault
+        _isExpanded = State(initialValue: false)
+    }
 
     private var offersExpansion: Bool {
         EntryDetailPresentation.offersExpansion(for: text)
@@ -484,45 +499,98 @@ private struct ExpandableDetailText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(Design.Color.ink)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text(text)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.ink)
-                    .lineLimit(isExpanded || !offersExpansion ? nil : 5)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if offersExpansion {
-                    Button {
-                        withAnimation(.snappy(duration: 0.22)) {
-                            isExpanded.toggle()
-                        }
-                    } label: {
-                        Text(isExpanded ? "Show less" : "Show more")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Design.Color.accentSecondary)
+            if collapsedByDefault {
+                Button {
+                    withAnimation(.snappy(duration: 0.22)) {
+                        isExpanded.toggle()
                     }
-                    .buttonStyle(.plain)
+                } label: {
+                    HStack(spacing: 9) {
+                        Label(title, systemImage: systemImage)
+                            .font(.headline)
+                            .foregroundStyle(Design.Color.ink)
+                        Spacer()
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Design.Color.muted)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(isExpanded ? "Hide" : "Show") \(title.lowercased())")
+            } else {
+                Label(title, systemImage: systemImage)
+                    .font(.headline)
+                    .foregroundStyle(Design.Color.ink)
             }
-            .padding(15)
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-            )
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(text)
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if !collapsedByDefault && offersExpansion {
+                        Button("Show less") {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                isExpanded = false
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.accentSecondary)
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(15)
+                .background(
+                    Design.Color.elevated,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if !collapsedByDefault {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(text)
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.ink)
+                        .lineLimit(offersExpansion ? 5 : nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if offersExpansion {
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                isExpanded = true
+                            }
+                        } label: {
+                            Text("Show more")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Design.Color.accentSecondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(15)
+                .background(
+                    Design.Color.elevated,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                )
+            }
         }
     }
 }
 
 private struct EntryCorrectionSheet: View {
+    private enum FocusField: Hashable {
+        case note
+    }
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var isFocused: Bool
+    @FocusState private var focusedField: FocusField?
     @StateObject private var audio = AudioRecorder()
     @State private var context = ""
     @State private var isSubmitting = false
@@ -531,6 +599,7 @@ private struct EntryCorrectionSheet: View {
 
     let entryTitle: String
     let onSubmit: (String?, Data?, UUID) async throws -> Void
+    let onAccepted: () -> Void
 
     private var hasAudio: Bool {
         audio.recordedFileURL != nil
@@ -548,13 +617,14 @@ private struct EntryCorrectionSheet: View {
         NavigationStack {
             ZStack {
                 AppBackground()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("What should change?")
+                            Text("What changed?")
                                 .font(.title2.weight(.bold))
                                 .foregroundStyle(Design.Color.ink)
-                            Text("Record a quick correction for \(entryTitle). Add a note only if it helps.")
+                            Text("Tell Shudo what to adjust for \(entryTitle).")
                                 .font(.subheadline)
                                 .foregroundStyle(Design.Color.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -582,8 +652,8 @@ private struct EntryCorrectionSheet: View {
                                     .scrollContentBackground(.hidden)
                                     .padding(.horizontal, 11)
                                     .padding(.vertical, 8)
-                                    .frame(minHeight: 112, maxHeight: 170)
-                                    .focused($isFocused)
+                                    .frame(height: 128)
+                                    .focused($focusedField, equals: .note)
                                     .onChange(of: context) { _, updated in
                                         if updated.count > EntryCorrectionPolicy.maximumCharacters {
                                             context = EntryCorrectionPolicy.normalized(updated)
@@ -594,6 +664,7 @@ private struct EntryCorrectionSheet: View {
                                 Design.Color.elevated,
                                 in: RoundedRectangle(cornerRadius: 20, style: .continuous)
                             )
+                            .id(FocusField.note)
                         }
 
                         HStack {
@@ -642,13 +713,23 @@ private struct EntryCorrectionSheet: View {
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel("Updating the meal estimate. The current meal remains visible.")
                         }
+                        }
+                        .padding(20)
+                        .padding(.bottom, 90)
                     }
-                    .padding(20)
-                    .padding(.bottom, 90)
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: focusedField) { _, field in
+                        guard field == .note else { return }
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 120_000_000)
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                                scrollProxy.scrollTo(FocusField.note, anchor: .center)
+                            }
+                        }
+                    }
                 }
-                .scrollDismissesKeyboard(.interactively)
             }
-            .navigationTitle("Add context")
+            .navigationTitle("Update meal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -658,6 +739,10 @@ private struct EntryCorrectionSheet: View {
                     }
                         .foregroundStyle(Design.Color.muted)
                         .disabled(isSubmitting)
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -690,7 +775,6 @@ private struct EntryCorrectionSheet: View {
                 .background(.ultraThinMaterial)
             }
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled(isSubmitting)
         .onDisappear {
             audio.discardRecording()
@@ -763,7 +847,7 @@ private struct EntryCorrectionSheet: View {
                                 radius: reduceMotion ? 0 : 24
                             )
 
-                        Image(systemName: audio.isRecording ? "stop.fill" : "waveform")
+                        Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.white)
                     }
@@ -799,7 +883,7 @@ private struct EntryCorrectionSheet: View {
 
     private func toggleRecording() async {
         errorMessage = nil
-        isFocused = false
+        focusedField = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if audio.isRecording {
             audio.stopRecording()
@@ -831,6 +915,7 @@ private struct EntryCorrectionSheet: View {
                     audio.discardRecording()
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                     dismiss()
+                    onAccepted()
                 }
             } catch {
                 await MainActor.run {
@@ -847,7 +932,7 @@ private struct EntryCorrectionSheet: View {
         context = ""
         clientRequestId = UUID()
         errorMessage = nil
-        isFocused = false
+        focusedField = nil
     }
 
     private func formatTime(_ duration: TimeInterval) -> String {

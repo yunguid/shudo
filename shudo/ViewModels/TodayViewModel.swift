@@ -6,6 +6,21 @@ enum EntrySubmissionResult: Equatable {
     case rejected(String)
 }
 
+enum EntryCorrectionPresentation {
+    static let processingMessage = "Updating nutrition estimate"
+    static let rollbackMessage = "The meal update failed. Your previous estimate was restored."
+
+    static func processingEntry(from entry: Entry, at date: Date = Date()) -> Entry {
+        var updated = entry
+        updated.status = .analyzing
+        updated.statusMessage = processingMessage
+        updated.errorMessage = nil
+        updated.analysisPreview = nil
+        updated.statusUpdatedAt = date
+        return updated
+    }
+}
+
 @MainActor
 final class TodayViewModel: ObservableObject {
     @Published var profile: Profile?
@@ -28,6 +43,7 @@ final class TodayViewModel: ObservableObject {
     private var pollingTokens: [UUID: UUID] = [:]
     private var autoResumeRequestStates: [UUID: AutoResumeRequestState] = [:]
     private var resumeNotices: [UUID: String] = [:]
+    private var correctionSnapshots: [UUID: Entry] = [:]
     private var targetHistory: [DailyMacroTargetSnapshot] = []
 
     static let staleResumeInterval: TimeInterval = 145
@@ -47,12 +63,26 @@ final class TodayViewModel: ObservableObject {
         case failed
     }
 
-    init(profile: Profile, api: APIService, supabase: SupabaseService = SupabaseService()) {
+    init(
+        profile: Profile,
+        api: APIService,
+        supabase: SupabaseService = SupabaseService(),
+        preloadedEntries: [Entry]? = nil,
+        preloadedDay: Date = Date()
+    ) {
         self.api = api
         self.supabase = supabase
         self.profile = profile
         self.effectiveTarget = profile.dailyMacroTarget
-        Task { await load(day: Date()) }
+        if let preloadedEntries {
+            entries = preloadedEntries
+            todayTotals = Self.totals(for: preloadedEntries)
+            currentDay = preloadedDay
+            isPinnedToToday = true
+            isLoadingDay = false
+        } else {
+            Task { await load(day: Date()) }
+        }
     }
 
     var hasProcessingEntries: Bool { entries.contains { $0.status.isProcessing } }
@@ -184,6 +214,7 @@ final class TodayViewModel: ObservableObject {
         pollingTokens[entry.id] = nil
         autoResumeRequestStates[entry.id] = nil
         resumeNotices[entry.id] = nil
+        correctionSnapshots[entry.id] = nil
         resumingEntryIds.remove(entry.id)
         completionRevealEntryIds.remove(entry.id)
 
@@ -290,6 +321,20 @@ final class TodayViewModel: ObservableObject {
         }
     }
 
+    func beginEntryCorrection(entryId: UUID) {
+        guard let index = entries.firstIndex(where: { $0.id == entryId }) else { return }
+        let entry = entries[index]
+        guard entry.status == .complete else { return }
+
+        correctionSnapshots[entryId] = entry
+        entries[index] = EntryCorrectionPresentation.processingEntry(from: entry)
+        startPolling(
+            entryId: entryId,
+            localDay: entry.localDay ?? localDay(for: currentDay),
+            restart: true
+        )
+    }
+
     private func startPolling(entryId: UUID, localDay: String, restart: Bool = false) {
         if !restart, pollingTasks[entryId] != nil { return }
         pollingTasks[entryId]?.cancel()
@@ -326,7 +371,20 @@ final class TodayViewModel: ObservableObject {
                     refreshed.statusMessage = notice
                 }
 
+                if refreshed.status == .failed,
+                   let rollback = correctionSnapshots.removeValue(forKey: entryId) {
+                    if localDay(for: currentDay) == targetLocalDay,
+                       let index = entries.firstIndex(where: { $0.id == entryId }) {
+                        entries[index] = rollback
+                        todayTotals = Self.totals(for: entries)
+                        errorMessage = EntryCorrectionPresentation.rollbackMessage
+                    }
+                    autoResumeRequestStates[entryId] = nil
+                    return
+                }
+
                 if localDay(for: currentDay) == targetLocalDay {
+                    let isCorrection = correctionSnapshots[entryId] != nil
                     if let index = entries.firstIndex(where: { $0.id == entryId }) {
                         if Self.shouldRevealCompletedAnalysis(
                             previous: entries[index].status,
@@ -338,10 +396,13 @@ final class TodayViewModel: ObservableObject {
                     } else {
                         entries.insert(refreshed, at: 0)
                     }
-                    todayTotals = Self.totals(for: entries)
+                    if !isCorrection || refreshed.status == .complete {
+                        todayTotals = Self.totals(for: entries)
+                    }
                 }
 
                 if refreshed.status == .complete || refreshed.status == .failed {
+                    correctionSnapshots[entryId] = nil
                     autoResumeRequestStates[entryId] = nil
                     return
                 }

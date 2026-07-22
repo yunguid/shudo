@@ -65,4 +65,5 @@ public struct Profile: Codable, Equatable {
     public var goalNotes: String? = nil
     public var onboardingStatus: OnboardingStatus? = nil
     public var onboardingCompletedAt: Date? = nil
+    public var avatarPath: String? = nil
 }

@@ -4,7 +4,11 @@ import { isUuid } from "./http.ts";
 
 const STORAGE_PAGE_SIZE = 100;
 const STORAGE_REMOVE_BATCH = 100;
-const ACCOUNT_BUCKETS = ["entry-images", "entry-audio"] as const;
+const ACCOUNT_BUCKETS = [
+  "entry-images",
+  "entry-audio",
+  "profile-photos",
+] as const;
 
 export const ACCOUNT_DELETION_RETRY_MESSAGE =
   "Couldn’t finish deleting the account. Some uploaded files may already have been removed; it’s safe to try again.";

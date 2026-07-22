@@ -1,5 +1,21 @@
 import SwiftUI
 import UIKit
+import PhotosUI
+
+enum ProfilePhotoInputPolicy {
+    static let maximumSourceBytes = 25_000_000
+    static let maximumPixelDimension: CGFloat = 12_000
+    static let maximumPixelCount: CGFloat = 50_000_000
+
+    static func accepts(byteCount: Int, pixelWidth: CGFloat, pixelHeight: CGFloat) -> Bool {
+        guard byteCount > 0, byteCount <= maximumSourceBytes,
+              pixelWidth.isFinite, pixelHeight.isFinite,
+              pixelWidth >= 1, pixelHeight >= 1,
+              pixelWidth <= maximumPixelDimension,
+              pixelHeight <= maximumPixelDimension else { return false }
+        return pixelWidth * pixelHeight <= maximumPixelCount
+    }
+}
 
 struct AccountView: View {
     private enum TargetField: Hashable { case calories, protein, carbs, fat }
@@ -23,11 +39,19 @@ struct AccountView: View {
     @State private var error: String?
     @State private var savedMessage: String?
     @State private var email = "-"
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var cropSource: ProfilePhotoCropSource?
+    @State private var profilePhoto: UIImage?
+    @State private var isLoadingProfilePhoto = false
+    @State private var isSavingProfilePhoto = false
+    @State private var isShowingRemovePhotoConfirmation = false
+    @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
 
     private let service: SupabaseService
     private let weeklySummaryProvider: any WeeklySummaryProviding
     private let accountDeletionService: any AccountDeletionServing
     private let onProfileUpdated: (Profile) -> Void
+    private let loadsRemotely: Bool
 
     init(
         initialProfile: Profile,
@@ -46,12 +70,34 @@ struct AccountView: View {
             sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
         )
         self.onProfileUpdated = onProfileUpdated
+        loadsRemotely = true
     }
+
+    #if DEBUG
+    init(
+        previewProfile: Profile,
+        profilePhoto: UIImage,
+        dailyTotals: [DailyNutritionTotal]
+    ) {
+        _profile = State(initialValue: previewProfile)
+        _targetDraft = State(initialValue: MacroTargetDraft(target: previewProfile.dailyMacroTarget))
+        _dailyTotals = State(initialValue: dailyTotals)
+        _profilePhoto = State(initialValue: profilePhoto)
+        _isLoading = State(initialValue: false)
+        _isLoadingWeeklySummary = State(initialValue: false)
+        service = SupabaseService()
+        weeklySummaryProvider = EmptyWeeklySummaryProvider()
+        accountDeletionService = PolishPreviewAccountDeletionService()
+        onProfileUpdated = { _ in }
+        loadsRemotely = false
+    }
+    #endif
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
                 profileHeader
+                themeSelector
                 profileDetails
                 targetEditor
                 AdherenceHeatmapView(
@@ -135,12 +181,21 @@ struct AccountView: View {
                     .foregroundStyle(Design.Color.accentPrimary)
             }
         }
-        .task { await load() }
+        .task {
+            guard loadsRemotely else { return }
+            await load()
+        }
         .sheet(isPresented: $isShowingProfileEditor) {
             ProfileSettingsEditorView(profile: profile, service: service) { updated in
                 profile = updated
                 targetDraft = MacroTargetDraft(target: updated.dailyMacroTarget)
                 onProfileUpdated(updated)
+            }
+        }
+        .sheet(item: $cropSource) { source in
+            ProfilePhotoCropView(image: source.image) { croppedImage in
+                cropSource = nil
+                saveProfilePhoto(croppedImage)
             }
         }
         .fullScreenCover(isPresented: $isShowingTargetRecalculation) {
@@ -179,41 +234,161 @@ struct AccountView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        .confirmationDialog(
+            "Remove profile photo?",
+            isPresented: $isShowingRemovePhotoConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove photo", role: .destructive) { removeProfilePhoto() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .task(id: profile.avatarPath) {
+            guard loadsRemotely else { return }
+            await loadProfilePhoto()
+        }
     }
 
     private var profileHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                profileIdentity
+                Spacer(minLength: 8)
+                profilePhotoActions
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                profileIdentity
+                profilePhotoActions
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private var profileIdentity: some View {
         HStack(spacing: 14) {
+            profilePhotoView
+            VStack(alignment: .leading, spacing: 4) {
+                if let displayName = profile.displayName, !displayName.isEmpty {
+                    Text(displayName)
+                        .font(.headline)
+                        .foregroundStyle(Design.Color.ink)
+                        .lineLimit(1)
+                }
+                Text(email)
+                    .font(profile.displayName?.isEmpty == false ? .caption : .headline)
+                    .foregroundStyle(profile.displayName?.isEmpty == false ? Design.Color.muted : Design.Color.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+
+    private var profilePhotoActions: some View {
+        HStack(spacing: 12) {
+            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                Text(profile.avatarPath == nil ? "Add photo" : "Replace photo")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Design.Color.accentPrimary)
+                    .frame(minHeight: 30)
+            }
+            .disabled(isSavingProfilePhoto)
+            .onChange(of: selectedPhotoItem) { _, item in
+                prepareSelectedPhoto(item)
+            }
+
+            if profile.avatarPath != nil {
+                Button("Remove", role: .destructive) {
+                    isShowingRemovePhotoConfirmation = true
+                }
+                .font(.caption)
+                .foregroundStyle(Design.Color.danger)
+                .disabled(isSavingProfilePhoto)
+            }
+        }
+    }
+
+    private var profilePhotoView: some View {
+        ZStack {
             Circle()
                 .fill(
                     LinearGradient(
                         colors: [
-                            Design.Color.accentPrimary.opacity(0.22),
-                            Design.Color.accentPrimary.opacity(0.06)
+                            Design.Color.elevated,
+                            Design.Color.accentPrimary.opacity(0.12)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
-                .frame(width: 58, height: 58)
-                .overlay {
-                    Image(systemName: "person.fill")
-                        .font(.title3)
-                        .foregroundStyle(Design.Color.accentPrimary)
-                }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(email)
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.ink)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text("Voice-first nutrition log")
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
+            if let profilePhoto {
+                Image(uiImage: profilePhoto)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Image(systemName: "person.crop.circle")
+                    .font(.title2)
+                    .foregroundStyle(Design.Color.accentPrimary)
             }
-            Spacer(minLength: 0)
+            if isLoadingProfilePhoto || isSavingProfilePhoto {
+                Circle().fill(.black.opacity(0.45))
+                ProgressView().tint(.white)
+            }
         }
-        .padding(.top, 6)
+        .frame(width: 68, height: 68)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Design.Color.rule, lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(profile.avatarPath == nil ? "No profile photo" : "Profile photo")
+    }
+
+    private var themeSelector: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("APPEARANCE")
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 92), spacing: 10)],
+                alignment: .leading,
+                spacing: 10
+            ) {
+                ForEach(AppTheme.allCases) { theme in
+                    let isSelected = selectedTheme == theme.rawValue
+                    Button {
+                        selectedTheme = theme.rawValue
+                        UISelectionFeedbackGenerator().selectionChanged()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 5) {
+                                Circle().fill(theme.palette.accentPrimary)
+                                Circle().fill(theme.palette.accentSecondary)
+                                Circle().fill(theme.palette.success)
+                            }
+                            .frame(height: 16)
+                            Text(theme.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(isSelected ? theme.palette.ink : Design.Color.ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(
+                            theme.palette.elevated,
+                            in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+                                .stroke(
+                                    isSelected ? theme.palette.accentPrimary : Design.Color.rule,
+                                    lineWidth: isSelected ? 2 : 1
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(theme.title) theme")
+                    .accessibilityValue(isSelected ? "Selected" : theme.accessibilityDescription)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
     }
 
     private var profileDetails: some View {
@@ -615,6 +790,289 @@ struct AccountView: View {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let email = object["email"] as? String else { throw URLError(.cannotParseResponse) }
         return email
+    }
+
+    private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        Task {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self),
+                      !data.isEmpty,
+                      data.count <= ProfilePhotoInputPolicy.maximumSourceBytes,
+                      let image = UIImage(data: data),
+                      ProfilePhotoInputPolicy.accepts(
+                        byteCount: data.count,
+                        pixelWidth: image.size.width * image.scale,
+                        pixelHeight: image.size.height * image.scale
+                      ) else {
+                    throw SupabaseService.ServiceError.parseError(
+                        message: "Choose a valid photo under 25 MB and 50 megapixels"
+                    )
+                }
+                await MainActor.run {
+                    selectedPhotoItem = nil
+                    cropSource = ProfilePhotoCropSource(image: image.normalizedForDisplay())
+                }
+            } catch {
+                await MainActor.run {
+                    selectedPhotoItem = nil
+                    self.error = "That photo couldn’t be opened. Try another image."
+                }
+            }
+        }
+    }
+
+    private func saveProfilePhoto(_ image: UIImage) {
+        guard !isSavingProfilePhoto else { return }
+        guard let jpegData = image.profilePhotoJPEG() else {
+            error = "That photo couldn’t be prepared. Try another image."
+            return
+        }
+        isSavingProfilePhoto = true
+        error = nil
+        let oldPath = profile.avatarPath
+        Task {
+            do {
+                let updated = try await service.uploadProfilePhoto(jpegData, replacing: oldPath)
+                await MainActor.run {
+                    profile = updated
+                    profilePhoto = image
+                    if let path = updated.avatarPath {
+                        ProfilePhotoCache.save(jpegData, userId: updated.userId, path: path)
+                    }
+                    ProfileCache.save(updated)
+                    onProfileUpdated(updated)
+                    isSavingProfilePhoto = false
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                }
+            } catch {
+                await MainActor.run {
+                    isSavingProfilePhoto = false
+                    self.error = error.localizedDescription
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                }
+            }
+        }
+    }
+
+    private func removeProfilePhoto() {
+        guard let path = profile.avatarPath, !isSavingProfilePhoto else { return }
+        isSavingProfilePhoto = true
+        error = nil
+        Task {
+            do {
+                let updated = try await service.removeProfilePhoto(path: path)
+                await MainActor.run {
+                    profile = updated
+                    profilePhoto = nil
+                    ProfilePhotoCache.clear(userId: updated.userId)
+                    ProfileCache.save(updated)
+                    onProfileUpdated(updated)
+                    isSavingProfilePhoto = false
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                }
+            } catch {
+                await MainActor.run {
+                    isSavingProfilePhoto = false
+                    self.error = error.localizedDescription
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                }
+            }
+        }
+    }
+
+    private func loadProfilePhoto() async {
+        guard let path = profile.avatarPath else {
+            profilePhoto = nil
+            ProfilePhotoCache.clear(userId: profile.userId)
+            return
+        }
+        if let cached = ProfilePhotoCache.load(userId: profile.userId, expectedPath: path),
+           let image = UIImage(data: cached) {
+            profilePhoto = image
+            return
+        }
+        isLoadingProfilePhoto = true
+        defer { isLoadingProfilePhoto = false }
+        do {
+            let data = try await service.fetchProfilePhoto(path: path)
+            guard let image = UIImage(data: data) else { return }
+            profilePhoto = image
+            ProfilePhotoCache.save(data, userId: profile.userId, path: path)
+        } catch {
+            // Keep Settings usable on a transient image failure; a later visit retries.
+        }
+    }
+}
+
+private struct ProfilePhotoCropSource: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+private struct ProfilePhotoCropView: View {
+    @Environment(\.dismiss) private var dismiss
+    @GestureState private var dragTranslation: CGSize = .zero
+    @GestureState private var magnification: CGFloat = 1
+    @State private var zoom: CGFloat = 1
+    @State private var offset: CGSize = .zero
+
+    let image: UIImage
+    let onUse: (UIImage) -> Void
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { geometry in
+                let side = min(geometry.size.width - 40, geometry.size.height - 130)
+                VStack(spacing: 22) {
+                    Spacer(minLength: 8)
+                    cropCanvas(side: side)
+                    VStack(spacing: 8) {
+                        HStack {
+                            Image(systemName: "minus.magnifyingglass")
+                            Slider(value: $zoom, in: 1...4)
+                                .accessibilityLabel("Photo zoom")
+                            Image(systemName: "plus.magnifyingglass")
+                        }
+                        .foregroundStyle(Design.Color.muted)
+                        Text("Drag and zoom to frame your photo")
+                            .font(.caption)
+                            .foregroundStyle(Design.Color.muted)
+                    }
+                    .padding(.horizontal, 28)
+                    Spacer(minLength: 8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onChange(of: zoom) { _, updated in
+                    offset = clampedOffset(offset, side: side, zoom: updated)
+                }
+                .safeAreaInset(edge: .bottom) {
+                    Button("Use photo") {
+                        onUse(renderedCrop(side: side))
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Design.Color.paper.opacity(0.94))
+                }
+            }
+            .background(Design.Color.paper)
+            .navigationTitle("Crop photo")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func cropCanvas(side: CGFloat) -> some View {
+        let liveZoom = min(max(zoom * magnification, 1), 4)
+        let liveOffset = clampedOffset(
+            CGSize(
+                width: offset.width + dragTranslation.width,
+                height: offset.height + dragTranslation.height
+            ),
+            side: side,
+            zoom: liveZoom
+        )
+        return Image(uiImage: image)
+            .resizable()
+            .scaledToFill()
+            .frame(width: side, height: side)
+            .scaleEffect(liveZoom)
+            .offset(liveOffset)
+            .frame(width: side, height: side)
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay {
+                Circle()
+                    .stroke(.white.opacity(0.86), lineWidth: 1.5)
+                    .padding(10)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(Design.Color.rule, lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .updating($dragTranslation) { value, state, _ in state = value.translation }
+                    .onEnded { value in
+                        offset = clampedOffset(
+                            CGSize(
+                                width: offset.width + value.translation.width,
+                                height: offset.height + value.translation.height
+                            ),
+                            side: side,
+                            zoom: zoom
+                        )
+                    }
+            )
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .updating($magnification) { value, state, _ in state = value.magnification }
+                    .onEnded { value in
+                        zoom = min(max(zoom * value.magnification, 1), 4)
+                        offset = clampedOffset(offset, side: side, zoom: zoom)
+                    }
+            )
+            .accessibilityLabel("Profile photo crop area")
+            .accessibilityHint("Drag to reposition the photo, or use the zoom slider")
+    }
+
+    private func clampedOffset(_ proposed: CGSize, side: CGFloat, zoom: CGFloat) -> CGSize {
+        let imageAspect = image.size.width / max(image.size.height, 1)
+        let baseWidth = imageAspect >= 1 ? side * imageAspect : side
+        let baseHeight = imageAspect >= 1 ? side : side / max(imageAspect, 0.001)
+        let maximumX = max(0, (baseWidth * zoom - side) / 2)
+        let maximumY = max(0, (baseHeight * zoom - side) / 2)
+        return CGSize(
+            width: min(max(proposed.width, -maximumX), maximumX),
+            height: min(max(proposed.height, -maximumY), maximumY)
+        )
+    }
+
+    private func renderedCrop(side: CGFloat) -> UIImage {
+        let outputSide: CGFloat = 512
+        let imageAspect = image.size.width / max(image.size.height, 1)
+        let baseWidth = imageAspect >= 1 ? outputSide * imageAspect : outputSide
+        let baseHeight = imageAspect >= 1 ? outputSide : outputSide / max(imageAspect, 0.001)
+        let outputOffset = CGSize(
+            width: offset.width / max(side, 1) * outputSide,
+            height: offset.height / max(side, 1) * outputSide
+        )
+        return UIGraphicsImageRenderer(size: CGSize(width: outputSide, height: outputSide)).image { _ in
+            UIColor.black.setFill()
+            UIRectFill(CGRect(origin: .zero, size: CGSize(width: outputSide, height: outputSide)))
+            image.draw(in: CGRect(
+                x: (outputSide - baseWidth * zoom) / 2 + outputOffset.width,
+                y: (outputSide - baseHeight * zoom) / 2 + outputOffset.height,
+                width: baseWidth * zoom,
+                height: baseHeight * zoom
+            ))
+        }
+    }
+}
+
+private extension UIImage {
+    func normalizedForDisplay() -> UIImage {
+        guard imageOrientation != .up else { return self }
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    func profilePhotoJPEG() -> Data? {
+        let maxBytes = 2_000_000
+        for quality in [0.86, 0.74, 0.62, 0.50] {
+            if let data = jpegData(compressionQuality: quality), data.count <= maxBytes {
+                return data
+            }
+        }
+        return nil
     }
 }
 
