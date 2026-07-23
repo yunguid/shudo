@@ -34,10 +34,47 @@ export function json(body: unknown, status = 200): Response {
   });
 }
 
+const cachedEnv = new Map<string, string>();
+
 export function requiredEnv(name: string): string {
+  const cached = cachedEnv.get(name);
+  if (cached) return cached;
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new Error(`Missing server configuration: ${name}`);
+  cachedEnv.set(name, value);
   return value;
+}
+
+/**
+ * Bounds a promise that has no native abort support (Supabase Auth/Storage/
+ * PostgREST SDK calls). The underlying request may still complete in the
+ * background; callers rely on fenced writes for correctness, so the timeout
+ * only converts an indefinite hang into a clean, retryable failure.
+ */
+export function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error(`${label} timed out`));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        if (!settled) resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        // A rejection after the timeout already surfaced must not become an
+        // unhandled rejection that kills the isolate.
+        if (!settled) reject(error);
+      },
+    );
+  });
 }
 
 export function isUuid(value: string): boolean {
@@ -65,7 +102,11 @@ export async function authenticate(
   const authClient = createClient(supabaseUrl, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await authClient.auth.getUser(token);
+  const { data, error } = await withTimeout(
+    authClient.auth.getUser(token),
+    10_000,
+    "Session validation",
+  );
   if (error || !data.user) throw new HttpError(401, "Invalid session");
 
   return {

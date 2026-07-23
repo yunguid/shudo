@@ -27,6 +27,7 @@ import {
   isUuid,
   json,
   runInBackground,
+  withTimeout,
 } from "../_shared/http.ts";
 import { modelQuotaHttpError } from "../_shared/quotas.ts";
 
@@ -157,12 +158,17 @@ Deno.serve(async (req: Request) => {
 
   let entryId: string | null = null;
   try {
-    const { admin, userId } = await authenticate(req);
     requireMultipartContentType(req.headers.get("content-type"));
 
+    // Session validation is a network round trip that does not depend on the
+    // body, so it overlaps reading and parsing the multipart payload.
+    const authentication = authenticate(req);
     const form = await req.formData().catch(() => {
+      // The abandoned validation must not surface as an unhandled rejection.
+      authentication.catch(() => undefined);
       throw new HttpError(400, "Could not read the meal capture");
     });
+    const { admin, userId } = await authentication;
     const timezone = validateTimezone(formString(form, "timezone"));
     const localDay = validateLocalDay(formString(form, "local_day"));
     const clientRequestId = formString(form, "client_request_id").toLowerCase();
@@ -209,21 +215,43 @@ Deno.serve(async (req: Request) => {
       : priorAudioPath;
 
     try {
+      // The photo and voice note are independent objects; uploading them
+      // together removes the smaller upload's full duration from the time to
+      // durable acceptance. Failure of either fails the capture as before.
+      const uploads: Promise<void>[] = [];
       if (image && imagePath) {
-        const { error } = await admin.storage.from("entry-images").upload(
-          imagePath,
-          image,
-          { contentType: image.type, cacheControl: "3600", upsert: true },
-        );
-        if (error) throw error;
+        uploads.push(withTimeout(
+          admin.storage.from("entry-images").upload(
+            imagePath,
+            image,
+            { contentType: image.type, cacheControl: "3600", upsert: true },
+          ).then(({ error }) => {
+            if (error) throw error;
+          }),
+          60_000,
+          "Photo upload",
+        ));
       }
       if (audio && audioPath) {
-        const { error } = await admin.storage.from("entry-audio").upload(
-          audioPath,
-          audio,
-          { contentType: audio.type, cacheControl: "3600", upsert: true },
+        uploads.push(withTimeout(
+          admin.storage.from("entry-audio").upload(
+            audioPath,
+            audio,
+            { contentType: audio.type, cacheControl: "3600", upsert: true },
+          ).then(({ error }) => {
+            if (error) throw error;
+          }),
+          90_000,
+          "Voice note upload",
+        ));
+      }
+      if (uploads.length > 0) {
+        const results = await Promise.allSettled(uploads);
+        const failure = results.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
         );
-        if (error) throw error;
+        if (failure) throw failure.reason;
       }
 
       const { data: published, error: publishError } = await admin.rpc(

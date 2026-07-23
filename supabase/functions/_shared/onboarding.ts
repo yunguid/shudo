@@ -13,6 +13,7 @@ import {
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
 import { isUuid, requiredEnv } from "./http.ts";
+import { safetyIdentifier } from "./safety.ts";
 import {
   calculateDeterministicTargets,
   validateNutritionTarget,
@@ -562,18 +563,6 @@ export function parseOnboardingCapture(form: FormData): {
     throw new HttpError(400, "Add a voice note or a short description");
   }
   return { clientRequestId, timezone, text, audio };
-}
-
-async function safetyIdentifier(userId: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(userId),
-  );
-  return `shudo_${
-    Array.from(new Uint8Array(digest)).slice(0, 16).map((byte) =>
-      byte.toString(16).padStart(2, "0")
-    ).join("")
-  }`;
 }
 
 export async function transcribeOnboardingAudio(

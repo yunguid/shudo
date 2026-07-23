@@ -28,6 +28,9 @@ Deno.test("OpenAI request timeouts preserve worker overhead inside the processin
 Deno.test("streaming analysis remains bounded in memory and database write rate", () => {
   assertEquals(ANALYSIS_PREVIEW_MAX_CHARACTERS, 240);
   assertEquals(RESULT_SCHEMA.properties.analysis_preview.maxLength, 240);
-  assertEquals(ANALYSIS_PREVIEW_UPDATE_INTERVAL_MS, 500);
+  // Matches the app's streaming poll cadence (TodayViewModel
+  // streamingPreviewPollingInterval, 650 ms) so no preview write is published
+  // faster than any client will ever read it.
+  assertEquals(ANALYSIS_PREVIEW_UPDATE_INTERVAL_MS, 650);
   assertEquals(MAX_STREAMED_OUTPUT_CHARACTERS, 40_000);
 });

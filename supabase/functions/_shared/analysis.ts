@@ -2,6 +2,11 @@ import { assertNeutralGeneratedCopy } from "./generated_copy.ts";
 
 export const ANALYSIS_PREVIEW_MAX_CHARACTERS = 240;
 
+/// Correction history grows without bound across many corrections; embedding
+/// more than this into a prompt only adds cost and latency, and the newest
+/// corrections (listed first) are the authoritative ones.
+export const MAX_ANALYSIS_CONTEXT_LENGTH = 6_000;
+
 export const RESULT_SCHEMA = {
   type: "object",
   additionalProperties: false,

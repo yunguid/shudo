@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import {
+  MAX_ANALYSIS_CONTEXT_LENGTH,
   parseAnalysis,
   type ParsedAnalysis,
   RESULT_SCHEMA,
@@ -9,8 +10,9 @@ import {
   assertNeutralGeneratedCopy,
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
-import { requiredEnv } from "./http.ts";
+import { requiredEnv, withTimeout } from "./http.ts";
 import { readResponsesEventStream } from "./responses_stream.ts";
+import { safetyIdentifier } from "./safety.ts";
 import { drainStorageCleanup } from "./storage_cleanup.ts";
 
 export const ANALYSIS_MODEL = "gpt-5.6-sol";
@@ -81,18 +83,6 @@ function audioType(path: string, blob: Blob): string {
 function audioFilename(path: string): string {
   const extension = path.split(".").pop()?.toLowerCase();
   return `meal.${extension && extension.length <= 4 ? extension : "m4a"}`;
-}
-
-async function safetyIdentifier(userId: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(userId),
-  );
-  return `shudo_${
-    Array.from(new Uint8Array(digest)).slice(0, 16).map((byte) =>
-      byte.toString(16).padStart(2, "0")
-    ).join("")
-  }`;
 }
 
 async function transcribe(audio: Blob, path: string): Promise<string> {
@@ -231,10 +221,33 @@ export async function processStoredEntry(
     audioPath = entry.audio_path;
     let transcript = entry.transcript?.trim() ?? "";
 
+    // Signing the photo URL is independent of transcription, so it starts
+    // now and is awaited only when analysis needs it. The tagged result
+    // keeps an abandoned failure from becoming an unhandled rejection.
+    const pendingSignedImageUrl = entry.image_path
+      ? withTimeout(
+        admin.storage.from("entry-images")
+          .createSignedUrl(entry.image_path, 600)
+          .then(({ data: signed, error: signedError }) => {
+            if (signedError || !signed) {
+              throw signedError ?? new Error("Photo could not be signed");
+            }
+            return signed.signedUrl;
+          }),
+        15_000,
+        "Photo signing",
+      ).then(
+        (url) => ({ ok: true as const, url }),
+        (error) => ({ ok: false as const, error }),
+      )
+      : null;
+
     if (audioPath && !transcript) {
-      const { data: audio, error: downloadError } = await admin.storage
-        .from("entry-audio")
-        .download(audioPath);
+      const { data: audio, error: downloadError } = await withTimeout(
+        admin.storage.from("entry-audio").download(audioPath),
+        30_000,
+        "Voice note download",
+      );
       if (downloadError || !audio) {
         throw downloadError ?? new Error("Stored voice note is missing");
       }
@@ -282,18 +295,17 @@ export async function processStoredEntry(
     }
 
     let signedImageUrl: string | null = null;
-    if (entry.image_path) {
-      const { data: signed, error: signedError } = await admin.storage
-        .from("entry-images")
-        .createSignedUrl(entry.image_path, 600);
-      if (signedError) throw signedError;
-      signedImageUrl = signed.signedUrl;
+    if (pendingSignedImageUrl) {
+      const signed = await pendingSignedImageUrl;
+      if (!signed.ok) throw signed.error;
+      signedImageUrl = signed.url;
     }
 
     const { analysis, responseId } = await analyze(
       userId,
       combinedText,
-      entry.analysis_context?.trim() || null,
+      entry.analysis_context?.trim().slice(0, MAX_ANALYSIS_CONTEXT_LENGTH) ||
+        null,
       signedImageUrl,
       async (preview) => {
         // Streaming output is visible before the complete JSON object reaches

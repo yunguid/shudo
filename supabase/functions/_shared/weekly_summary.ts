@@ -4,6 +4,7 @@ import {
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
 import { requiredEnv } from "./http.ts";
+import { safetyIdentifier } from "./safety.ts";
 
 export const WEEKLY_SUMMARY_MODEL = "gpt-5.6-sol";
 export const WEEKLY_COPY_INSTRUCTION =
@@ -271,18 +272,6 @@ export function parseWeeklyNarrative(value: unknown): {
   };
 }
 
-async function safetyIdentifier(userId: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(userId),
-  );
-  return `shudo_${
-    Array.from(new Uint8Array(digest)).slice(0, 16).map((byte) =>
-      byte.toString(16).padStart(2, "0")
-    ).join("")
-  }`;
-}
-
 export async function writeWeeklyNarrative(
   userId: string,
   weekStart: string,
@@ -321,6 +310,7 @@ export async function writeWeeklyNarrative(
           text: [
             "Write a concise weekly meal-log reflection from the supplied computed metrics.",
             "Do not recalculate or contradict the metrics. Mention incomplete logging plainly.",
+            "The average_* metrics are averages over the days_logged days that have entries, not over all 7 calendar days; when days_logged is under 7, describe them as averages for logged days only.",
             "Use the bounded food candidate list to notice obviously similar meal patterns (for example variations of a wrap or bowl), but cluster conservatively and never invent a frequency.",
             "Offer practical food-logging or meal-pattern suggestions only. Do not diagnose, prescribe treatment, or make medical claims.",
             WEEKLY_COPY_INSTRUCTION,

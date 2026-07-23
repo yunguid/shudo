@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js@2.110.7/edge-runtime.d.ts";
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import {
+  MAX_ANALYSIS_CONTEXT_LENGTH,
   parseAnalysis,
   type ParsedAnalysis,
   responseOutputText,
@@ -25,6 +26,7 @@ import {
 } from "../_shared/http.ts";
 import { requireMultipartContentType } from "../_shared/capture_validation.ts";
 import { modelQuotaHttpError } from "../_shared/quotas.ts";
+import { safetyIdentifier } from "../_shared/safety.ts";
 import {
   type CorrectionReservationStatus,
   parseCorrectionReservation,
@@ -43,18 +45,6 @@ type CorrectionEntry = {
   analysis_context: string | null;
   image_path: string | null;
 };
-
-async function safetyIdentifier(userId: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(userId),
-  );
-  return `shudo_${
-    Array.from(new Uint8Array(digest)).slice(0, 16).map((byte) =>
-      byte.toString(16).padStart(2, "0")
-    ).join("")
-  }`;
-}
 
 async function transcribeCorrection(audio: File): Promise<string> {
   const form = new FormData();
@@ -291,7 +281,8 @@ Deno.serve(async (req: Request) => {
     const { analysis, responseId } = await analyzeCorrection(
       userId,
       baseDescription,
-      entry.analysis_context?.trim() || null,
+      entry.analysis_context?.trim().slice(0, MAX_ANALYSIS_CONTEXT_LENGTH) ||
+        null,
       correctionText,
       signedImageUrl,
     );

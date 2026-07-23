@@ -2,24 +2,7 @@ import "jsr:@supabase/functions-js@2.110.7/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { drainStorageCleanup } from "../_shared/storage_cleanup.ts";
 import { json, requiredEnv } from "../_shared/http.ts";
-
-async function secretMatches(
-  actual: string,
-  expected: string,
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const [actualDigest, expectedDigest] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(actual)),
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-  ]);
-  const left = new Uint8Array(actualDigest);
-  const right = new Uint8Array(expectedDigest);
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left[index] ^ right[index];
-  }
-  return difference === 0;
-}
+import { secretMatches } from "../_shared/secrets.ts";
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);

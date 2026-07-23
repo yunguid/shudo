@@ -96,13 +96,23 @@ export async function deleteAccountStorage(
   if (!isUuid(userId)) {
     throw new Error("Refusing unsafe account storage prefix");
   }
-  let removed = 0;
-  for (const bucket of ACCOUNT_BUCKETS) {
-    for (const prefix of [userId, `u_${userId}`]) {
+  // The bucket/prefix passes are independent; clearing them together keeps
+  // deletion time bounded by the largest bucket instead of the sum of all six.
+  const passes = ACCOUNT_BUCKETS.flatMap((bucket) =>
+    [userId, `u_${userId}`].map(async (prefix) => {
       const paths = await listAllFiles(admin, bucket, prefix);
       await removePaths(admin, bucket, paths);
-      removed += paths.length;
-    }
-  }
-  return removed;
+      return paths.length;
+    })
+  );
+  const results = await Promise.allSettled(passes);
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failure) throw failure.reason;
+  return results.reduce(
+    (total, result) =>
+      total + (result.status === "fulfilled" ? result.value : 0),
+    0,
+  );
 }

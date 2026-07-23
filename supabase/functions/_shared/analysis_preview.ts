@@ -1,6 +1,8 @@
 import { analysisPreviewFromPartialJSON } from "./analysis.ts";
 
-export const ANALYSIS_PREVIEW_UPDATE_INTERVAL_MS = 500;
+// Matched to the client's 650 ms streaming poll: publishing faster than the
+// app reads produces database writes no one ever observes.
+export const ANALYSIS_PREVIEW_UPDATE_INTERVAL_MS = 650;
 export const ANALYSIS_PREVIEW_MIN_PUBLISH_CHARACTERS = 8;
 
 type PublishPreview = (preview: string) => Promise<void>;
