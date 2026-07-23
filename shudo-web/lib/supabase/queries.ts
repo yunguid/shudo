@@ -102,21 +102,22 @@ export function totalsByLocalDay(entries: DayTotalsSource[]): Map<string, DayTot
 export async function fetchDashboardWindow(
   supabase: ShudoSupabaseClient,
   userId: string,
-  endDay: string,
   selectedDay: string,
   dayCount = 7,
 ): Promise<{ totals: DayTotals; entries: EntryListItem[]; recentDays: DayTotals[] }> {
-  const startDay = shiftLocalDay(endDay, -(dayCount - 1))
-  const windowStart = selectedDay < startDay ? selectedDay : startDay
+  const startDay = shiftLocalDay(selectedDay, -(dayCount - 1))
   const { data, error } = await supabase
     .from('entries')
     .select(ENTRY_COLUMNS)
     .eq('user_id', userId)
     .eq('status', 'complete')
-    .gte('local_day', windowStart)
-    .lte('local_day', endDay)
+    .gte('local_day', startDay)
+    .lte('local_day', selectedDay)
     .order('occurred_at', { ascending: false })
     .order('id', { ascending: false })
+    // The capture quota caps entries at 30/day; this bound exists only so a
+    // pathological window can never hit PostgREST's silent max-rows cut.
+    .limit(dayCount * 40)
 
   if (error) throw queryError('Unable to load daily entries', error)
 

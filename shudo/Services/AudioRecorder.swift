@@ -17,10 +17,17 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     private var startedAt: Date?
 
     deinit {
-        // The run loop retains the timer, not the other way around, but a
-        // recorder torn down without a finish path must not leave a live
-        // timer firing forever.
-        meterTimer?.invalidate()
+        // A recorder torn down without a finish path must not leave a live
+        // timer firing forever. deinit can run off the main thread, and
+        // Timer.invalidate is only safe on the installing run loop's thread,
+        // so route the call to the main thread without capturing the timer
+        // in a closure (Timer is not Sendable).
+        meterTimer?.perform(
+            #selector(Timer.invalidate),
+            on: .main,
+            with: nil,
+            waitUntilDone: false
+        )
     }
 
     var remainingTime: TimeInterval {

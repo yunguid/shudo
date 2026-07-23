@@ -112,6 +112,24 @@ struct SupabaseServiceErrorTests {
         #expect(await cache.cachedURL(for: path, now: now) == nil)
     }
 
+    @Test func signOutEpochRejectsStoresFromThePreviousSession() async {
+        let cache = SignedImageURLCache()
+        let path = "user/entry/token/photo.jpg"
+        let url = URL(string: "https://example.supabase.co/storage/v1/object/sign/entry-images/photo.jpg?token=abc")!
+
+        // A signing request that started before sign-out carries the old
+        // epoch; its late store must not repopulate the cleared cache.
+        let staleEpoch = await cache.currentEpoch()
+        await cache.removeAll()
+        await cache.store(url, for: path, epoch: staleEpoch)
+        #expect(await cache.cachedURL(for: path) == nil)
+
+        // A request from the new session stores normally.
+        let freshEpoch = await cache.currentEpoch()
+        await cache.store(url, for: path, epoch: freshEpoch)
+        #expect(await cache.cachedURL(for: path) == url)
+    }
+
     @Test func batchSignedURLResponsesNormalizeToAbsoluteURLs() throws {
         let supabaseUrl = URL(string: "https://example.supabase.co")!
         let parsed = SupabaseService.parseBatchSignedURLs(

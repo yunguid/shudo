@@ -5,8 +5,10 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
     static let maximumProfilePhotoBytes = 2_097_152
     static let entryListColumns = "id,local_day,occurred_at,created_at,updated_at,status,status_message,analysis_preview,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"
     /// Status polling runs every 650 ms while a meal analyzes; this projection
-    /// deliberately omits `raw_text` (up to 12 KB) and other fields that
-    /// cannot change until the entry completes.
+    /// deliberately omits `raw_text` (up to 30 KB with a transcript) and other
+    /// row content. Content fields DO change at status transitions, so the
+    /// poller performs a full fetch whenever the status differs from the
+    /// visible row and uses this slim projection only for same-status polls.
     static let entryStatusColumns = "id,local_day,status,status_message,analysis_preview,error_message,processing_attempts,updated_at"
 
     private struct ParsedEntry {
@@ -921,10 +923,11 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         if let cached = await SignedImageURLCache.shared.cachedURL(for: path) {
             return cached
         }
+        let epoch = await SignedImageURLCache.shared.currentEpoch()
         guard let signed = await requestSignedImageURL(path: path, jwt: jwt) else {
             return nil
         }
-        await SignedImageURLCache.shared.store(signed, for: path)
+        await SignedImageURLCache.shared.store(signed, for: path, epoch: epoch)
         return signed
     }
 
@@ -993,19 +996,30 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         guard !missingIndicesByPath.isEmpty else { return results }
 
         let missingPaths = Array(missingIndicesByPath.keys)
+        let epoch = await SignedImageURLCache.shared.currentEpoch()
+        var unresolvedPaths = missingPaths
         if let signedByPath = await batchSignImageURLs(paths: missingPaths, jwt: jwt) {
-            for (path, url) in signedByPath {
-                await SignedImageURLCache.shared.store(url, for: path)
+            // Only requested paths are applied/cached; anything extra in the
+            // response is ignored, and anything missing falls through to the
+            // per-path fallback below instead of silently rendering blank.
+            unresolvedPaths = []
+            for path in missingPaths {
+                guard let url = signedByPath[path] else {
+                    unresolvedPaths.append(path)
+                    continue
+                }
+                await SignedImageURLCache.shared.store(url, for: path, epoch: epoch)
                 for index in missingIndicesByPath[path] ?? [] {
                     results[index] = url
                 }
             }
-            return results
         }
+        guard !unresolvedPaths.isEmpty else { return results }
 
-        // Batch endpoint unavailable: sign individually with bounded fan-out.
+        // Batch endpoint unavailable or partial: sign individually with
+        // bounded fan-out.
         let fallback = await Self.boundedConcurrentMap(
-            missingPaths,
+            unresolvedPaths,
             maximumConcurrentTasks: Self.signedImageConcurrencyLimit
         ) { path in
             (path, await signImageURL(path: path, jwt: jwt))

@@ -9,9 +9,9 @@ type PublishPreview = (preview: string) => Promise<void>;
 type CurrentTime = () => number;
 
 /**
- * Publishes the first useful preview immediately, then caps database writes at
- * two per second. The processor's fenced update remains the authority: a lost
- * lease rejects the publish and stops the provider stream.
+ * Publishes the first useful preview immediately, then caps database writes
+ * at the client's poll cadence. The processor's fenced update remains the
+ * authority: a lost lease rejects the publish and stops the provider stream.
  */
 export class AnalysisPreviewPublisher {
   #lastPreview: string | null = null;

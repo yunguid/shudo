@@ -161,11 +161,14 @@ Deno.serve(async (req: Request) => {
     requireMultipartContentType(req.headers.get("content-type"));
 
     // Session validation is a network round trip that does not depend on the
-    // body, so it overlaps reading and parsing the multipart payload.
+    // body, so it overlaps reading and parsing the multipart payload. The
+    // parked no-op handler is mandatory: without it, an auth rejection that
+    // settles before the body finishes parsing is an unhandled rejection and
+    // kills the whole worker. Awaiting the original promise below still
+    // surfaces the real error.
     const authentication = authenticate(req);
+    authentication.catch(() => undefined);
     const form = await req.formData().catch(() => {
-      // The abandoned validation must not surface as an unhandled rejection.
-      authentication.catch(() => undefined);
       throw new HttpError(400, "Could not read the meal capture");
     });
     const { admin, userId } = await authentication;

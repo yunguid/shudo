@@ -38,7 +38,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const windowStart = shiftLocalDay(selectedDay, -6)
   const [{ totals, entries, recentDays }, targetHistory] = await Promise.all([
-    fetchDashboardWindow(supabase, user.id, selectedDay, selectedDay),
+    fetchDashboardWindow(supabase, user.id, selectedDay),
     fetchDailyTargetHistory(supabase, user.id, selectedDay, windowStart),
   ])
 

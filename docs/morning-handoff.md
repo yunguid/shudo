@@ -1,6 +1,36 @@
 # Shudo morning handoff
 
-Updated: 2026-07-22
+Updated: 2026-07-23 (overnight performance/polish run)
+
+## Overnight run (2026-07-23)
+
+An autonomous overnight pass landed capture-latency, image-caching, backend,
+web, and UI-polish improvements on `main` (see `docs/overnight-audit.md` for
+the full evidence, tradeoffs, and rejected ideas). Key user-visible changes:
+
+- Tapping **Log meal** no longer stalls while photos are collaged/encoded;
+  photo preparation happens in the background as you pick.
+- Meal thumbnails and detail photos no longer flash back to placeholders on
+  refresh/foreground — signed URLs are cached and reused.
+- Faster durable acceptance for photo+voice captures (uploads parallelized,
+  auth overlapped) and slightly faster processing start.
+- Settings loads its sections in parallel; heatmap/trends render cheaper.
+- Design-system radius/hairline unification, Reduce Motion and Dynamic Type
+  fixes, 44 pt touch targets, VoiceOver labels on calorie/photo elements.
+- Web dashboard fetches fewer/lighter queries; login card no longer pops in
+  provider buttons; public pages regained their card background.
+
+**Deployment needed to activate backend/web changes** (not done overnight,
+per guardrails):
+
+1. `scripts/deploy-supabase-production.zsh` then `--apply` — Edge Function
+   updates only (create_entry, process_entry, correct_entry, onboard_profile,
+   delete_account, drain_storage_cleanup, generate_weekly_summaries shared
+   modules). **No new migration was added**; schema is unchanged.
+2. `scripts/deploy-vercel-production.zsh` then `--apply` — web companion.
+
+The native app changes are already in the Release build installed on the
+phone (if the overnight install step succeeded; see the final summary).
 
 ## Ready now
 

@@ -191,12 +191,20 @@ Deno.serve(async (req: Request) => {
       }, 201);
     } catch (processingError) {
       try {
-        await context.admin.from("onboarding_analyses").update({
-          status: "failed",
-          lease_expires_at: null,
-          error_message: String(processingError).slice(0, 500),
-        }).eq("id", reserved.id).eq("user_id", userId).eq("status", "analyzing")
+        const { error: failureWriteError } = await context.admin
+          .from("onboarding_analyses").update({
+            status: "failed",
+            lease_expires_at: null,
+            error_message: String(processingError).slice(0, 500),
+          }).eq("id", reserved.id).eq("user_id", userId)
+          .eq("status", "analyzing")
           .eq("generation_attempt", reserved.generation_attempt);
+        if (failureWriteError) {
+          console.error("onboarding_failure_write_failed", {
+            onboardingId: reserved.id,
+            message: failureWriteError.message,
+          });
+        }
       } catch (failureWriteError) {
         // The stale-lease sweep recovers the row; the original processing
         // error is the one worth reporting, not this write's failure.

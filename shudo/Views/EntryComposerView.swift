@@ -475,6 +475,7 @@ struct EntryComposerView: View {
         // Downsample the full-resolution camera frame before keeping it so the
         // composer never retains multi-hundred-megapixel-second originals.
         isPreparingImage = true
+        localError = nil
         let generation = imageLoadGeneration
         Task.detached(priority: .userInitiated) {
             let prepared = ImageProcessor.resizedForUpload(captured)

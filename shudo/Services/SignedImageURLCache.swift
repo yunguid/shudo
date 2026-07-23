@@ -28,6 +28,11 @@ actor SignedImageURLCache {
     }
 
     private var urlsByPath: [String: CachedURL] = [:]
+    /// Bumped by `removeAll()` so a fetch that started before sign-out cannot
+    /// re-populate the cache with the previous session's URLs afterwards.
+    private var epoch = 0
+
+    func currentEpoch() -> Int { epoch }
 
     func cachedURL(for path: String, now: Date = Date()) -> URL? {
         guard let cached = urlsByPath[path] else { return nil }
@@ -38,7 +43,8 @@ actor SignedImageURLCache {
         return cached.url
     }
 
-    func store(_ url: URL, for path: String, now: Date = Date()) {
+    func store(_ url: URL, for path: String, epoch: Int? = nil, now: Date = Date()) {
+        if let epoch, epoch != self.epoch { return }
         urlsByPath[path] = CachedURL(
             url: url,
             reusableUntil: now.addingTimeInterval(
@@ -53,5 +59,6 @@ actor SignedImageURLCache {
 
     func removeAll() {
         urlsByPath.removeAll()
+        epoch += 1
     }
 }

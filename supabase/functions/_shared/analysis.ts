@@ -2,10 +2,11 @@ import { assertNeutralGeneratedCopy } from "./generated_copy.ts";
 
 export const ANALYSIS_PREVIEW_MAX_CHARACTERS = 240;
 
-/// Correction history grows without bound across many corrections; embedding
-/// more than this into a prompt only adds cost and latency, and the newest
-/// corrections (listed first) are the authoritative ones.
-export const MAX_ANALYSIS_CONTEXT_LENGTH = 6_000;
+/// Defense in depth for prompt embedding: the database already constrains
+/// `analysis_context` to 4,000 chars (entries_analysis_context_length_check)
+/// and builds it newest-first, so slicing keeps the authoritative newest
+/// corrections if the DB bound ever changes.
+export const MAX_ANALYSIS_CONTEXT_LENGTH = 4_000;
 
 export const RESULT_SCHEMA = {
   type: "object",

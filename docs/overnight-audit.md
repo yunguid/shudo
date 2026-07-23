@@ -154,6 +154,80 @@ Statuses: `[ ]` open · `[x]` done · `[-]` rejected/deferred (reason inline).
 - `-shudoPolishPreview` launch argument drives PolishPreviewView (manual
   design QA); wired but not exercised by any test/scheme — intentional.
 
+## Adversarial review round (post-batch)
+
+Two independent adversarial reviewers were instructed to refute the full
+`fc19b0e..HEAD` diff. Native review: no critical/major findings; backend
+review found one HIGH. All accepted findings were fixed and re-verified:
+
+- **HIGH (fixed):** the create_entry auth/form-parse overlap left the auth
+  promise unhandled until the body finished parsing — a missing/invalid
+  Authorization header (deterministically) or an expired token during a slow
+  photo upload (racy) rejected with no handler attached and killed the whole
+  Edge worker (empirically reproduced by the reviewer with a streaming
+  client). Fixed by parking a no-op rejection handler at promise creation;
+  the awaited original still surfaces the real 401.
+- Fixed: mid-processing content regression — the slim poll froze the row
+  title/raw-text at the optimistic value through the whole analyzing phase
+  (server rewrites `raw_text` at status transitions). Poll now full-fetches
+  on every status *transition* and uses the slim projection only for
+  same-status polls (the frequent case).
+- Fixed: sign-out now clears `URLCache.shared` (meal-photo bytes no longer
+  persist on disk after sign-out) and `SignedImageURLCache.removeAll()`
+  bumps an epoch that late stores from the previous session cannot cross
+  (tested).
+- Fixed: batch signing applies/caches only requested paths and falls back
+  per-path for any requested path missing from a 2xx batch response (was: a
+  parseable-but-partial response silently blanked all thumbnails and could
+  cache unrequested paths).
+- Fixed: `AudioRecorder.deinit` hops to main to invalidate the meter timer
+  (deinit can run off-main; cross-thread `Timer.invalidate` violates its
+  contract and could leak a permanent 60 ms wakeup).
+- Fixed: `authenticate()` timeout now maps to HTTP 503 with retryable copy
+  (was generic 500); login provider fetch bounded by a 3 s abort so the
+  login page renders during Auth degradation; `fetchDashboardWindow` gained
+  an explicit row limit and lost a dead branch; onboarding failure-write now
+  also logs the common `{error}`-result path; `MAX_ANALYSIS_CONTEXT_LENGTH`
+  corrected to the DB's 4,000-char constraint; stale doc comments fixed.
+
+Accepted residual risks (documented, not fixed):
+- A storage PUT that outlives its withTimeout by >5 min can orphan one
+  object if the cleanup drainer processed the prefix in that exact window
+  (reviewer-verified as a seconds-wide interleaving on a rare path; the
+  durable cleanup queue covers every realistic timing).
+- `DayFormatterCache` rebuilds on timezone change but not locale change
+  mid-session (locale changes relaunch the app in practice).
+- Voice-note rows keep their optimistic title during the transcribing
+  phase's steady-state polls; the title now updates at the
+  transcribing→analyzing transition full fetch (previously every poll).
+
+## Morning phone QA checklist (ordered)
+
+1. Open Shudo → Today loads; thumbnails appear without flashing placeholders.
+   Pull to refresh twice — images must NOT flicker or re-download visibly.
+2. Log a meal with 3–4 library photos + a voice note + a short text: the
+   composer must stay responsive while photos load; **Log meal** must feel
+   instant (no freeze) and the sheet dismiss promptly; the streamed preview
+   sentence should appear within a few seconds of "Estimating".
+3. Take a camera photo in the composer — the camera should dismiss without a
+   stutter and the photo appear in the grid.
+4. Submit two captures back-to-back (second while first still processing);
+   both rows should progress and complete independently.
+5. Open the completed meal's detail immediately — the photo should render
+   quickly (cached URL) and the layout must not jump when it loads.
+6. Add a correction ("the rice was one cup") — previous totals stay visible
+   until the update lands; on failure the old estimate is restored.
+7. Switch to yesterday and back; background the app 30 s and return — no
+   visible reload churn, no stale "still working" rows.
+8. Settings: sections load together; heatmap/trends scroll smoothly; theme
+   switch (Studio/Carbon/Oxide) keeps hairlines/radii coherent.
+9. Accessibility spot-check: enable Reduce Motion (status text should not
+   typewriter), largest Dynamic Type (Today calorie number scales; meal rows
+   wrap instead of clipping), VoiceOver on a meal row and the detail photo.
+10. Web (after Vercel deploy): login page renders provider buttons without
+    pop-in; /terms and /support cards have a visible background; day headers
+    on /meals show full-day totals.
+
 ## Findings, changes, evidence
 
 - Baselines: all suites green before changes (see table above); native suite

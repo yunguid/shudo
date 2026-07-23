@@ -23,10 +23,11 @@ export async function fetchEnabledOAuthProviders(
   try {
     const response = await fetch(`${baseUrl}/auth/v1/settings`, {
       // Server-rendered on the login page; a short revalidation keeps the
-      // provider list fresh without a per-request Auth round trip.
+      // provider list fresh without a per-request Auth round trip, and the
+      // timeout keeps the login page rendering when Auth is degraded.
       next: { revalidate: 300 },
       headers: { apikey: publishableKey },
-      signal,
+      signal: signal ?? AbortSignal.timeout(3_000),
     })
     if (!response.ok) return []
     return enabledOAuthProvidersFromSettings(await response.json())

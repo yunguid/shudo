@@ -45,6 +45,8 @@ export function requiredEnv(name: string): string {
   return value;
 }
 
+export class TimeoutError extends Error {}
+
 /**
  * Bounds a promise that has no native abort support (Supabase Auth/Storage/
  * PostgREST SDK calls). The underlying request may still complete in the
@@ -60,7 +62,7 @@ export function withTimeout<T>(
     let settled = false;
     const timer = setTimeout(() => {
       settled = true;
-      reject(new Error(`${label} timed out`));
+      reject(new TimeoutError(`${label} timed out`));
     }, timeoutMs);
     promise.then(
       (value) => {
@@ -102,11 +104,20 @@ export async function authenticate(
   const authClient = createClient(supabaseUrl, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await withTimeout(
-    authClient.auth.getUser(token),
-    10_000,
-    "Session validation",
-  );
+  let data, error;
+  try {
+    ({ data, error } = await withTimeout(
+      authClient.auth.getUser(token),
+      10_000,
+      "Session validation",
+    ));
+  } catch (timeoutError) {
+    if (timeoutError instanceof TimeoutError) {
+      // A slow Auth backend is retryable, not an invalid session.
+      throw new HttpError(503, "Sign-in check timed out. Please try again.");
+    }
+    throw timeoutError;
+  }
   if (error || !data.user) throw new HttpError(401, "Invalid session");
 
   return {

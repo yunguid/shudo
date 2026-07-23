@@ -361,9 +361,11 @@ final class TodayViewModel: ObservableObject {
 
         while !Task.isCancelled && Date() < deadline {
             do {
-                // Processing polls use a slim status projection; the full row
-                // (macros, title, signed image) is fetched once, on the poll
-                // that first observes a terminal status.
+                // Steady-state polls use a slim status projection. Any status
+                // transition (queued → transcribing → analyzing → terminal)
+                // triggers one full fetch, because the server also rewrites
+                // row content (transcript into raw_text, final macros, image)
+                // exactly at those boundaries.
                 guard let snapshot = try await supabase.fetchEntryStatus(id: entryId) else {
                     throw URLError(.cannotParseResponse)
                 }
@@ -371,7 +373,8 @@ final class TodayViewModel: ObservableObject {
 
                 var refreshed: Entry
                 if snapshot.status.isProcessing,
-                   let existing = entries.first(where: { $0.id == entryId }) {
+                   let existing = entries.first(where: { $0.id == entryId }),
+                   existing.status == snapshot.status {
                     refreshed = Self.entryApplyingStatusSnapshot(to: existing, snapshot: snapshot)
                 } else {
                     guard let full = try await supabase.fetchEntry(id: entryId) else {
