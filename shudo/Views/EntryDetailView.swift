@@ -164,17 +164,25 @@ struct EntryDetailView: View {
             AsyncImage(url: url, transaction: .init(animation: .easeInOut(duration: 0.22))) { phase in
                 switch phase {
                 case .success(let image):
-                    image.resizable().scaledToFill().transition(.opacity)
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .transition(.opacity)
                 case .failure:
                     photoPlaceholder(systemImage: "photo")
+                        .frame(height: 260)
                 case .empty:
-                    photoPlaceholder(systemImage: nil).shimmering()
+                    photoPlaceholder(systemImage: nil)
+                        .frame(height: 260)
+                        .shimmering()
                 @unknown default:
                     photoPlaceholder(systemImage: nil)
+                        .frame(height: 260)
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 260)
+            .background(Design.Color.elevated)
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         }

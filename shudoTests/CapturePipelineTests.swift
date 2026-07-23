@@ -122,6 +122,7 @@ struct CapturePipelineTests {
         ]))
         #expect(twoPhotoCollage.cgImage?.width == 1_600)
         #expect(twoPhotoCollage.cgImage?.height == 800)
+        #expect(twoPhotoCollage.size.width / twoPhotoCollage.size.height == 2)
 
         let collage = try #require(ImageProcessor.collageForUpload([
             image(.red), image(.green), image(.blue), image(.yellow), image(.purple)
