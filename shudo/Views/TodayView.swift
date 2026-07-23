@@ -147,11 +147,11 @@ struct TodayView: View {
                 selectedDay: capturedDay,
                 timezone: vm.profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier,
                 autoStartRecording: composerAutoStartsRecording
-            ) { text, audio, image, clientRequestId in
+            ) { text, audio, imageJPEG, clientRequestId in
                 await vm.submitEntry(
                     text: text,
                     audioData: audio,
-                    image: image,
+                    imageJPEG: imageJPEG,
                     for: capturedDay,
                     clientRequestId: clientRequestId
                 )

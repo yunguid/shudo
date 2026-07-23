@@ -506,6 +506,38 @@ struct AuthSessionManagerTests {
         #expect(AuthSessionManager.subject(fromJWT: "not-a-jwt") == nil)
     }
 
+    @Test func tokenResponseUserIdIsDerivedLocallyWithJWTFallback() throws {
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "sub": "6e530972-c4f0-4b54-a9b1-c76077f0b492"
+        ])
+        let encoded = payload.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let token = "header.\(encoded).signature"
+
+        // GoTrue token responses embed the user record.
+        #expect(
+            SupabaseAuthService.userId(
+                fromTokenResponse: ["user": ["id": "11111111-2222-3333-4444-555555555555"]],
+                accessToken: token
+            ) == "11111111-2222-3333-4444-555555555555"
+        )
+        // Responses missing the user object fall back to the JWT subject —
+        // never to a network call, so nothing can fail after the refresh
+        // token has already rotated.
+        #expect(
+            SupabaseAuthService.userId(fromTokenResponse: [:], accessToken: token)
+                == "6e530972-c4f0-4b54-a9b1-c76077f0b492"
+        )
+        #expect(
+            SupabaseAuthService.userId(
+                fromTokenResponse: ["user": ["id": ""]],
+                accessToken: "not-a-jwt"
+            ) == nil
+        )
+    }
+
     @Test func persistedSessionScopeUsesOnlyTheCanonicalProjectOrigin() throws {
         let url = try #require(URL(string: "https://New-Project.supabase.co/auth/v1"))
         #expect(AuthSessionManager.projectScope(for: url) == "https://new-project.supabase.co")

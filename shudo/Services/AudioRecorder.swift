@@ -16,6 +16,13 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     private var meterTimer: Timer?
     private var startedAt: Date?
 
+    deinit {
+        // The run loop retains the timer, not the other way around, but a
+        // recorder torn down without a finish path must not leave a live
+        // timer firing forever.
+        meterTimer?.invalidate()
+    }
+
     var remainingTime: TimeInterval {
         Self.remainingTime(after: elapsedTime)
     }
@@ -136,17 +143,17 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
 
     private func startMetering() {
         stopMetering()
-        meterTimer = Timer(
-            timeInterval: 0.06,
-            target: self,
-            selector: #selector(sampleMeters),
-            userInfo: nil,
-            repeats: true
-        )
-        if let meterTimer { RunLoop.main.add(meterTimer, forMode: .common) }
+        // A block timer with a weak reference lets the recorder deallocate
+        // even if a finish path is somehow bypassed; a target/selector timer
+        // would retain it through the run loop.
+        let timer = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sampleMeters() }
+        }
+        meterTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
-    @objc private func sampleMeters() {
+    private func sampleMeters() {
         recorder?.updateMeters()
         let decibels = recorder?.averagePower(forChannel: 0) ?? -60
         let amplitude = max(0.035, min(1, pow(10, CGFloat(decibels) / 24)))

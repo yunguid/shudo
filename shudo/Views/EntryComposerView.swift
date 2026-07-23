@@ -50,6 +50,7 @@ struct EntryComposerView: View {
     @State private var isPreparingImage = false
     @State private var imageLoadGeneration = UUID()
     @State private var imagePreparationTask: Task<Void, Never>?
+    @State private var uploadEncodeTask: Task<Data?, Never>?
     @State private var isSubmitting = false
     @State private var localError: String?
     @State private var didAutoStart = false
@@ -58,13 +59,13 @@ struct EntryComposerView: View {
     let selectedDay: Date
     let timezone: String
     let autoStartRecording: Bool
-    let onSubmit: (String?, Data?, UIImage?, UUID) async -> EntrySubmissionResult
+    let onSubmit: (String?, Data?, Data?, UUID) async -> EntrySubmissionResult
 
     init(
         selectedDay: Date,
         timezone: String,
         autoStartRecording: Bool = false,
-        onSubmit: @escaping (String?, Data?, UIImage?, UUID) async -> EntrySubmissionResult
+        onSubmit: @escaping (String?, Data?, Data?, UUID) async -> EntrySubmissionResult
     ) {
         self.selectedDay = selectedDay
         self.timezone = timezone
@@ -123,8 +124,7 @@ struct EntryComposerView: View {
         .preferredColorScheme(.dark)
         .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { selected in
-                guard images.count < ImageProcessor.maximumPhotoCount else { return }
-                withAnimation(.snappy) { images.append(selected) }
+                prepareCameraImage(selected)
             }
             .ignoresSafeArea()
         }
@@ -135,6 +135,7 @@ struct EntryComposerView: View {
             matching: .images
         )
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
+        .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
         .task {
             guard autoStartRecording, !didAutoStart else { return }
             didAutoStart = true
@@ -157,6 +158,8 @@ struct EntryComposerView: View {
             ) else { return }
             imagePreparationTask?.cancel()
             imagePreparationTask = nil
+            uploadEncodeTask?.cancel()
+            uploadEncodeTask = nil
             imageLoadGeneration = UUID()
             isPreparingImage = false
             audio.discardRecording()
@@ -432,18 +435,22 @@ struct EntryComposerView: View {
         isPreparingImage = true
         localError = nil
         let availableSlots = max(0, ImageProcessor.maximumPhotoCount - images.count)
+        let selectedItems = Array(items.prefix(availableSlots))
         imagePreparationTask = Task.detached(priority: .userInitiated) {
-            var prepared: [UIImage] = []
-            for item in items.prefix(availableSlots) {
-                guard !Task.isCancelled else { return }
-                guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-                guard !Task.isCancelled else { return }
-                guard let image = ImageProcessor.downsample(data: data) else { continue }
-                prepared.append(image)
+            // Loading and downsampling two photos at a time keeps several large
+            // library photos fast without holding every original in memory.
+            let loaded = await BoundedConcurrency.map(
+                selectedItems,
+                maximumConcurrentTasks: 2
+            ) { item -> UIImage? in
+                guard !Task.isCancelled,
+                      let data = try? await item.loadTransferable(type: Data.self),
+                      !Task.isCancelled else { return nil }
+                return ImageProcessor.downsample(data: data)
             }
+            let preparedImages = loaded.compactMap { $0 }
 
             guard !Task.isCancelled else { return }
-            let preparedImages = prepared
             await MainActor.run {
                 guard imageLoadGeneration == generation else { return }
                 imagePreparationTask = nil
@@ -457,10 +464,41 @@ struct EntryComposerView: View {
                 withAnimation(.snappy) {
                     images.append(contentsOf: preparedImages.prefix(remainingSlots))
                 }
-                localError = preparedImages.count < min(items.count, availableSlots)
+                localError = preparedImages.count < selectedItems.count
                     ? "Some photos couldn’t be loaded."
                     : nil
             }
+        }
+    }
+
+    private func prepareCameraImage(_ captured: UIImage) {
+        guard images.count < ImageProcessor.maximumPhotoCount else { return }
+        // Downsample the full-resolution camera frame before keeping it so the
+        // composer never retains multi-hundred-megapixel-second originals.
+        isPreparingImage = true
+        let generation = imageLoadGeneration
+        Task.detached(priority: .userInitiated) {
+            let prepared = ImageProcessor.resizedForUpload(captured)
+            await MainActor.run {
+                guard imageLoadGeneration == generation else { return }
+                isPreparingImage = false
+                guard images.count < ImageProcessor.maximumPhotoCount else { return }
+                withAnimation(.snappy) { images.append(prepared) }
+            }
+        }
+    }
+
+    /// Re-encodes the upload JPEG in the background whenever the photo set
+    /// changes, so tapping "Log meal" never renders or encodes on the tap.
+    private func prepareUploadEncoding(for updated: [UIImage]) {
+        uploadEncodeTask?.cancel()
+        guard !updated.isEmpty else {
+            uploadEncodeTask = nil
+            return
+        }
+        uploadEncodeTask = Task.detached(priority: .userInitiated) {
+            guard !Task.isCancelled else { return nil }
+            return ImageProcessor.uploadJPEGData(from: updated)
         }
     }
 
@@ -477,12 +515,30 @@ struct EntryComposerView: View {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = trimmed.isEmpty ? nil : trimmed
         let audioData = audio.recordedData()
-        let selectedImage = ImageProcessor.collageForUpload(images)
+        let hasSelectedImages = !images.isEmpty
+        let selectedImages = images
+        let encodeTask = uploadEncodeTask
 
         isSubmitting = true
         localError = nil
         Task {
-            let result = await onSubmit(text, audioData, selectedImage, clientRequestId)
+            // The upload JPEG is normally ready before the tap; otherwise wait
+            // for the in-flight background encode instead of re-rendering here.
+            var imageJPEG = await encodeTask?.value
+            if hasSelectedImages && imageJPEG == nil {
+                imageJPEG = await Task.detached(priority: .userInitiated) {
+                    ImageProcessor.uploadJPEGData(from: selectedImages)
+                }.value
+            }
+            if hasSelectedImages && imageJPEG == nil {
+                await MainActor.run {
+                    isSubmitting = false
+                    localError = "Those photos couldn’t be prepared. Remove them and try again."
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                }
+                return
+            }
+            let result = await onSubmit(text, audioData, imageJPEG, clientRequestId)
             await MainActor.run {
                 isSubmitting = false
                 switch result {

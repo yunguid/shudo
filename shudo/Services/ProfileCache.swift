@@ -10,8 +10,9 @@ enum ProfileCache {
     }
 
     static func save(_ profile: Profile) {
-        guard let data = try? JSONEncoder().encode(profile) else { return }
-        UserDefaults.standard.set(data, forKey: keyPrefix + profile.userId)
+        guard let key = key(userId: profile.userId),
+              let data = try? JSONEncoder().encode(profile) else { return }
+        UserDefaults.standard.set(data, forKey: key)
     }
 
     static func clear(userId: String?) {

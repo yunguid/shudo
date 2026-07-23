@@ -73,11 +73,11 @@ struct CapturePipelineTests {
             sessionJWTProvider: { "token" }
         )
 
-        let body = try service.makeMultipart(
+        let body = service.makeMultipart(
             boundary: "test-boundary",
             text: "  salmon and rice  ",
             audioData: Data([0x01, 0x02]),
-            image: nil,
+            imageJPEG: Data([0xFF, 0xD8, 0xFF, 0xD9]),
             timezone: "America/New_York",
             localDay: "2026-07-19",
             clientRequestId: requestId
@@ -89,6 +89,7 @@ struct CapturePipelineTests {
         #expect(value.contains("name=\"client_request_id\"\r\n\r\naaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
         #expect(value.contains("salmon and rice"))
         #expect(value.contains("name=\"audio\"; filename=\"voice.m4a\""))
+        #expect(value.contains("name=\"image\"; filename=\"photo.jpg\""))
     }
 
     @Test func imageUploadIsBoundedTo1600Pixels() {
@@ -105,7 +106,34 @@ struct CapturePipelineTests {
         #expect(max(width, height) <= 1_600)
         #expect(width == 1_600)
         #expect(height == 800)
-        #expect(ImageProcessor.jpegData(from: original)?.isEmpty == false)
+        #expect(ImageProcessor.uploadJPEGData(from: [original])?.isEmpty == false)
+    }
+
+    @Test func uploadEncodingProducesOneBoundedJPEGForOneOrSeveralPhotos() throws {
+        func photo(_ color: UIColor, width: CGFloat, height: CGFloat) -> UIImage {
+            UIGraphicsImageRenderer(size: CGSize(width: width, height: height)).image { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            }
+        }
+
+        #expect(ImageProcessor.uploadJPEGData(from: []) == nil)
+
+        let single = try #require(
+            ImageProcessor.uploadJPEGData(from: [photo(.systemRed, width: 2_400, height: 1_200)])
+        )
+        let singleImage = try #require(UIImage(data: single))
+        #expect(singleImage.cgImage?.width == 1_600)
+        #expect(singleImage.cgImage?.height == 800)
+
+        let collage = try #require(ImageProcessor.uploadJPEGData(from: [
+            photo(.systemRed, width: 600, height: 400),
+            photo(.systemGreen, width: 400, height: 600),
+            photo(.systemBlue, width: 600, height: 600)
+        ]))
+        let collageImage = try #require(UIImage(data: collage))
+        #expect(collageImage.cgImage?.width == 1_600)
+        #expect(collageImage.cgImage?.height == 1_600)
     }
 
     @Test func orientedCameraPhotosAreNormalizedWithoutChangingTheirDisplayedAspect() throws {
@@ -149,7 +177,7 @@ struct CapturePipelineTests {
         #expect(ImageProcessor.maximumPhotoCount == 4)
         #expect(collage.cgImage?.width == 1_600)
         #expect(collage.cgImage?.height == 1_600)
-        #expect(ImageProcessor.jpegData(from: collage)?.isEmpty == false)
+        #expect(ImageProcessor.uploadJPEGData(from: [collage])?.isEmpty == false)
     }
 
     @Test func localDayUsesProfileTimezoneAtUTCBoundary() {

@@ -86,7 +86,7 @@ struct SupabaseAuthService: AccountDeletionServicing {
             apiKey: AppConfig.supabaseAnonKey
         )
         let json = try await performPublicRequest(request)
-        if let session = try await session(from: json) {
+        if let session = session(from: json) {
             return .signedIn(session)
         }
         return .confirmationRequired
@@ -101,7 +101,7 @@ struct SupabaseAuthService: AccountDeletionServicing {
         let refreshToken = json["refresh_token"] as? String ?? ""
         let expiresIn = json["expires_in"] as? Int ?? 3600
         let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
-        let userId = try await fetchUserId(accessToken: accessToken)
+        let userId = Self.userId(fromTokenResponse: json, accessToken: accessToken)
         return Session(accessToken: accessToken, refreshToken: refreshToken, expiresAt: expiresAt, userId: userId)
     }
 
@@ -113,8 +113,23 @@ struct SupabaseAuthService: AccountDeletionServicing {
         let newRefresh = json["refresh_token"] as? String ?? refreshToken
         let expiresIn = json["expires_in"] as? Int ?? 3600
         let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
-        let userId = try await fetchUserId(accessToken: accessToken)
+        // The token response already carries the user; deriving the id locally
+        // avoids a second network hop and, critically, means no request can
+        // fail *after* the refresh token has rotated (which previously made a
+        // transient network error consume the token and force a sign-out).
+        let userId = Self.userId(fromTokenResponse: json, accessToken: accessToken)
         return Session(accessToken: accessToken, refreshToken: newRefresh, expiresAt: expiresAt, userId: userId)
+    }
+
+    /// GoTrue token responses embed the user record; the JWT `sub` claim is
+    /// the fallback. Neither requires a network round trip.
+    static func userId(fromTokenResponse json: [String: Any], accessToken: String) -> String? {
+        if let user = json["user"] as? [String: Any],
+           let id = user["id"] as? String,
+           !id.isEmpty {
+            return id
+        }
+        return AuthSessionManager.subject(fromJWT: accessToken)
     }
 
     func makeOAuthFlow(
@@ -217,7 +232,7 @@ struct SupabaseAuthService: AccountDeletionServicing {
             query: [URLQueryItem(name: "grant_type", value: "pkce")],
             body: ["auth_code": code, "code_verifier": codeVerifier]
         )
-        guard let session = try await session(from: json) else {
+        guard let session = session(from: json) else {
             throw FriendlyAuthError(
                 httpStatus: 502,
                 supabaseErrorCode: "missing_oauth_session",
@@ -473,7 +488,7 @@ struct SupabaseAuthService: AccountDeletionServicing {
         Data(SHA256.hash(data: Data(verifier.utf8))).base64URLEncodedString()
     }
 
-    private func session(from json: [String: Any]) async throws -> Session? {
+    private func session(from json: [String: Any]) -> Session? {
         guard let accessToken = json["access_token"] as? String,
               !accessToken.isEmpty,
               let refreshToken = json["refresh_token"] as? String,
@@ -483,19 +498,8 @@ struct SupabaseAuthService: AccountDeletionServicing {
             accessToken: accessToken,
             refreshToken: refreshToken,
             expiresAt: Date().addingTimeInterval(expiresIn),
-            userId: try await fetchUserId(accessToken: accessToken)
+            userId: Self.userId(fromTokenResponse: json, accessToken: accessToken)
         )
-    }
-
-    private func fetchUserId(accessToken: String) async throws -> String? {
-        var req = URLRequest(url: AppConfig.supabaseURL.appendingPathComponent("/auth/v1/user"))
-        req.httpMethod = "GET"
-        req.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
-        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let id = obj["id"] as? String { return id }
-        return nil
     }
 
     private func mapFriendlyMessage(httpStatus: Int, supabaseErrorCode: String?, serverMessage: String?) -> String {

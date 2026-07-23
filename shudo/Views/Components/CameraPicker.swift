@@ -26,8 +26,10 @@ struct CameraPicker: UIViewControllerRepresentable {
             _ picker: UIImagePickerController,
             didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
         ) {
+            // Deliver the original frame; the composer downsamples it off the
+            // main thread so the camera dismissal never stutters.
             if let image = info[.originalImage] as? UIImage {
-                parent.onImage(ImageProcessor.resizedForUpload(image))
+                parent.onImage(image)
             }
             parent.dismiss()
         }

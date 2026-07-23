@@ -192,6 +192,9 @@ enum NutritionProgressPolicy {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
+        // POSIX locale keeps the day keys ASCII so they match server-side
+        // local_day values even when the user's locale uses non-Latin digits.
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
 
         return (0..<dayCount).compactMap { offset in

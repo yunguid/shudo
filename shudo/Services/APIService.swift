@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 protocol EntryReanalysisServing {
     func reanalyzeEntry(id: UUID, context: String) async throws -> APIService.ReanalysisResult
@@ -70,7 +69,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
     public func createEntry(
         text: String?,
         audioData: Data?,
-        image: UIImage?,
+        imageJPEG: Data?,
         timezone: String,
         localDay: String,
         clientRequestId: UUID
@@ -84,11 +83,11 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
 
         let boundary = UUID().uuidString
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try makeMultipart(
+        req.httpBody = makeMultipart(
             boundary: boundary,
             text: text,
             audioData: audioData,
-            image: image,
+            imageJPEG: imageJPEG,
             timezone: timezone,
             localDay: localDay,
             clientRequestId: clientRequestId
@@ -334,11 +333,11 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         boundary: String,
         text: String?,
         audioData: Data?,
-        image: UIImage?,
+        imageJPEG: Data?,
         timezone: String,
         localDay: String,
         clientRequestId: UUID
-    ) throws -> Data {
+    ) -> Data {
         var data = Data()
         func part(_ name: String, _ value: String) {
             data.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -358,11 +357,11 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
             data.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)
             data.append(raw); data.append("\r\n".data(using: .utf8)!)
         }
-        if let image, let jpg = ImageProcessor.jpegData(from: image) {
+        if let imageJPEG, !imageJPEG.isEmpty {
             data.append("--\(boundary)\r\n".data(using: .utf8)!)
             data.append("Content-Disposition: form-data; name=\"image\"; filename=\"photo.jpg\"\r\n".data(using: .utf8)!)
             data.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
-            data.append(jpg); data.append("\r\n".data(using: .utf8)!)
+            data.append(imageJPEG); data.append("\r\n".data(using: .utf8)!)
         }
         data.append("--\(boundary)--\r\n".data(using: .utf8)!)
         return data

@@ -7,6 +7,27 @@ enum ImageProcessor {
     static let uploadJPEGQuality: CGFloat = 0.78
     static let maximumPhotoCount = 4
 
+    /// CIContext creation is expensive; orientation normalization shares one.
+    /// CIContext is thread-safe for rendering.
+    private static let orientationContext = CIContext(options: [.cacheIntermediates: false])
+
+    /// Produces the final upload-ready JPEG in a single render + encode pass.
+    /// One photo is bounded to `maxPixelSize`; several photos become one
+    /// collage. The collage/resize output is already opaque and bounded, so it
+    /// is encoded directly instead of being redrawn a second time.
+    static func uploadJPEGData(
+        from images: [UIImage],
+        maxPixelSize: Int = uploadMaxPixelSize,
+        quality: CGFloat = uploadJPEGQuality
+    ) -> Data? {
+        let selected = Array(images.prefix(maximumPhotoCount))
+        guard !selected.isEmpty else { return nil }
+        let composed = selected.count == 1
+            ? resizedForUpload(selected[0], maxPixelSize: maxPixelSize)
+            : collageForUpload(selected, maxPixelSize: maxPixelSize)
+        return composed?.jpegData(compressionQuality: quality)
+    }
+
     static func downsample(data: Data, maxPixelSize: Int = uploadMaxPixelSize) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
@@ -42,15 +63,6 @@ enum ImageProcessor {
             UIRectFill(CGRect(origin: .zero, size: outputSize))
             normalized.draw(in: CGRect(origin: .zero, size: outputSize))
         }
-    }
-
-    static func jpegData(
-        from image: UIImage,
-        maxPixelSize: Int = uploadMaxPixelSize,
-        quality: CGFloat = uploadJPEGQuality
-    ) -> Data? {
-        resizedForUpload(image, maxPixelSize: maxPixelSize)
-            .jpegData(compressionQuality: quality)
     }
 
     static func collageForUpload(
@@ -111,7 +123,7 @@ enum ImageProcessor {
         let translated = oriented.transformed(
             by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
         )
-        guard let output = CIContext(options: [.cacheIntermediates: false]).createCGImage(
+        guard let output = orientationContext.createCGImage(
             translated,
             from: translated.extent
         ) else { return image }

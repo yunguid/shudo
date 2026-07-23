@@ -660,16 +660,25 @@ struct AccountView: View {
                 ProfileCache.save(fresh)
                 onProfileUpdated(fresh)
             }
-            dailyTotals = try await service.fetchDailyNutritionTotals(timezone: profile.timezone)
-            targetHistory = try await service.fetchDailyMacroTargetHistory()
+            // Totals need the fresh profile's timezone; the remaining loads are
+            // independent, so run them together instead of as four round trips.
+            async let totalsRequest = service.fetchDailyNutritionTotals(timezone: profile.timezone)
+            async let historyRequest = service.fetchDailyMacroTargetHistory()
+            async let emailRequest = try? loadEmail()
+            async let weeklyRequest: Void = loadWeeklySummary()
+            dailyTotals = try await totalsRequest
+            targetHistory = try await historyRequest
+            if let loadedEmail = await emailRequest {
+                email = loadedEmail
+            }
+            await weeklyRequest
         } catch {
             self.error = error.localizedDescription
+            if let loadedEmail = try? await loadEmail() {
+                email = loadedEmail
+            }
+            await loadWeeklySummary()
         }
-
-        if let loadedEmail = try? await loadEmail() {
-            email = loadedEmail
-        }
-        await loadWeeklySummary()
         isLoading = false
     }
 

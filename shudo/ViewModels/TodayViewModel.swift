@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 enum EntrySubmissionResult: Equatable {
     case accepted
@@ -230,7 +229,7 @@ final class TodayViewModel: ObservableObject {
     func submitEntry(
         text: String?,
         audioData: Data?,
-        image: UIImage?,
+        imageJPEG: Data?,
         for targetDay: Date? = nil,
         clientRequestId: UUID = UUID()
     ) async -> EntrySubmissionResult {
@@ -241,7 +240,11 @@ final class TodayViewModel: ObservableObject {
         let placeholder = Entry(
             id: temporaryId,
             createdAt: optimisticTimestamp(for: day, timezone: timezone),
-            summary: optimisticTitle(text: text, hasAudio: audioData != nil, hasImage: image != nil),
+            summary: optimisticTitle(
+                text: text,
+                hasAudio: audioData != nil,
+                hasImage: imageJPEG != nil
+            ),
             imageURL: nil,
             proteinG: 0,
             carbsG: 0,
@@ -261,7 +264,7 @@ final class TodayViewModel: ObservableObject {
             let result = try await api.createEntry(
                 text: text,
                 audioData: audioData,
-                image: image,
+                imageJPEG: imageJPEG,
                 timezone: timezone,
                 localDay: targetLocalDay,
                 clientRequestId: clientRequestId
