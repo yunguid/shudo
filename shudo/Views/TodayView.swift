@@ -136,9 +136,10 @@ struct TodayView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { isShowingAccount = true } label: {
-                        Image(systemName: "person.crop.circle")
-                            .font(.title3)
-                            .foregroundStyle(Design.Color.muted)
+                        AccountAvatarIcon(
+                            userId: vm.profile?.userId ?? profile.userId,
+                            avatarPath: vm.profile?.avatarPath
+                        )
                     }
                     .accessibilityLabel("Account")
                 }
@@ -600,6 +601,59 @@ struct TodayView: View {
         guard let request else { return }
         openComposer(autoStartRecording: request.autoStartRecording)
         router.consume(request)
+    }
+}
+
+/// The account button's avatar. Settings owns uploading and caching the
+/// photo; this reuses the same disk cache first and falls back to one
+/// network fetch, so the corner stays a generic symbol only when the user
+/// has no photo (or a transient fetch fails — the next appearance retries).
+private struct AccountAvatarIcon: View {
+    let userId: String
+    let avatarPath: String?
+    @State private var avatar: UIImage?
+
+    var body: some View {
+        Group {
+            if let avatar {
+                Image(uiImage: avatar)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 30, height: 30)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle().stroke(
+                            Design.Color.rule,
+                            lineWidth: Design.Stroke.hairline
+                        )
+                    )
+            } else {
+                Image(systemName: "person.crop.circle")
+                    .font(.title3)
+                    .foregroundStyle(Design.Color.muted)
+            }
+        }
+        .task(id: avatarPath) { await loadAvatar() }
+    }
+
+    private func loadAvatar() async {
+        guard let avatarPath else {
+            avatar = nil
+            return
+        }
+        if let cached = ProfilePhotoCache.load(userId: userId, expectedPath: avatarPath),
+           let image = UIImage(data: cached) {
+            avatar = image
+            return
+        }
+        do {
+            let data = try await SupabaseService().fetchProfilePhoto(path: avatarPath)
+            guard let image = UIImage(data: data) else { return }
+            avatar = image
+            ProfilePhotoCache.save(data, userId: userId, path: avatarPath)
+        } catch {
+            // Keep the symbol; Settings and later appearances retry the fetch.
+        }
     }
 }
 

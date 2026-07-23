@@ -29,6 +29,19 @@ private struct PolishPreviewReanalysisService: EntryReanalysisServing {
 struct PolishPreviewView: View {
     let screen: PolishPreviewScreen
 
+    init(screen: PolishPreviewScreen) {
+        self.screen = screen
+        // Seed the fixture avatar before any view loads it, so the Today
+        // corner button renders the photo without a network dependency.
+        _ = Self.seedFixtureAvatarCache
+    }
+
+    private static let seedFixtureAvatarCache: Void = {
+        guard let path = profile.avatarPath,
+              let data = profilePhoto.jpegData(compressionQuality: 0.9) else { return }
+        ProfilePhotoCache.save(data, userId: profile.userId, path: path)
+    }()
+
     var body: some View {
         switch screen {
         case .main:
