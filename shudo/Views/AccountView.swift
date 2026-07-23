@@ -34,8 +34,6 @@ struct AccountView: View {
     @State private var isShowingProfileEditor = false
     @State private var isShowingTargetRecalculation = false
     @State private var isShowingDeleteAccount = false
-    @State private var isSendingPasswordReset = false
-    @State private var accountMessage: String?
     @State private var error: String?
     @State private var savedMessage: String?
     @State private var email = "-"
@@ -118,8 +116,6 @@ struct AccountView: View {
                     errorMessage: weeklySummaryError,
                     onRetry: { Task { await loadWeeklySummary() } }
                 )
-                accountActions
-                supportLinks
 
                 if isLoading {
                     ProgressView()
@@ -345,7 +341,7 @@ struct AccountView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionLabel("APPEARANCE")
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 92), spacing: 10)],
+                columns: [GridItem(.adaptive(minimum: 96), spacing: 10)],
                 alignment: .leading,
                 spacing: 10
             ) {
@@ -355,18 +351,30 @@ struct AccountView: View {
                         selectedTheme = theme.rawValue
                         UISelectionFeedbackGenerator().selectionChanged()
                     } label: {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(spacing: 5) {
-                                Circle().fill(theme.palette.accentPrimary)
-                                Circle().fill(theme.palette.accentSecondary)
-                                Circle().fill(theme.palette.success)
+                        VStack(alignment: .leading, spacing: 11) {
+                            LinearGradient(
+                                colors: [
+                                    theme.palette.accentPrimary,
+                                    theme.palette.accentSecondary
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(height: 5)
+                            .clipShape(Capsule())
+
+                            HStack(spacing: 6) {
+                                Text(theme.title)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(theme.palette.ink)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                                if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(theme.palette.accentPrimary)
+                                }
                             }
-                            .frame(height: 16)
-                            Text(theme.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(isSelected ? theme.palette.ink : Design.Color.ink)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.85)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12)
@@ -378,7 +386,7 @@ struct AccountView: View {
                             RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
                                 .stroke(
                                     isSelected ? theme.palette.accentPrimary : Design.Color.rule,
-                                    lineWidth: isSelected ? 2 : 1
+                                    lineWidth: 1
                                 )
                         }
                     }
@@ -522,109 +530,6 @@ struct AccountView: View {
             }
             .buttonStyle(.plain)
             .disabled(!canSaveTargets)
-        }
-    }
-
-    private var supportLinks: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("ABOUT")
-            VStack(spacing: 0) {
-                externalLinkRow(
-                    title: "Terms",
-                    systemImage: "doc.text",
-                    url: "https://shudo.yng.sh/terms"
-                )
-                Divider().background(Design.Color.rule).padding(.leading, 42)
-                externalLinkRow(
-                    title: "Support",
-                    systemImage: "questionmark.circle",
-                    url: "https://shudo.yng.sh/support"
-                )
-            }
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
-            )
-        }
-    }
-
-    private var accountActions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("ACCOUNT")
-            VStack(spacing: 0) {
-                Button { sendPasswordReset() } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "key.fill")
-                            .frame(width: 20)
-                            .foregroundStyle(Design.Color.accentPrimary)
-                        Text(isSendingPasswordReset ? "Sending…" : "Send password reset")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Design.Color.ink)
-                        Spacer(minLength: 12)
-                        if isSendingPasswordReset {
-                            ProgressView().controlSize(.small)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 48)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(isSendingPasswordReset || email == "-")
-            }
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
-            )
-
-            if let accountMessage {
-                Text(accountMessage)
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func externalLinkRow(title: String, systemImage: String, url: String) -> some View {
-        Link(destination: URL(string: url)!) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .frame(width: 20)
-                    .foregroundStyle(Design.Color.accentPrimary)
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Design.Color.ink)
-                Spacer(minLength: 12)
-                Image(systemName: "arrow.up.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Design.Color.muted)
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 48)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func sendPasswordReset() {
-        guard !isSendingPasswordReset, email != "-" else { return }
-        isSendingPasswordReset = true
-        accountMessage = nil
-        error = nil
-        Task {
-            do {
-                try await SupabaseAuthService().requestPasswordRecovery(email: email)
-                await MainActor.run {
-                    isSendingPasswordReset = false
-                    accountMessage = "Password reset link sent to \(email)."
-                }
-            } catch {
-                await MainActor.run {
-                    isSendingPasswordReset = false
-                    self.error = "Couldn’t send a password reset link. Try again."
-                }
-            }
         }
     }
 

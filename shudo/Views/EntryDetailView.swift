@@ -231,7 +231,7 @@ struct EntryDetailView: View {
     private func calorieSummary(_ detail: SupabaseService.EntryDetail) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("\(Int(detail.caloriesKcal.rounded()))")
-                .font(.system(size: calorieFontSize, weight: .bold, design: .rounded))
+                .font(.system(size: calorieFontSize, weight: .bold))
                 .foregroundStyle(Design.Color.ink)
                 .monospacedDigit()
             Text("kcal")
@@ -372,40 +372,23 @@ struct EntryDetailView: View {
     }
 
     private var correctionAction: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Something look off?")
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.ink)
-                Text("Adjust an ingredient, portion, or preparation detail.")
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Button { isShowingCorrection = true } label: {
-                Label("Update meal", systemImage: "slider.horizontal.3")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(
-                        LinearGradient(
-                            colors: [Design.Color.ctaPrimary, Design.Color.ctaSecondary],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
-                        in: Capsule()
-                    )
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Add a voice recording or note to revise the estimate")
+        Button { isShowingCorrection = true } label: {
+            Text("Update meal")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .background(
+                    LinearGradient(
+                        colors: [Design.Color.ctaPrimary, Design.Color.ctaSecondary],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    in: Capsule()
+                )
         }
-        .padding(16)
-        .background(
-            Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-        )
+        .buttonStyle(.plain)
+        .accessibilityHint("Add a voice recording or note to revise the estimate")
     }
 
     private var loadingView: some View {
@@ -799,7 +782,7 @@ private struct EntryCorrectionSheet: View {
                 Text(voiceHeadline)
                     .font(
                         audio.isRecording
-                            ? .system(size: 25, weight: .medium, design: .rounded)
+                            ? .system(size: 25, weight: .medium)
                             : .headline
                     )
                     .foregroundStyle(Design.Color.ink)

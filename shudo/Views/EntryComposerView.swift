@@ -185,7 +185,7 @@ struct EntryComposerView: View {
 
             VStack(spacing: 5) {
                 Text(voiceHeadline)
-                    .font(audio.isRecording ? .system(size: 26, weight: .medium, design: .rounded) : .headline)
+                    .font(audio.isRecording ? .system(size: 26, weight: .medium) : .headline)
                     .monospacedDigit()
                     .foregroundStyle(Design.Color.ink)
 
@@ -227,7 +227,7 @@ struct EntryComposerView: View {
                             .frame(width: 76, height: 76)
                             .shadow(color: Design.Color.accentPrimary.opacity(audio.isRecording ? 0.12 : 0.28), radius: 24)
 
-                        Image(systemName: audio.isRecording ? "stop.fill" : "waveform")
+                        Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.white)
                     }

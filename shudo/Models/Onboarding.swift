@@ -172,6 +172,7 @@ struct OnboardingDraft: Equatable, Sendable {
     private let initialHeightInches: String
     private let initialWeight: String
     private let initialTargetWeight: String
+    private let targetPreview: OnboardingTargetPreview
 
     init(proposal: OnboardingProposal, profileUnits: String? = nil) {
         let units = OnboardingUnitPreference(profileUnits: profileUnits)
@@ -205,6 +206,16 @@ struct OnboardingDraft: Equatable, Sendable {
         initialHeightInches = imperialHeight.inches
         initialWeight = weight
         initialTargetWeight = targetWeight
+        targetPreview = OnboardingTargetPreview(proposal: proposal)
+    }
+
+    mutating func applyGoal(_ goal: NutritionGoalType) {
+        goalType = goal
+        let target = targetPreview.target(for: goal)
+        caloriesKcal = Self.editableNumber(target.caloriesKcal)
+        proteinG = Self.editableNumber(target.proteinG)
+        carbsG = Self.editableNumber(target.carbsG)
+        fatG = Self.editableNumber(target.fatG)
     }
 
     func validatedOverrides() throws -> OnboardingOverrides {
@@ -390,6 +401,123 @@ struct OnboardingDraft: Equatable, Sendable {
         guard let value else { return "" }
         if value.rounded() == value { return String(Int(value)) }
         return String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+}
+
+struct OnboardingTargetPreview: Equatable, Sendable {
+    private let maintenanceCalories: Double
+    private let weightKG: Double?
+    private let proteinBias: Double
+    private let fatFraction: Double
+
+    init(proposal: OnboardingProposal) {
+        weightKG = proposal.weightKG
+        var maintenance = proposal.caloriesKcal
+        for _ in 0..<3 {
+            maintenance = proposal.caloriesKcal - Self.goalAdjustment(
+                goal: proposal.goalType,
+                maintenance: maintenance,
+                weightKG: proposal.weightKG
+            )
+        }
+        maintenanceCalories = Self.clamp(maintenance, minimum: 1_400, maximum: 6_000)
+
+        if let weight = proposal.weightKG, weight > 0 {
+            proteinBias = Self.clamp(
+                proposal.proteinG / weight - Self.baseProteinPerKG(for: proposal.goalType),
+                minimum: 0,
+                maximum: 0.4
+            )
+        } else {
+            proteinBias = 0
+        }
+        fatFraction = Self.clamp(
+            proposal.fatG * 9 / max(proposal.caloriesKcal, 1),
+            minimum: 0.22,
+            maximum: 0.30
+        )
+    }
+
+    func target(for goal: NutritionGoalType) -> MacroTarget {
+        let adjustment = Self.goalAdjustment(
+            goal: goal,
+            maintenance: maintenanceCalories,
+            weightKG: weightKG
+        )
+        let calories = Self.roundTo(
+            Self.clamp(maintenanceCalories + adjustment, minimum: 1_200, maximum: 6_000),
+            increment: 10
+        )
+        let proteinEstimate = weightKG.map {
+            $0 * Self.clamp(
+                Self.baseProteinPerKG(for: goal) + proteinBias,
+                minimum: 1.2,
+                maximum: 2.2
+            )
+        } ?? (calories * 0.25 / 4)
+        let protein = Self.roundTo(
+            Self.clamp(proteinEstimate, minimum: 40, maximum: 300),
+            increment: 1
+        )
+        let fat = Self.roundTo(
+            Self.clamp(calories * fatFraction / 9, minimum: 20, maximum: 250),
+            increment: 1
+        )
+        let carbs = Self.roundTo(
+            Self.clamp(
+                (calories - protein * 4 - fat * 9) / 4,
+                minimum: 0,
+                maximum: 900
+            ),
+            increment: 1
+        )
+        return MacroTarget(
+            caloriesKcal: calories,
+            proteinG: protein,
+            carbsG: carbs,
+            fatG: fat
+        )
+    }
+
+    private static func baseProteinPerKG(for goal: NutritionGoalType) -> Double {
+        switch goal {
+        case .lose: 1.8
+        case .maintain: 1.6
+        case .gain: 1.7
+        }
+    }
+
+    private static func goalAdjustment(
+        goal: NutritionGoalType,
+        maintenance: Double,
+        weightKG: Double?
+    ) -> Double {
+        switch goal {
+        case .maintain:
+            return 0
+        case .lose:
+            let weightBased = weightKG.map { $0 * 0.005 * 7_700 / 7 } ?? 400
+            return -clamp(
+                weightBased,
+                minimum: 250,
+                maximum: min(750, maintenance * 0.25)
+            )
+        case .gain:
+            let weightBased = weightKG.map { $0 * 0.0025 * 7_700 / 7 } ?? 250
+            return clamp(
+                weightBased,
+                minimum: 150,
+                maximum: min(500, maintenance * 0.20)
+            )
+        }
+    }
+
+    private static func clamp(_ value: Double, minimum: Double, maximum: Double) -> Double {
+        min(maximum, max(minimum, value))
+    }
+
+    private static func roundTo(_ value: Double, increment: Double) -> Double {
+        (value / increment).rounded() * increment
     }
 }
 

@@ -178,15 +178,17 @@ struct EntryCard: View {
                         .foregroundStyle(Design.Color.muted)
                         .lineLimit(2)
                 } else {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 7) {
                         macroChip(Design.Color.ringProtein, entry.proteinG)
                             .completedResultReveal(isVisible: isRevealed(.protein))
                         macroChip(Design.Color.ringCarb, entry.carbsG)
                             .completedResultReveal(isVisible: isRevealed(.carbs))
                         macroChip(Design.Color.ringFat, entry.fatG)
                             .completedResultReveal(isVisible: isRevealed(.fat))
-                        
-                        Spacer()
+
+                        Text("—")
+                            .font(.caption2)
+                            .foregroundStyle(Design.Color.subtle)
 
                         (
                             Text("\(Int(entry.caloriesKcal.rounded()))")
@@ -198,6 +200,8 @@ struct EntryCard: View {
                                 .foregroundStyle(Design.Color.muted)
                         )
                         .completedResultReveal(isVisible: isRevealed(.calories))
+
+                        Spacer(minLength: 0)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(

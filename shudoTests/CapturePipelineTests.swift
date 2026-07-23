@@ -108,6 +108,25 @@ struct CapturePipelineTests {
         #expect(ImageProcessor.jpegData(from: original)?.isEmpty == false)
     }
 
+    @Test func orientedCameraPhotosAreNormalizedWithoutChangingTheirDisplayedAspect() throws {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1_200, height: 600))
+        let source = renderer.image { context in
+            UIColor.systemIndigo.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1_200, height: 600))
+        }
+        let cgImage = try #require(source.cgImage)
+        let portrait = UIImage(cgImage: cgImage, scale: 1, orientation: .right)
+
+        let normalized = ImageProcessor.normalizedForUpload(portrait)
+        let resized = ImageProcessor.resizedForUpload(portrait)
+
+        #expect(normalized.imageOrientation == .up)
+        #expect(normalized.cgImage?.width == cgImage.height)
+        #expect(normalized.cgImage?.height == cgImage.width)
+        #expect(resized.cgImage?.width == 800)
+        #expect(resized.cgImage?.height == 1_600)
+    }
+
     @Test func multiplePhotosBecomeOneBoundedUploadCollage() throws {
         func image(_ color: UIColor) -> UIImage {
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 400))

@@ -244,6 +244,46 @@ struct OnboardingTests {
         }
     }
 
+    @Test func changingCutMaintainAndBulkUpdatesTheVisibleAndSubmittedTargets() throws {
+        let proposal = OnboardingProposal(
+            summary: "Maintain steadily.",
+            displayName: "Luke",
+            goalType: .maintain,
+            goalNotes: "",
+            heightCM: 180,
+            weightKG: 80,
+            targetWeightKG: nil,
+            activityLevel: .moderate,
+            caloriesKcal: 2_400,
+            proteinG: 160,
+            carbsG: 290,
+            fatG: 70,
+            assumptions: [],
+            suggestions: []
+        )
+        var draft = OnboardingDraft(proposal: proposal, profileUnits: "metric")
+
+        draft.applyGoal(.lose)
+        let cut = try draft.validatedOverrides()
+        draft.applyGoal(.gain)
+        let bulk = try draft.validatedOverrides()
+        draft.applyGoal(.maintain)
+        let maintain = try draft.validatedOverrides()
+
+        #expect(cut.goalType == .lose)
+        #expect(maintain.goalType == .maintain)
+        #expect(bulk.goalType == .gain)
+        #expect(cut.caloriesKcal <= maintain.caloriesKcal - 250)
+        #expect(bulk.caloriesKcal >= maintain.caloriesKcal + 150)
+        #expect(cut.carbsG != maintain.carbsG)
+        #expect(bulk.carbsG != maintain.carbsG)
+
+        for target in [cut, maintain, bulk] {
+            let macroCalories = target.proteinG * 4 + target.carbsG * 4 + target.fatG * 9
+            #expect(abs(macroCalories - target.caloriesKcal) <= target.caloriesKcal * 0.02)
+        }
+    }
+
     @Test func imperialReviewUsesFeetInchesAndPoundsWithoutMetricRoundTripDrift() throws {
         let proposal = OnboardingProposal(
             summary: "Build gradually.",

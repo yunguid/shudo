@@ -6,6 +6,7 @@ enum PolishPreviewScreen: String {
     case main
     case detail
     case settings
+    case heatmap
 
     static var launchValue: Self? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -47,6 +48,17 @@ struct PolishPreviewView: View {
                     profilePhoto: Self.profilePhoto,
                     dailyTotals: Self.adherenceTotals
                 )
+            }
+        case .heatmap:
+            ZStack {
+                AppBackground()
+                AdherenceHeatmapView(
+                    totals: Self.adherenceTotals,
+                    target: Self.profile.dailyMacroTarget,
+                    targetHistory: [],
+                    timezone: Self.profile.timezone
+                )
+                .padding(20)
             }
         }
     }

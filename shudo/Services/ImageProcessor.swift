@@ -1,3 +1,4 @@
+import CoreImage
 import ImageIO
 import UIKit
 
@@ -21,8 +22,9 @@ enum ImageProcessor {
     }
 
     static func resizedForUpload(_ image: UIImage, maxPixelSize: Int = uploadMaxPixelSize) -> UIImage {
-        let width = CGFloat(image.cgImage?.width ?? Int(image.size.width * image.scale))
-        let height = CGFloat(image.cgImage?.height ?? Int(image.size.height * image.scale))
+        let normalized = normalizedForUpload(image)
+        let width = CGFloat(normalized.cgImage?.width ?? Int(normalized.size.width * normalized.scale))
+        let height = CGFloat(normalized.cgImage?.height ?? Int(normalized.size.height * normalized.scale))
         let longestSide = max(width, height)
         guard longestSide > 0 else { return image }
 
@@ -38,7 +40,7 @@ enum ImageProcessor {
         return UIGraphicsImageRenderer(size: outputSize, format: format).image { _ in
             UIColor.black.setFill()
             UIRectFill(CGRect(origin: .zero, size: outputSize))
-            image.draw(in: CGRect(origin: .zero, size: outputSize))
+            normalized.draw(in: CGRect(origin: .zero, size: outputSize))
         }
     }
 
@@ -55,7 +57,7 @@ enum ImageProcessor {
         _ images: [UIImage],
         maxPixelSize: Int = uploadMaxPixelSize
     ) -> UIImage? {
-        let selected = Array(images.prefix(maximumPhotoCount))
+        let selected = Array(images.prefix(maximumPhotoCount)).map(normalizedForUpload)
         guard let first = selected.first, maxPixelSize > 0 else { return nil }
         if selected.count == 1 {
             return resizedForUpload(first, maxPixelSize: maxPixelSize)
@@ -89,6 +91,31 @@ enum ImageProcessor {
                 drawAspectFill(image, in: cell, context: context.cgContext)
             }
         }
+    }
+
+    static func normalizedForUpload(_ image: UIImage) -> UIImage {
+        guard image.imageOrientation != .up, let cgImage = image.cgImage else { return image }
+        let orientation: CGImagePropertyOrientation = switch image.imageOrientation {
+        case .up: .up
+        case .upMirrored: .upMirrored
+        case .down: .down
+        case .downMirrored: .downMirrored
+        case .left: .left
+        case .leftMirrored: .leftMirrored
+        case .right: .right
+        case .rightMirrored: .rightMirrored
+        @unknown default: .up
+        }
+        let oriented = CIImage(cgImage: cgImage).oriented(orientation)
+        let extent = oriented.extent.integral
+        let translated = oriented.transformed(
+            by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
+        )
+        guard let output = CIContext(options: [.cacheIntermediates: false]).createCGImage(
+            translated,
+            from: translated.extent
+        ) else { return image }
+        return UIImage(cgImage: output, scale: 1, orientation: .up)
     }
 
     private static func drawAspectFill(

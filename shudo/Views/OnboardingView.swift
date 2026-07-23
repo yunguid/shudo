@@ -72,10 +72,10 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 26) {
             VStack(alignment: .leading, spacing: 9) {
                 Text("Set your daily targets")
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .font(.system(.largeTitle, design: .default, weight: .bold))
                     .foregroundStyle(Design.Color.ink)
 
-                Text("Describe your height, weight, activity, diet, and goal. Speak naturally—you can edit everything before saving.")
+                Text("Describe your height, weight, activity, diet, and goal.")
                     .font(.title3)
                     .foregroundStyle(Design.Color.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -136,7 +136,7 @@ struct OnboardingView: View {
                 Text(voiceHeadline)
                     .font(
                         audio.isRecording
-                            ? .system(size: 25, weight: .medium, design: .rounded)
+                            ? .system(size: 25, weight: .medium)
                             : .headline
                     )
                     .foregroundStyle(Design.Color.ink)
@@ -246,7 +246,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 26) {
             VStack(alignment: .leading, spacing: 9) {
                 Text("Review your targets")
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .font(.system(.largeTitle, design: .default, weight: .bold))
                     .foregroundStyle(Design.Color.ink)
 
                 Text(result.proposal.summary)
@@ -300,7 +300,7 @@ struct OnboardingView: View {
             }
 
             sectionCard(title: "Goal, diet & preferences") {
-                Picker("Goal", selection: binding(\.goalType, fallback: .maintain)) {
+                Picker("Goal", selection: goalSelection) {
                     ForEach(NutritionGoalType.allCases, id: \.self) { goal in
                         Text(goal.onboardingTitle).tag(goal)
                     }
@@ -627,6 +627,19 @@ struct OnboardingView: View {
         )
     }
 
+    private var goalSelection: Binding<NutritionGoalType> {
+        Binding(
+            get: { draft?.goalType ?? .maintain },
+            set: { goal in
+                guard var updated = draft, updated.goalType != goal else { return }
+                updated.applyGoal(goal)
+                draft = updated
+                errorMessage = nil
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+        )
+    }
+
     @MainActor
     private func toggleRecording() async {
         errorMessage = nil
@@ -794,8 +807,8 @@ private extension NutritionGoalType {
     var onboardingTitle: String {
         switch self {
         case .maintain: return "Maintain"
-        case .lose: return "Lose"
-        case .gain: return "Gain"
+        case .lose: return "Cut"
+        case .gain: return "Bulk"
         }
     }
 }

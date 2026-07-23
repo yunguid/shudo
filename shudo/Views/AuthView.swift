@@ -71,7 +71,7 @@ struct AuthView: View {
                     Spacer(minLength: 62)
 
                     Text("Shudo")
-                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                        .font(.system(.largeTitle, design: .default, weight: .bold))
                         .foregroundStyle(Design.Color.ink)
 
                     VStack(spacing: 12) {

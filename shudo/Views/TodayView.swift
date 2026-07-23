@@ -284,7 +284,7 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("\(Int(vm.todayTotals.caloriesKcal.rounded()))")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold))
                         .foregroundStyle(Design.Color.ink)
                         .monospacedDigit()
                     Text("/ \(Int(target.caloriesKcal.rounded())) kcal")
@@ -325,7 +325,7 @@ struct TodayView: View {
                 .foregroundStyle(Design.Color.muted)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text("\(Int(value.rounded()))")
-                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .font(.system(.subheadline, design: .default, weight: .bold))
                     .foregroundStyle(Design.Color.ink)
                     .monospacedDigit()
                     .contentTransition(.numericText(value: value))

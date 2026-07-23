@@ -39,6 +39,10 @@ struct AdherenceHeatmapView: View {
                 ForEach(cells) { cell in
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(cellColor(cell))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .stroke(Design.Color.heatmapBorder, lineWidth: 0.75)
+                        }
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(accessibilityLabel(cell))
                     }
@@ -67,7 +71,7 @@ struct AdherenceHeatmapView: View {
             Text("Less")
             ForEach([0.2, 0.45, 0.7, 1.0], id: \.self) { score in
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Design.Color.success.opacity(0.16 + score * 0.78))
+                    .fill(Design.Color.success.opacity(0.32 + score * 0.68))
                     .frame(width: 8, height: 8)
             }
             Text("On target")
@@ -79,8 +83,8 @@ struct AdherenceHeatmapView: View {
     }
 
     private func cellColor(_ cell: AdherenceHeatmapCell) -> Color {
-        guard let adherence = cell.adherence else { return Design.Color.elevated }
-        return Design.Color.success.opacity(0.16 + min(max(adherence, 0), 1) * 0.78)
+        guard let adherence = cell.adherence else { return Design.Color.heatmapEmpty }
+        return Design.Color.success.opacity(0.32 + min(max(adherence, 0), 1) * 0.68)
     }
 
     private func accessibilityLabel(_ cell: AdherenceHeatmapCell) -> String {
