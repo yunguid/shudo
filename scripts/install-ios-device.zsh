@@ -97,11 +97,13 @@ xcrun devicectl device process launch \
   --device "$shudo_core_device_id" \
   "$shudo_bundle_id"
 
+# awk must read devicectl's full output: an early `exit` here sends devicectl
+# SIGPIPE, which pipefail turns into a spurious 141 after a successful install.
 shudo_installed_version="$(
   xcrun devicectl device info apps \
     --device "$shudo_core_device_id" \
     --include-all-apps \
-    | awk -v bundle="$shudo_bundle_id" '$2 == bundle { print $3 "|" $4; exit }'
+    | awk -v bundle="$shudo_bundle_id" '$2 == bundle && !found { print $3 "|" $4; found = 1 }'
 )"
 [[ "$shudo_installed_version" == "$shudo_version|$shudo_build" ]] || \
   fail "the phone did not report the expected installed version"
