@@ -104,6 +104,7 @@ final class AuthSessionManager: ObservableObject {
         session = nil
         deleteFromKeychain()
         ProfileCache.clearAll()
+        Task { await SignedImageURLCache.shared.removeAll() }
     }
 
     func getAccessToken() async throws -> String {

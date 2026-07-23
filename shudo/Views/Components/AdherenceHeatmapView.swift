@@ -6,22 +6,17 @@ struct AdherenceHeatmapView: View {
     let targetHistory: [DailyMacroTargetSnapshot]
     let timezone: String
 
-    private var cells: [AdherenceHeatmapCell] {
-        NutritionProgressPolicy.heatmapCells(
+    var body: some View {
+        // One cells pass and one DateFormatter per render; both were previously
+        // rebuilt per property access and per cell label.
+        let cells = NutritionProgressPolicy.heatmapCells(
             totals: totals,
             target: target,
             targetHistory: targetHistory,
             timezone: timezone
         )
-    }
-
-    private var weeks: [[AdherenceHeatmapCell]] {
-        stride(from: 0, to: cells.count, by: 7).map { start in
-            Array(cells[start..<min(start + 7, cells.count)])
-        }
-    }
-
-    var body: some View {
+        let weekCount = (cells.count + 6) / 7
+        let labelFormatter = makeLabelFormatter()
         VStack(alignment: .leading, spacing: 13) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top) {
@@ -35,23 +30,23 @@ struct AdherenceHeatmapView: View {
                 }
             }
 
-            AdherenceGrid(columnCount: weeks.count, rowCount: 7) {
+            AdherenceGrid(columnCount: weekCount, rowCount: 7) {
                 ForEach(cells) { cell in
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(cellColor(cell))
                         .overlay {
                             RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .stroke(Design.Color.heatmapBorder, lineWidth: 0.75)
+                                .strokeBorder(Design.Color.heatmapBorder, lineWidth: Design.Stroke.hairline)
                         }
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(accessibilityLabel(cell))
-                    }
+                        .accessibilityLabel(accessibilityLabel(cell, formatter: labelFormatter))
+                }
             }
         }
         .padding(18)
         .background(
             Design.Color.glassFill,
-            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
         )
     }
 
@@ -87,10 +82,14 @@ struct AdherenceHeatmapView: View {
         return Design.Color.success.opacity(0.32 + min(max(adherence, 0), 1) * 0.68)
     }
 
-    private func accessibilityLabel(_ cell: AdherenceHeatmapCell) -> String {
+    private func makeLabelFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
+        return formatter
+    }
+
+    private func accessibilityLabel(_ cell: AdherenceHeatmapCell, formatter: DateFormatter) -> String {
         guard let adherence = cell.adherence else {
             return "\(formatter.string(from: cell.date)), no completed meals"
         }

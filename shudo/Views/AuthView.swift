@@ -115,7 +115,7 @@ struct AuthView: View {
                         .padding(.horizontal, 16)
                         .background(
                             Design.Color.elevated,
-                            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
                         )
 
                         if !isCreatingAccount {

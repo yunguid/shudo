@@ -8,20 +8,15 @@ struct NutrientTrendsView: View {
 
     private let chartMaximumRatio = 1.35
 
-    private var weeks: [NutrientTrendWeek] {
-        NutritionProgressPolicy.nutrientTrendWeeks(
+    var body: some View {
+        // One trend pass per render; the property form recomputed it on every access.
+        let weeks = NutritionProgressPolicy.nutrientTrendWeeks(
             totals: totals,
             target: target,
             targetHistory: targetHistory,
             timezone: timezone
         )
-    }
-
-    private var hasLoggedData: Bool {
-        weeks.contains { $0.loggedDayCount > 0 }
-    }
-
-    var body: some View {
+        let hasLoggedData = weeks.contains { $0.loggedDayCount > 0 }
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -40,10 +35,10 @@ struct NutrientTrendsView: View {
 
             if hasLoggedData {
                 VStack(spacing: 15) {
-                    trendRow(for: .calories, color: Design.Color.accentSecondary)
-                    trendRow(for: .protein, color: Design.Color.ringProtein)
-                    trendRow(for: .carbs, color: Design.Color.ringCarb)
-                    trendRow(for: .fat, color: Design.Color.ringFat)
+                    trendRow(for: .calories, color: Design.Color.accentSecondary, weeks: weeks)
+                    trendRow(for: .protein, color: Design.Color.ringProtein, weeks: weeks)
+                    trendRow(for: .carbs, color: Design.Color.ringCarb, weeks: weeks)
+                    trendRow(for: .fat, color: Design.Color.ringFat, weeks: weeks)
                 }
 
                 HStack(spacing: 7) {
@@ -69,18 +64,22 @@ struct NutrientTrendsView: View {
         .padding(18)
         .background(
             Design.Color.glassFill,
-            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
         )
     }
 
-    private func trendRow(for metric: NutrientTrendMetric, color: Color) -> some View {
+    private func trendRow(
+        for metric: NutrientTrendMetric,
+        color: Color,
+        weeks: [NutrientTrendWeek]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(title(for: metric))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Design.Color.ink)
                 Spacer(minLength: 8)
-                Text(latestSummary(for: metric))
+                Text(latestSummary(for: metric, in: weeks))
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(Design.Color.muted)
                     .monospacedDigit()
@@ -111,7 +110,7 @@ struct NutrientTrendsView: View {
             .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilitySummary(for: metric))
+        .accessibilityLabel(accessibilitySummary(for: metric, in: weeks))
     }
 
     private func trendBar(ratio: Double?, color: Color, height: CGFloat) -> some View {
@@ -142,7 +141,10 @@ struct NutrientTrendsView: View {
         }
     }
 
-    private func latestSummary(for metric: NutrientTrendMetric) -> String {
+    private func latestSummary(
+        for metric: NutrientTrendMetric,
+        in weeks: [NutrientTrendWeek]
+    ) -> String {
         guard let week = weeks.last(where: { $0.ratio(for: metric) != nil }),
               let average = week.average,
               let averageTarget = week.averageTarget,
@@ -153,12 +155,16 @@ struct NutrientTrendsView: View {
         return "\(value) / \(goal)\(suffix) · \(Int((ratio * 100).rounded()))%"
     }
 
-    private func accessibilitySummary(for metric: NutrientTrendMetric) -> String {
+    private func accessibilitySummary(
+        for metric: NutrientTrendMetric,
+        in weeks: [NutrientTrendWeek]
+    ) -> String {
         let name = title(for: metric)
-        guard latestSummary(for: metric) != "No data" else {
+        let summary = latestSummary(for: metric, in: weeks)
+        guard summary != "No data" else {
             return "\(name), no logged data in the last 12 weeks"
         }
-        return "\(name), latest weekly average \(latestSummary(for: metric)). Bars run from 12 weeks ago through the latest seven days; the dashed line marks the target."
+        return "\(name), latest weekly average \(summary). Bars run from 12 weeks ago through the latest seven days; the dashed line marks the target."
     }
 }
 

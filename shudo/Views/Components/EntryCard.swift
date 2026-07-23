@@ -162,11 +162,13 @@ struct EntryCard: View {
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(Design.Color.accentSecondary)
                                     .padding(.horizontal, 9)
-                                    .padding(.vertical, 6)
+                                    .padding(.vertical, 10)
                                     .background(
                                         Design.Color.accentPrimary.opacity(0.12),
                                         in: Capsule()
                                     )
+                                    // ~44pt tap target beyond the visual pill.
+                                    .contentShape(Rectangle().inset(by: -6))
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Retry meal analysis")
@@ -178,30 +180,22 @@ struct EntryCard: View {
                         .foregroundStyle(Design.Color.muted)
                         .lineLimit(2)
                 } else {
-                    HStack(spacing: 7) {
-                        macroChip(Design.Color.ringProtein, entry.proteinG)
-                            .completedResultReveal(isVisible: isRevealed(.protein))
-                        macroChip(Design.Color.ringCarb, entry.carbsG)
-                            .completedResultReveal(isVisible: isRevealed(.carbs))
-                        macroChip(Design.Color.ringFat, entry.fatG)
-                            .completedResultReveal(isVisible: isRevealed(.fat))
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 7) {
+                            completedMacroChips
 
-                        Text("—")
-                            .font(.caption2)
-                            .foregroundStyle(Design.Color.subtle)
-
-                        (
-                            Text("\(Int(entry.caloriesKcal.rounded()))")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Design.Color.ink)
-                                .monospacedDigit()
-                            + Text(" kcal")
+                            Text("—")
                                 .font(.caption2)
-                                .foregroundStyle(Design.Color.muted)
-                        )
-                        .completedResultReveal(isVisible: isRevealed(.calories))
+                                .foregroundStyle(Design.Color.subtle)
 
-                        Spacer(minLength: 0)
+                            completedCalorieText
+
+                            Spacer(minLength: 0)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 7) { completedMacroChips }
+                            completedCalorieText
+                        }
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(
@@ -260,6 +254,29 @@ struct EntryCard: View {
         }
     }
 
+    @ViewBuilder
+    private var completedMacroChips: some View {
+        macroChip(Design.Color.ringProtein, entry.proteinG)
+            .completedResultReveal(isVisible: isRevealed(.protein))
+        macroChip(Design.Color.ringCarb, entry.carbsG)
+            .completedResultReveal(isVisible: isRevealed(.carbs))
+        macroChip(Design.Color.ringFat, entry.fatG)
+            .completedResultReveal(isVisible: isRevealed(.fat))
+    }
+
+    private var completedCalorieText: some View {
+        (
+            Text("\(Int(entry.caloriesKcal.rounded()))")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+                .monospacedDigit()
+            + Text(" kcal")
+                .font(.caption2)
+                .foregroundStyle(Design.Color.muted)
+        )
+        .completedResultReveal(isVisible: isRevealed(.calories))
+    }
+
     private var thumbnail: some View {
         AsyncImage(url: entry.imageURL, transaction: .init(animation: .easeInOut(duration: 0.2))) { phase in
             switch phase {
@@ -275,6 +292,11 @@ struct EntryCard: View {
             case .failure:
                 Rectangle()
                     .fill(Design.Color.elevated)
+                    .overlay {
+                        Image(systemName: "photo")
+                            .font(.caption)
+                            .foregroundStyle(Design.Color.muted)
+                    }
             @unknown default:
                 Rectangle()
                     .fill(Design.Color.elevated)
@@ -341,6 +363,7 @@ private extension View {
 
 private struct TypewriterStatusText: View {
     let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visibleText = ""
 
     var body: some View {
@@ -354,7 +377,11 @@ private struct TypewriterStatusText: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
-        .task(id: text) {
+        .task(id: "\(text)|\(reduceMotion)") {
+            if reduceMotion {
+                visibleText = text
+                return
+            }
             visibleText = ""
             for character in text {
                 guard !Task.isCancelled else { return }

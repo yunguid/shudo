@@ -361,10 +361,25 @@ final class TodayViewModel: ObservableObject {
 
         while !Task.isCancelled && Date() < deadline {
             do {
-                guard var refreshed = try await supabase.fetchEntry(id: entryId) else {
+                // Processing polls use a slim status projection; the full row
+                // (macros, title, signed image) is fetched once, on the poll
+                // that first observes a terminal status.
+                guard let snapshot = try await supabase.fetchEntryStatus(id: entryId) else {
                     throw URLError(.cannotParseResponse)
                 }
                 guard !Task.isCancelled else { return }
+
+                var refreshed: Entry
+                if snapshot.status.isProcessing,
+                   let existing = entries.first(where: { $0.id == entryId }) {
+                    refreshed = Self.entryApplyingStatusSnapshot(to: existing, snapshot: snapshot)
+                } else {
+                    guard let full = try await supabase.fetchEntry(id: entryId) else {
+                        throw URLError(.cannotParseResponse)
+                    }
+                    guard !Task.isCancelled else { return }
+                    refreshed = full
+                }
                 consecutiveErrors = 0
                 observedStatus = refreshed.status
 
@@ -586,6 +601,26 @@ final class TodayViewModel: ObservableObject {
         refreshed: EntryStatus
     ) -> Bool {
         previous?.isProcessing == true && refreshed == .complete
+    }
+
+    /// Applies a slim status snapshot onto the currently visible entry,
+    /// keeping locally known fields (summary, timestamps, image) that the
+    /// status projection intentionally omits while the meal processes.
+    nonisolated static func entryApplyingStatusSnapshot(
+        to current: Entry,
+        snapshot: SupabaseService.EntryStatusSnapshot
+    ) -> Entry {
+        var updated = current
+        updated.status = snapshot.status
+        updated.statusMessage = snapshot.statusMessage
+        updated.analysisPreview = snapshot.analysisPreview
+        updated.errorMessage = snapshot.errorMessage
+        updated.processingAttempts = snapshot.processingAttempts
+        updated.statusUpdatedAt = snapshot.statusUpdatedAt
+        if let localDay = snapshot.localDay {
+            updated.localDay = localDay
+        }
+        return updated
     }
 
     static func nextPollingDelay(

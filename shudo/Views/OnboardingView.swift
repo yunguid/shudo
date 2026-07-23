@@ -115,7 +115,7 @@ struct OnboardingView: View {
                 }
                 .background(
                     Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
                 )
             }
 
@@ -203,7 +203,7 @@ struct OnboardingView: View {
         .padding(22)
         .background(
             Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
         )
     }
 
@@ -226,7 +226,7 @@ struct OnboardingView: View {
         .padding(20)
         .background(
             Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Building your daily targets")
@@ -388,7 +388,7 @@ struct OnboardingView: View {
                 .padding(18)
                 .background(
                     Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
                 )
             }
 
@@ -418,7 +418,7 @@ struct OnboardingView: View {
         .padding(18)
         .background(
             Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
         )
     }
 
@@ -443,11 +443,7 @@ struct OnboardingView: View {
         .frame(minHeight: 44)
     }
 
-    private var rowDivider: some View {
-        Rectangle()
-            .fill(Design.Color.rule)
-            .frame(height: Design.Stroke.hairline)
-    }
+    private var rowDivider: some View { HairlineRule() }
 
     @ViewBuilder
     private var heightReviewRow: some View {
@@ -535,7 +531,7 @@ struct OnboardingView: View {
         .padding(16)
         .background(
             Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
         )
     }
 
@@ -753,6 +749,7 @@ struct OnboardingView: View {
 }
 
 private struct OnboardingAudioMeter: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let levels: [CGFloat]
     let isActive: Bool
 
@@ -771,7 +768,7 @@ private struct OnboardingAudioMeter: View {
                                 : Design.Color.subtle.opacity(0.55)
                         )
                         .frame(width: width, height: max(4, geometry.size.height * level))
-                        .animation(.linear(duration: 0.055), value: level)
+                        .animation(reduceMotion ? nil : .linear(duration: 0.055), value: level)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

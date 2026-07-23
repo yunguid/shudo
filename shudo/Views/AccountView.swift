@@ -285,7 +285,8 @@ struct AccountView: View {
                 Text(profile.avatarPath == nil ? "Add photo" : "Replace photo")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Design.Color.accentPrimary)
-                    .frame(minHeight: 30)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .disabled(isSavingProfilePhoto)
             .onChange(of: selectedPhotoItem) { _, item in
@@ -412,10 +413,10 @@ struct AccountView: View {
             }
             VStack(spacing: 0) {
                 infoRow(icon: "globe", label: "Timezone", value: profile.timezone)
-                Divider().background(Design.Color.rule)
+                HairlineRule()
                 infoRow(icon: "ruler", label: "Units", value: profile.units.capitalized)
                 if let height = profile.heightCM {
-                    Divider().background(Design.Color.rule)
+                    HairlineRule()
                     infoRow(
                         icon: "arrow.up.and.down",
                         label: "Height",
@@ -423,7 +424,7 @@ struct AccountView: View {
                     )
                 }
                 if let weight = profile.weightKG {
-                    Divider().background(Design.Color.rule)
+                    HairlineRule()
                     infoRow(
                         icon: "scalemass",
                         label: "Weight",
@@ -431,7 +432,7 @@ struct AccountView: View {
                     )
                 }
                 if let targetWeight = profile.targetWeightKG {
-                    Divider().background(Design.Color.rule)
+                    HairlineRule()
                     infoRow(
                         icon: "target",
                         label: "Target weight",
@@ -471,7 +472,7 @@ struct AccountView: View {
                     text: $targetDraft.calories,
                     field: .calories
                 )
-                Divider().background(Design.Color.rule).padding(.leading, 42)
+                HairlineRule().padding(.leading, 42)
                 targetRow(
                     label: "Protein",
                     unit: "g",
@@ -479,7 +480,7 @@ struct AccountView: View {
                     text: $targetDraft.protein,
                     field: .protein
                 )
-                Divider().background(Design.Color.rule).padding(.leading, 42)
+                HairlineRule().padding(.leading, 42)
                 targetRow(
                     label: "Carbs",
                     unit: "g",
@@ -487,7 +488,7 @@ struct AccountView: View {
                     text: $targetDraft.carbs,
                     field: .carbs
                 )
-                Divider().background(Design.Color.rule).padding(.leading, 42)
+                HairlineRule().padding(.leading, 42)
                 targetRow(
                     label: "Fat",
                     unit: "g",
@@ -899,7 +900,7 @@ private struct ProfilePhotoCropView: View {
             .scaleEffect(liveZoom)
             .offset(liveOffset)
             .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
             .overlay {
                 Circle()
                     .stroke(.white.opacity(0.86), lineWidth: 1.5)
@@ -907,7 +908,7 @@ private struct ProfilePhotoCropView: View {
                     .allowsHitTesting(false)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
                     .stroke(Design.Color.rule, lineWidth: 1)
             }
             .contentShape(Rectangle())

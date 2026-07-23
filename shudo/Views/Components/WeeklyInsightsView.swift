@@ -98,7 +98,7 @@ struct WeeklyInsightsView: View {
         .padding(18)
         .background(
             Design.Color.glassFill,
-            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
         )
     }
 
@@ -122,12 +122,17 @@ struct WeeklyInsightsView: View {
         }
     }
 
-    private func periodText(_ summary: WeeklyInsightSummary) -> String {
+    private static let periodFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+
+    private func periodText(_ summary: WeeklyInsightSummary) -> String {
+        let formatter = Self.periodFormatter
         return "\(formatter.string(from: summary.weekStart))–\(formatter.string(from: summary.weekEnd))"
     }
 }

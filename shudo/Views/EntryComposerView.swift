@@ -259,8 +259,7 @@ struct EntryComposerView: View {
                                 .scaledToFill()
                                 .frame(maxWidth: .infinity)
                                 .frame(height: images.count == 1 ? 190 : 122)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
 
                             Button {
                                 removePhoto(at: index)
@@ -337,7 +336,7 @@ struct EntryComposerView: View {
                     if bounded != value { note = bounded }
                 }
         }
-        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous))
     }
 
     private var submitBar: some View {
@@ -561,6 +560,7 @@ struct EntryComposerView: View {
 }
 
 private struct AudioMeterView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let levels: [CGFloat]
     let isActive: Bool
 
@@ -573,7 +573,7 @@ private struct AudioMeterView: View {
                     Capsule()
                         .fill(isActive ? Design.Color.accentPrimary : Design.Color.subtle.opacity(0.55))
                         .frame(width: barWidth, height: max(4, geometry.size.height * level))
-                        .animation(.linear(duration: 0.055), value: level)
+                        .animation(reduceMotion ? nil : .linear(duration: 0.055), value: level)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

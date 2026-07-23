@@ -133,10 +133,25 @@ enum Design {
         static let s: CGFloat = 8
         static let m: CGFloat = 12
         static let l: CGFloat = 16
+        static let panel: CGFloat = 18
+        static let xl: CGFloat = 20
+        static let card: CGFloat = 22
+        static let hero: CGFloat = 24
+        static let sheet: CGFloat = 28
     }
 
     enum Stroke {
         static let hairline: CGFloat = 0.5
+    }
+}
+
+/// One consistent hairline rule; Divider ignores tint and renders the system
+/// separator color, so lists use this instead.
+struct HairlineRule: View {
+    var body: some View {
+        Rectangle()
+            .fill(Design.Color.rule)
+            .frame(height: Design.Stroke.hairline)
     }
 }
 

@@ -87,4 +87,108 @@ struct SupabaseServiceErrorTests {
         // LocalizedError should provide errorDescription
         #expect(error.errorDescription != nil)
     }
+
+    // MARK: - Signed image URL caching and batch signing
+
+    @Test func signedURLCacheReusesWithinLifetimeAndExpiresWithMargin() async {
+        let cache = SignedImageURLCache()
+        let path = "user/entry/token/photo.jpg"
+        let url = URL(string: "https://example.supabase.co/storage/v1/object/sign/entry-images/photo.jpg?token=abc")!
+        let now = Date()
+
+        await cache.store(url, for: path, now: now)
+        #expect(await cache.cachedURL(for: path, now: now) == url)
+
+        let nearExpiry = now.addingTimeInterval(
+            SignedImageURLCache.signedURLLifetime - SignedImageURLCache.reuseSafetyMargin - 1
+        )
+        #expect(await cache.cachedURL(for: path, now: nearExpiry) == url)
+
+        let pastMargin = now.addingTimeInterval(
+            SignedImageURLCache.signedURLLifetime - SignedImageURLCache.reuseSafetyMargin + 1
+        )
+        #expect(await cache.cachedURL(for: path, now: pastMargin) == nil)
+        // An expired entry is also evicted, not retried forever.
+        #expect(await cache.cachedURL(for: path, now: now) == nil)
+    }
+
+    @Test func batchSignedURLResponsesNormalizeToAbsoluteURLs() throws {
+        let supabaseUrl = URL(string: "https://example.supabase.co")!
+        let parsed = SupabaseService.parseBatchSignedURLs(
+            [
+                [
+                    "path": "a/b/photo.jpg",
+                    "signedURL": "/object/sign/entry-images/a/b/photo.jpg?token=one"
+                ],
+                [
+                    "path": "c/d/photo.jpg",
+                    "signedUrl": "https://example.supabase.co/storage/v1/object/sign/entry-images/c/d/photo.jpg?token=two"
+                ],
+                ["path": "e/f/photo.jpg", "error": "not found"],
+                ["signedURL": "/object/sign/entry-images/missing-path.jpg?token=three"]
+            ],
+            supabaseUrl: supabaseUrl
+        )
+
+        #expect(parsed.count == 2)
+        #expect(
+            parsed["a/b/photo.jpg"]?.absoluteString
+                == "https://example.supabase.co/storage/v1/object/sign/entry-images/a/b/photo.jpg?token=one"
+        )
+        #expect(parsed["c/d/photo.jpg"]?.absoluteString.hasSuffix("token=two") == true)
+    }
+
+    // MARK: - Status polling projection
+
+    @Test func statusSnapshotParsesAndMergesIntoVisibleEntry() throws {
+        let id = UUID()
+        let snapshot = try #require(SupabaseService.parseEntryStatusSnapshot([
+            "id": id.uuidString,
+            "status": "analyzing",
+            "status_message": "Estimating your meal",
+            "analysis_preview": "Chicken bowl with rice",
+            "processing_attempts": 1,
+            "updated_at": "2026-07-23T01:00:00.000Z",
+            "local_day": "2026-07-22"
+        ]))
+        #expect(snapshot.status == .analyzing)
+        #expect(snapshot.processingAttempts == 1)
+
+        let visible = Entry(
+            id: id,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            summary: "Voice note + photo",
+            imageURL: URL(string: "https://example.com/cached.jpg"),
+            proteinG: 0,
+            carbsG: 0,
+            fatG: 0,
+            caloriesKcal: 0,
+            localDay: "2026-07-22",
+            status: .transcribing,
+            statusMessage: "Transcribing your note"
+        )
+        let merged = TodayViewModel.entryApplyingStatusSnapshot(
+            to: visible,
+            snapshot: snapshot
+        )
+        // Status fields advance…
+        #expect(merged.status == .analyzing)
+        #expect(merged.statusMessage == "Estimating your meal")
+        #expect(merged.analysisPreview == "Chicken bowl with rice")
+        #expect(merged.statusUpdatedAt != nil)
+        // …while locally known fields the projection omits are preserved.
+        #expect(merged.summary == "Voice note + photo")
+        #expect(merged.createdAt == visible.createdAt)
+        #expect(merged.imageURL == visible.imageURL)
+    }
+
+    @Test func statusSnapshotRejectsRowsWithoutIdentityOrStatus() {
+        #expect(SupabaseService.parseEntryStatusSnapshot(["id": "nope"]) == nil)
+        #expect(
+            SupabaseService.parseEntryStatusSnapshot([
+                "id": UUID().uuidString,
+                "status": "unknown-state"
+            ]) == nil
+        )
+    }
 }

@@ -33,6 +33,17 @@ struct DesignSystemTests {
         #expect(Set(AppTheme.allCases.map(\.rawValue)).count == AppTheme.allCases.count)
     }
 
+    @Test func radiusVocabularyIsStableAndMonotonic() {
+        #expect(Design.Radius.s == 8)
+        #expect(Design.Radius.m == 12)
+        #expect(Design.Radius.l == 16)
+        #expect(Design.Radius.panel == 18)
+        #expect(Design.Radius.xl == 20)
+        #expect(Design.Radius.card == 22)
+        #expect(Design.Radius.hero == 24)
+        #expect(Design.Radius.sheet == 28)
+    }
+
     private func contrastRatio(
         foreground: UIColor,
         background: UIColor

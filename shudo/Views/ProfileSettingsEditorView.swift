@@ -278,7 +278,7 @@ struct ProfileSettingsEditorView: View {
     }
 
     private var rowDivider: some View {
-        Divider().background(Design.Color.rule).padding(.leading, 14)
+        HairlineRule().padding(.leading, 14)
     }
 
     private func save() {

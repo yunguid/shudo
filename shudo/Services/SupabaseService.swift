@@ -4,6 +4,10 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
     static let signedImageConcurrencyLimit = 4
     static let maximumProfilePhotoBytes = 2_097_152
     static let entryListColumns = "id,local_day,occurred_at,created_at,updated_at,status,status_message,analysis_preview,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"
+    /// Status polling runs every 650 ms while a meal analyzes; this projection
+    /// deliberately omits `raw_text` (up to 12 KB) and other fields that
+    /// cannot change until the entry completes.
+    static let entryStatusColumns = "id,local_day,status,status_message,analysis_preview,error_message,processing_attempts,updated_at"
 
     private struct ParsedEntry {
         var entry: Entry
@@ -55,12 +59,19 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         return nil
     }
     
+    // ISO8601DateFormatter is thread-safe; building one per parsed field was
+    // measurable overhead across list loads and status polls.
+    private static let fractionalISOFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let plainISOFormatter = ISO8601DateFormatter()
+
     private static func parseDate(_ value: Any?) -> Date? {
         guard let string = value as? String else { return nil }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: string) { return date }
-        return ISO8601DateFormatter().date(from: string)
+        if let date = fractionalISOFormatter.date(from: string) { return date }
+        return plainISOFormatter.date(from: string)
     }
 
     static func boundedConcurrentMap<Input: Sendable, Output: Sendable>(
@@ -718,15 +729,15 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
     }
 
     func localDayString(for date: Date, timezone: String) -> String {
+        // Called on every poll iteration and list merge; composing the string
+        // from calendar components avoids allocating a DateFormatter each time.
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timezone) ?? .current
         let comps = calendar.dateComponents([.year, .month, .day], from: date)
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        let day = calendar.date(from: comps) ?? date
-        return formatter.string(from: day)
+        guard let year = comps.year, let month = comps.month, let day = comps.day else {
+            return "1970-01-01"
+        }
+        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
     func fetchEntries(for date: Date, timezone: String) async throws -> [Entry] {
@@ -763,19 +774,71 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         }
 
         let parsed = arr.compactMap(parseEntry)
-        let imageURLs: [URL?] = await Self.boundedConcurrentMap(
-            parsed.map(\.imagePath),
-            maximumConcurrentTasks: Self.signedImageConcurrencyLimit
-        ) { path in
-            guard let path else { return nil }
-            return await signImageURL(path: path, jwt: jwt)
-        }
+        let imageURLs = await signedImageURLs(for: parsed.map(\.imagePath), jwt: jwt)
 
         return zip(parsed, imageURLs).map { parsedEntry, imageURL in
             var entry = parsedEntry.entry
             entry.imageURL = imageURL
             return entry
         }
+    }
+
+    struct EntryStatusSnapshot: Equatable {
+        let id: UUID
+        let status: EntryStatus
+        let statusMessage: String?
+        let analysisPreview: String?
+        let errorMessage: String?
+        let processingAttempts: Int
+        let statusUpdatedAt: Date?
+        let localDay: String?
+    }
+
+    /// Lightweight processing poll: only the fields that change while a meal
+    /// is being transcribed/analyzed. The full row (macros, title, image) is
+    /// fetched once, when the status turns terminal.
+    func fetchEntryStatus(id: UUID) async throws -> EntryStatusSnapshot? {
+        let jwt = try await currentJWT()
+        let userId = try currentUserId()
+        var comps = URLComponents(url: supabaseUrl.appendingPathComponent("/rest/v1/entries"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "select", value: Self.entryStatusColumns),
+            URLQueryItem(name: "id", value: "eq.\(id.uuidString)"),
+            URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+            URLQueryItem(name: "limit", value: "1")
+        ]
+        var request = URLRequest(url: comps.url!)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw ServiceError.serverError(
+                statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                message: "Failed to refresh meal status"
+            )
+        }
+        guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let object = objects.first else { return nil }
+        return Self.parseEntryStatusSnapshot(object)
+    }
+
+    static func parseEntryStatusSnapshot(_ object: [String: Any]) -> EntryStatusSnapshot? {
+        guard let idString = object["id"] as? String,
+              let id = UUID(uuidString: idString),
+              let status = (object["status"] as? String).flatMap(EntryStatus.init(rawValue:))
+        else { return nil }
+        return EntryStatusSnapshot(
+            id: id,
+            status: status,
+            statusMessage: object["status_message"] as? String,
+            analysisPreview: object["analysis_preview"] as? String,
+            errorMessage: object["error_message"] as? String,
+            processingAttempts: Int(toDouble(object["processing_attempts"])),
+            statusUpdatedAt: parseDate(object["updated_at"]),
+            localDay: object["local_day"] as? String
+        )
     }
 
     func fetchEntry(id: UUID) async throws -> Entry? {
@@ -850,7 +913,22 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         )
     }
 
+    /// Returns a stable signed URL for a private image path, reusing the
+    /// cached one whenever it is still comfortably inside its lifetime.
+    /// Stable URL identity is what lets `AsyncImage` and the URL cache treat
+    /// refreshes as the same resource instead of re-downloading.
     private func signImageURL(path: String, jwt: String) async -> URL? {
+        if let cached = await SignedImageURLCache.shared.cachedURL(for: path) {
+            return cached
+        }
+        guard let signed = await requestSignedImageURL(path: path, jwt: jwt) else {
+            return nil
+        }
+        await SignedImageURLCache.shared.store(signed, for: path)
+        return signed
+    }
+
+    private func requestSignedImageURL(path: String, jwt: String) async -> URL? {
         // Build path without encoding slashes in the object key
         var url = supabaseUrl.appendingPathComponent("storage/v1/object/sign/entry-images")
         for segment in path.split(separator: "/") {
@@ -861,7 +939,9 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["expiresIn": 600])
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "expiresIn": Int(SignedImageURLCache.signedURLLifetime)
+        ])
         guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             // Normalize possible response shapes from Storage REST
@@ -871,26 +951,113 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
                 obj["url"] as? String
             ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-            func absolutize(_ s: String) -> URL? {
-                if let u = URL(string: s), u.scheme != nil { return u }
-                // Build base https://host/storage/v1
-                let base = supabaseUrl.appendingPathComponent("storage/v1")
-                if s.hasPrefix("/") { return URL(string: base.absoluteString + s) }
-                if s.hasPrefix("object/") || s.hasPrefix("object/sign/") { return URL(string: base.appendingPathComponent(s).absoluteString) }
-                if s.hasPrefix("entry-images/") { return URL(string: base.appendingPathComponent("object/sign").appendingPathComponent(s).absoluteString) }
-                // Fallback: treat as already rooted
-                return URL(string: base.appendingPathComponent(s).absoluteString)
+            for s in strCandidates {
+                if let u = Self.normalizeSignedStorageURL(s, supabaseUrl: supabaseUrl) { return u }
             }
-
-            for s in strCandidates { if let u = absolutize(s) { return u } }
 
             if let arr = obj["signedUrls"] as? [[String: Any]] {
                 if let s = (arr.first?["signedUrl"] as? String) ?? (arr.first?["signedURL"] as? String) {
-                    if let u = absolutize(s) { return u }
+                    if let u = Self.normalizeSignedStorageURL(s, supabaseUrl: supabaseUrl) { return u }
                 }
             }
         }
         return nil
+    }
+
+    static func normalizeSignedStorageURL(_ s: String, supabaseUrl: URL) -> URL? {
+        if let u = URL(string: s), u.scheme != nil { return u }
+        // Build base https://host/storage/v1
+        let base = supabaseUrl.appendingPathComponent("storage/v1")
+        if s.hasPrefix("/") { return URL(string: base.absoluteString + s) }
+        if s.hasPrefix("object/") || s.hasPrefix("object/sign/") { return URL(string: base.appendingPathComponent(s).absoluteString) }
+        if s.hasPrefix("entry-images/") { return URL(string: base.appendingPathComponent("object/sign").appendingPathComponent(s).absoluteString) }
+        // Fallback: treat as already rooted
+        return URL(string: base.appendingPathComponent(s).absoluteString)
+    }
+
+    /// Resolves signed URLs for a list of image paths, preserving order.
+    /// Cached URLs are reused; the misses are signed in one batch request,
+    /// with the previous per-path signing as fallback.
+    func signedImageURLs(for paths: [String?], jwt: String) async -> [URL?] {
+        var results = [URL?](repeating: nil, count: paths.count)
+        var missingIndicesByPath: [String: [Int]] = [:]
+
+        for (index, path) in paths.enumerated() {
+            guard let path else { continue }
+            if let cached = await SignedImageURLCache.shared.cachedURL(for: path) {
+                results[index] = cached
+            } else {
+                missingIndicesByPath[path, default: []].append(index)
+            }
+        }
+        guard !missingIndicesByPath.isEmpty else { return results }
+
+        let missingPaths = Array(missingIndicesByPath.keys)
+        if let signedByPath = await batchSignImageURLs(paths: missingPaths, jwt: jwt) {
+            for (path, url) in signedByPath {
+                await SignedImageURLCache.shared.store(url, for: path)
+                for index in missingIndicesByPath[path] ?? [] {
+                    results[index] = url
+                }
+            }
+            return results
+        }
+
+        // Batch endpoint unavailable: sign individually with bounded fan-out.
+        let fallback = await Self.boundedConcurrentMap(
+            missingPaths,
+            maximumConcurrentTasks: Self.signedImageConcurrencyLimit
+        ) { path in
+            (path, await signImageURL(path: path, jwt: jwt))
+        }
+        for (path, url) in fallback {
+            guard let url else { continue }
+            for index in missingIndicesByPath[path] ?? [] {
+                results[index] = url
+            }
+        }
+        return results
+    }
+
+    private func batchSignImageURLs(paths: [String], jwt: String) async -> [String: URL]? {
+        guard !paths.isEmpty else { return [:] }
+        var req = URLRequest(
+            url: supabaseUrl.appendingPathComponent("storage/v1/object/sign/entry-images")
+        )
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "expiresIn": Int(SignedImageURLCache.signedURLLifetime),
+            "paths": paths
+        ])
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+        return Self.parseBatchSignedURLs(items, supabaseUrl: supabaseUrl)
+    }
+
+    static func parseBatchSignedURLs(
+        _ items: [[String: Any]],
+        supabaseUrl: URL
+    ) -> [String: URL] {
+        var byPath: [String: URL] = [:]
+        for item in items {
+            guard let path = item["path"] as? String, !path.isEmpty else { continue }
+            let candidate = (item["signedURL"] as? String)
+                ?? (item["signedUrl"] as? String)
+            guard let candidate,
+                  !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let url = normalizeSignedStorageURL(candidate, supabaseUrl: supabaseUrl) else {
+                continue
+            }
+            byPath[path] = url
+        }
+        return byPath
     }
 
     // MARK: - Entry detail fetch

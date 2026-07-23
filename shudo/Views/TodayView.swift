@@ -73,8 +73,12 @@ struct TodayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
+    @ScaledMetric(relativeTo: .largeTitle) private var todayCalorieFontSize: CGFloat = 32
+    // Matches EntryCard's thumbnail metric so the divider inset tracks Dynamic Type.
+    @ScaledMetric(relativeTo: .body) private var entryThumb: CGFloat = 44
     @StateObject private var vm: TodayViewModel
     @ObservedObject private var router = AppRouter.shared
+    @State private var formatterCache = DayFormatterCache()
 
     @State private var isShowingAccount = false
     @State private var isShowingDatePicker = false
@@ -157,7 +161,7 @@ struct TodayView: View {
                 )
             }
             .presentationDragIndicator(.visible)
-            .presentationCornerRadius(28)
+            .presentationCornerRadius(Design.Radius.sheet)
         }
         .sheet(isPresented: $isShowingAccount) {
             NavigationStack {
@@ -279,12 +283,13 @@ struct TodayView: View {
                 Text(calorieGoalStatus(current: vm.todayTotals.caloriesKcal, goal: target.caloriesKcal))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Design.Color.muted)
+                    .monospacedDigit()
             }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("\(Int(vm.todayTotals.caloriesKcal.rounded()))")
-                        .font(.system(size: 32, weight: .bold))
+                        .font(.system(size: todayCalorieFontSize, weight: .bold))
                         .foregroundStyle(Design.Color.ink)
                         .monospacedDigit()
                     Text("/ \(Int(target.caloriesKcal.rounded())) kcal")
@@ -293,6 +298,10 @@ struct TodayView: View {
                         .monospacedDigit()
                     Spacer(minLength: 0)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    "\(Int(vm.todayTotals.caloriesKcal.rounded())) of \(Int(target.caloriesKcal.rounded())) kilocalories"
+                )
                 goalBar(
                     current: vm.todayTotals.caloriesKcal,
                     goal: target.caloriesKcal,
@@ -315,7 +324,7 @@ struct TodayView: View {
             }
         }
         .padding(18)
-        .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
     }
 
     private func macroMetric(_ label: String, _ value: Double, _ goal: Double, _ color: Color) -> some View {
@@ -428,9 +437,9 @@ struct TodayView: View {
 
                         if index < vm.entries.count - 1 {
                             Rectangle()
-                                .fill(Design.Color.rule.opacity(0.65))
+                                .fill(Design.Color.rule)
                                 .frame(height: 0.5)
-                                .padding(.leading, entry.imageURL == nil ? 0 : 54)
+                                .padding(.leading, entry.imageURL == nil ? 0 : entryThumb + 10)
                         }
                     }
                 }
@@ -473,7 +482,7 @@ struct TodayView: View {
             Image(systemName: "trash")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Design.Color.muted)
-                .frame(width: 40, height: 44)
+                .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -523,7 +532,6 @@ struct TodayView: View {
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 7)
-        .background(.clear)
     }
 
     private var dayTitle: String {
@@ -532,27 +540,15 @@ struct TodayView: View {
 
     private var shortDate: String { dateFormatter.string(from: vm.currentDay) }
 
-    private var calendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: vm.profile?.timezone ?? profile.timezone) ?? .autoupdatingCurrent
-        return calendar
+    private var dayFormatters: DayFormatterCache {
+        formatterCache.resolved(for: vm.profile?.timezone ?? profile.timezone)
     }
 
-    private var weekdayFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "EEEE"
-        return formatter
-    }
+    private var calendar: Calendar { dayFormatters.calendar }
 
-    private var dateFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "MMM d"
-        return formatter
-    }
+    private var weekdayFormatter: DateFormatter { dayFormatters.weekdayFormatter }
+
+    private var dateFormatter: DateFormatter { dayFormatters.dateFormatter }
 
     private func shiftDay(_ delta: Int) {
         guard let candidate = calendar.date(byAdding: .day, value: delta, to: vm.currentDay),
@@ -604,5 +600,28 @@ struct TodayView: View {
         guard let request else { return }
         openComposer(autoStartRecording: request.autoStartRecording)
         router.consume(request)
+    }
+}
+
+/// DateFormatter setup is expensive and body reads these on every render, so
+/// hold the instances in @State and rebuild only when the timezone changes.
+private final class DayFormatterCache {
+    private(set) var calendar = Calendar(identifier: .gregorian)
+    private(set) var weekdayFormatter = DateFormatter()
+    private(set) var dateFormatter = DateFormatter()
+    private var timezoneIdentifier: String?
+
+    func resolved(for timezoneIdentifier: String) -> DayFormatterCache {
+        guard timezoneIdentifier != self.timezoneIdentifier else { return self }
+        self.timezoneIdentifier = timezoneIdentifier
+        calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timezoneIdentifier) ?? .autoupdatingCurrent
+        weekdayFormatter.calendar = calendar
+        weekdayFormatter.timeZone = calendar.timeZone
+        weekdayFormatter.dateFormat = "EEEE"
+        dateFormatter.calendar = calendar
+        dateFormatter.timeZone = calendar.timeZone
+        dateFormatter.dateFormat = "MMM d"
+        return self
     }
 }

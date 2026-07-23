@@ -154,7 +154,7 @@ struct EntryDetailView: View {
                 onAccepted: returnToSelectedDay
             )
             .presentationDragIndicator(.visible)
-            .presentationCornerRadius(28)
+            .presentationCornerRadius(Design.Radius.sheet)
         }
     }
 
@@ -167,8 +167,11 @@ struct EntryDetailView: View {
                     image
                         .resizable()
                         .scaledToFit()
-                        .frame(maxWidth: .infinity)
+                        // Bounds the placeholder-to-photo layout jump while
+                        // keeping the full photo visible.
+                        .frame(maxHeight: 420)
                         .transition(.opacity)
+                        .accessibilityLabel("Meal photo")
                 case .failure:
                     photoPlaceholder(systemImage: "photo")
                         .frame(height: 260)
@@ -183,8 +186,7 @@ struct EntryDetailView: View {
             }
             .frame(maxWidth: .infinity)
             .background(Design.Color.elevated)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
         }
     }
 
@@ -238,6 +240,8 @@ struct EntryDetailView: View {
                 .font(.subheadline)
                 .foregroundStyle(Design.Color.muted)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(Int(detail.caloriesKcal.rounded())) kilocalories")
     }
 
     @ViewBuilder
@@ -246,6 +250,7 @@ struct EntryDetailView: View {
             Text("\(Int((confidence * 100).rounded()))% confidence")
                 .font(.caption)
                 .foregroundStyle(Design.Color.muted)
+                .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel(
                     "Nutrition estimate confidence, \(Int((confidence * 100).rounded())) percent"
@@ -272,7 +277,7 @@ struct EntryDetailView: View {
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label), \(Int(value.rounded())) grams")
     }
@@ -316,7 +321,8 @@ struct EntryDetailView: View {
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Design.Color.muted)
                             .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
+                            // 44pt tap target without growing the 32pt row footprint.
+                            .contentShape(Rectangle().inset(by: -6))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(isExpanded ? "Collapse item details" : "Expand item details")
@@ -393,9 +399,9 @@ struct EntryDetailView: View {
 
     private var loadingView: some View {
         VStack(spacing: 18) {
-            RoundedRectangle(cornerRadius: 24).fill(Design.Color.elevated).frame(height: 260)
+            RoundedRectangle(cornerRadius: Design.Radius.hero).fill(Design.Color.elevated).frame(height: 260)
             Capsule().fill(Design.Color.elevated).frame(width: 190, height: 16)
-            RoundedRectangle(cornerRadius: 20).fill(Design.Color.elevated).frame(height: 120)
+            RoundedRectangle(cornerRadius: Design.Radius.xl).fill(Design.Color.elevated).frame(height: 120)
         }
         .padding(20)
         .shimmering()
@@ -538,7 +544,7 @@ private struct DetailTextSection: View {
                 .padding(15)
                 .background(
                     Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             } else if !collapsedByDefault {
@@ -567,7 +573,7 @@ private struct DetailTextSection: View {
                 .padding(15)
                 .background(
                     Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
                 )
             }
         }
@@ -653,7 +659,7 @@ private struct EntryCorrectionSheet: View {
                             }
                             .background(
                                 Design.Color.elevated,
-                                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
                             )
                             .id(FocusField.note)
                         }
@@ -699,7 +705,7 @@ private struct EntryCorrectionSheet: View {
                             .padding(16)
                             .background(
                                 Design.Color.elevated,
-                                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
                             )
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel("Updating the meal estimate. The current meal remains visible.")
@@ -852,7 +858,7 @@ private struct EntryCorrectionSheet: View {
         .padding(22)
         .background(
             Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
         )
     }
 
