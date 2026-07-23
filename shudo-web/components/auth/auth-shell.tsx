@@ -10,7 +10,7 @@ interface AuthShellProps {
 export function AuthShell({ children }: AuthShellProps) {
   return (
     <main
-      className="auth-page relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-12 sm:px-8"
+      className="relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-12 sm:px-8"
       id="main-content"
       tabIndex={-1}
     >

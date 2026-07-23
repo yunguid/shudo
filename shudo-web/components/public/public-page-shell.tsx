@@ -70,7 +70,7 @@ export function PublicPageShell({
           </nav>
         </header>
 
-        <article className="mt-8 rounded-[2rem] border border-white/[0.045] bg-surface/88 px-6 py-8 shadow-[0_28px_90px_rgba(0,0,0,0.4)] backdrop-blur-xl sm:px-10 sm:py-11">
+        <article className="mt-8 rounded-[2rem] border border-white/[0.045] bg-surface/[0.88] px-6 py-8 shadow-[0_28px_90px_rgba(0,0,0,0.4)] backdrop-blur-xl sm:px-10 sm:py-11">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-subtle">{eyebrow}</p>
           <h1 className="mt-3 text-4xl font-semibold tracking-[-0.045em] text-ink sm:text-5xl">
             {title}

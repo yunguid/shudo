@@ -54,14 +54,6 @@
 }
 
 @layer utilities {
-  .auth-page {
-    font-family: "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  }
-
-  .text-balance {
-    text-wrap: balance;
-  }
-
   .shimmer {
     position: relative;
     overflow: hidden;

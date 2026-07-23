@@ -1,12 +1,8 @@
 'use client'
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { ArrowRight, LoaderCircle, Mail } from 'lucide-react'
-import {
-  buildOAuthCallbackUrl,
-  fetchEnabledOAuthProviders,
-  type ShudoOAuthProvider,
-} from '@/lib/auth-oauth'
+import { buildOAuthCallbackUrl, type ShudoOAuthProvider } from '@/lib/auth-oauth'
 import {
   initialMagicLinkErrorMessage,
   magicLinkRequestErrorMessage,
@@ -16,6 +12,7 @@ import { getBrowserClient } from '@/lib/supabase/client'
 interface LoginFormProps {
   initialError: boolean
   initialErrorReason?: string
+  initialProviders: ShudoOAuthProvider[]
 }
 
 type PendingMethod = 'email' | ShudoOAuthProvider | null
@@ -25,22 +22,20 @@ const PROVIDER_LABELS: Record<ShudoOAuthProvider, string> = {
   apple: 'Apple',
 }
 
-export function LoginForm({ initialError, initialErrorReason }: LoginFormProps) {
+export function LoginForm({
+  initialError,
+  initialErrorReason,
+  initialProviders,
+}: LoginFormProps) {
   const [email, setEmail] = useState('')
   const [pendingMethod, setPendingMethod] = useState<PendingMethod>(null)
-  const [enabledProviders, setEnabledProviders] = useState<ShudoOAuthProvider[]>([])
+  const enabledProviders = initialProviders
   const [message, setMessage] = useState(
     initialError ? initialMagicLinkErrorMessage(initialErrorReason) : '',
   )
   const [isSuccess, setIsSuccess] = useState(false)
 
   const isBusy = pendingMethod !== null
-
-  useEffect(() => {
-    const controller = new AbortController()
-    void fetchEnabledOAuthProviders(controller.signal).then(setEnabledProviders)
-    return () => controller.abort()
-  }, [])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()

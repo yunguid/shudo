@@ -69,33 +69,103 @@ Stages, owner, and the main costs observed by reading the code:
 Statuses: `[ ]` open · `[x]` done · `[-]` rejected/deferred (reason inline).
 
 ### P1 — correctness/latency, high confidence
-- [ ] B1. Move collage/JPEG preparation off the submit tap: pre-encode upload
-  JPEG in background as photos change; submit uses prepared `Data`.
-- [ ] B2. Kill the redundant second full-size render (`jpegData` →
-  `resizedForUpload` on an already-sized collage); share one `CIContext`.
-- [ ] B3. Parallelize image+audio Storage uploads in `create_entry`; overlap
-  `authenticate()` with `req.formData()`.
-- [ ] B4. Stable signed-URL cache keyed by storage path (batch sign endpoint,
-  longer expiry, in-memory reuse across list/poll/detail) → stops AsyncImage
-  flicker + re-downloads; drop per-poll/detail duplicate signing.
-- [ ] B5. Slim polling projection (drop `raw_text` etc. while processing) with
-  full fetch on completion; preserve optimistic summary during merge.
-- [ ] B6. Cache ISO8601/day formatters (created per parse/per call today).
-- [ ] B7. Preview publish interval 500 ms → align with client's 650 ms poll
-  (cut unobserved writes) — keep first-preview-immediate behavior.
-- [ ] B8. Overlap image signing with transcription in `entry_processor`
-  (sign is independent of transcript).
-- [ ] B9. Bounded-concurrency photo loading in composer (order-preserving),
-  replacing serial `loadTransferable` loop.
+- [x] B1. Pre-encode upload JPEG off-main as photos change; submit awaits the
+  prepared bytes instead of rendering on the tap (`fa6e795`).
+- [x] B2. Collage encoded directly (no second full-size render); shared
+  `CIContext` for orientation normalization (`fa6e795`).
+- [x] B3. `create_entry` uploads run in parallel; `authenticate()` overlaps
+  form parsing; storage calls bounded by timeouts (`b2493b2`).
+- [x] B4. `SignedImageURLCache` actor: path-keyed reuse, 1 h expiry with 5 min
+  margin, batch signing endpoint with per-path fallback, URLCache sized at
+  24 MB/64 MB, cleared on sign-out (batch 3).
+- [x] B5. Two-tier polling: slim `entryStatusColumns` projection while
+  processing (drops `raw_text` ≤ 12 KB/poll), full row once on terminal
+  status; merge preserves locally known fields (batch 3, tested).
+- [x] B6. Static ISO8601 formatters; `localDayString` composes from calendar
+  components without a `DateFormatter` (batch 3).
+- [x] B7. Preview publish interval 500 → 650 ms, matched to the client's
+  streaming poll; contract test updated with rationale (`b2493b2`).
+- [x] B8. Image signing overlaps transcription in `entry_processor`
+  (`b2493b2`).
+- [x] B9. Photo-picker loads two-at-a-time, order preserved (`fa6e795`).
 
-### P2 — pending investigation reports
-- [ ] UI audit findings (agent).
-- [ ] Backend audit findings (agent).
-- [ ] DB/migrations audit findings (agent).
-- [ ] Web audit + baseline (agent).
-- [ ] Native services audit (agent, incl. CameraPicker full-res retention,
-  AudioRecorder settings).
+### From investigation agents (accepted → done unless noted)
+- [x] Camera frames delivered raw; composer downsamples off-main (was a
+  50–150 ms main-thread render inside the picker callback) (`fa6e795`).
+- [x] Auth: user id derived from token response/JWT — removes one RTT per
+  sign-in/refresh AND the post-rotation failure window that could consume a
+  rotated refresh token and force sign-out (`fa6e795`, tested).
+- [x] Heatmap `DateFormatter` missing `en_US_POSIX` — silently empty heatmap
+  for non-Latin-digit locales (`fa6e795`).
+- [x] AudioRecorder meter timer: weak block timer + deinit invalidation
+  (`fa6e795`).
+- [x] AccountView loads parallelized after profile fetch (`fa6e795`).
+- [x] Backend dedup: `safetyIdentifier` ×4 → `_shared/safety.ts`;
+  `secretMatches` ×2 → `_shared/secrets.ts` (`b2493b2`).
+- [x] `analysis_context` bounded to 6 k chars before prompt embedding
+  (`b2493b2`).
+- [x] Onboarding failure-write can no longer mask the original error
+  (`b2493b2`).
+- [x] Account-deletion storage passes parallelized (`b2493b2`).
+- [x] Weekly narrative prompt states averages cover logged days only
+  (`b2493b2`).
+- [x] Web: dashboard fetches one 7-day window (was: selected day fetched
+  twice); target history bounded to window + latest prior row; /meals day
+  headers use true day totals across page boundaries; OAuth provider list
+  server-rendered (kills login-card pop-in); root error boundary added;
+  `bg-surface/88` (silently dropped by Tailwind) → `bg-surface/[0.88]`;
+  native `<progress>` → styled div bar; Avenir auth override and unused
+  `.text-balance` removed; reset CTA glow unified to accent (batch 3).
+- [ ] Native UI polish batch (agent implementing; radius tokens, hairline
+  unification, Reduce Motion gates, touch targets, Dynamic Type, per-render
+  formatter hoisting — see UI audit list).
+
+### Rejected / deferred (reasons)
+- [-] Per-photo image inputs instead of collage: gpt-5.6 patch pricing makes
+  the 1600 px collage a good cost/latency bound (~2,500 patches vs ~4×); no
+  measured quality gap; schema/storage churn. Revisit only with evidence.
+- [-] `detail:"original"`/`auto` on gpt-5.6: uncapped patch cost.
+- [-] Local JWT verification / dispatch double-auth collapse (getUser →
+  signed internal header): real latency win (~2 RTT/meal) but changes
+  revocation semantics — needs owner sign-off, not an overnight call.
+- [-] Claim RPCs returning the row (saves 1 DB RTT each): needs a forward
+  migration + contract updates; medium win, deferred with design noted.
+- [-] `entry_corrections(entry_id)` index migration: cascade delete currently
+  seq-scans, negligible at single-user scale; DB agent rates it
+  future-proofing only. Documented for when scale changes.
+- [-] Web meal-photo thumbnails: product decision for Luke (privacy surface:
+  signed URLs in server-rendered HTML; needs next/image remote patterns).
+  Currently `image_path` only drives a glyph.
+- [-] Web deep-link `?next=` threading through login: two-page app, touches
+  proxy + form + magic-link redirect; poor risk/benefit tonight.
+- [-] Composer storing JPEG `Data` instead of `UIImage`s: thumbnails need the
+  images; ~30 MB transient peak acceptable; encode-ahead already implemented.
+- [-] Realtime/pub-sub instead of polling: two-tier polling + backoff is
+  simple and observed-cost is now low; Realtime adds a connection + auth
+  lifecycle for marginal gain at this scale.
+- [-] `daily_totals` covering index: 84-day window ≈ hundreds of rows; not
+  worth a migration without profiling evidence (DB agent concurs).
+
+## Operational notes (not code changes)
+- The 135 s processing lease is the duplicate-provider-spend boundary: work
+  exceeding the lease can be claimed again and both attempts reserve AI
+  budget (data integrity protected by attempt fencing). Keep lease >
+  worst-case model latency when tuning timeouts.
+- `-shudoPolishPreview` launch argument drives PolishPreviewView (manual
+  design QA); wired but not exercised by any test/scheme — intentional.
 
 ## Findings, changes, evidence
 
-(appended per batch below)
+- Baselines: all suites green before changes (see table above); native suite
+  re-run green after batch 1; Deno suite green after batch 2 (69 tests).
+- Batch 1 (`fa6e795`): capture-path stalls removed at the source — submit tap
+  no longer renders; measured-by-construction: the collage/encode work now
+  happens at photo-selection time on a background queue, and the redundant
+  second render (collage → `resizedForUpload` at identical size) is gone.
+- Batch 2 (`b2493b2`): time-to-202 for a photo+voice capture now pays
+  max(image, audio) upload instead of image+audio, and auth RTT overlaps
+  body parsing. Worker time-to-analysis no longer serializes the signing RTT
+  after transcription.
+- Batch 3: AsyncImage flicker eliminated by stable URL identity (root cause
+  confirmed independently by UI audit agent); day loads sign only uncached
+  paths (usually zero) in one batch request instead of N POSTs.

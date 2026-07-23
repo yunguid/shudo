@@ -64,73 +64,26 @@ export async function fetchProfileSettings(
   }
 }
 
-export async function fetchDayData(
-  supabase: ShudoSupabaseClient,
-  userId: string,
-  localDay: string,
-): Promise<{ totals: DayTotals; entries: EntryListItem[] }> {
-  const { data, error } = await supabase
-    .from('entries')
-    .select(ENTRY_COLUMNS)
-    .eq('user_id', userId)
-    .eq('status', 'complete')
-    .eq('local_day', localDay)
-    .order('occurred_at', { ascending: false })
-    .order('id', { ascending: false })
-
-  if (error) throw queryError('Unable to load daily entries', error)
-
-  const entries = data ?? []
+function emptyDayTotals(localDay: string): DayTotals {
   return {
-    totals: entries.reduce<DayTotals>(
-      (totals, entry) => ({
-        ...totals,
-        total_calories: totals.total_calories + (entry.calories_kcal ?? 0),
-        total_protein: totals.total_protein + (entry.protein_g ?? 0),
-        total_carbs: totals.total_carbs + (entry.carbs_g ?? 0),
-        total_fat: totals.total_fat + (entry.fat_g ?? 0),
-        entry_count: totals.entry_count + 1,
-      }),
-      {
-        local_day: localDay,
-        total_calories: 0,
-        total_protein: 0,
-        total_carbs: 0,
-        total_fat: 0,
-        entry_count: 0,
-      },
-    ),
-    entries,
+    local_day: localDay,
+    total_calories: 0,
+    total_protein: 0,
+    total_carbs: 0,
+    total_fat: 0,
+    entry_count: 0,
   }
 }
 
-export async function fetchDayTotals(
-  supabase: ShudoSupabaseClient,
-  userId: string,
-  endDay: string,
-  dayCount = 7,
-): Promise<DayTotals[]> {
-  const startDay = shiftLocalDay(endDay, -(dayCount - 1))
-  const { data, error } = await supabase
-    .from('entries')
-    .select('local_day,calories_kcal,protein_g,carbs_g,fat_g')
-    .eq('user_id', userId)
-    .eq('status', 'complete')
-    .gte('local_day', startDay)
-    .lte('local_day', endDay)
+type DayTotalsSource = Pick<
+  EntryListItem,
+  'local_day' | 'calories_kcal' | 'protein_g' | 'carbs_g' | 'fat_g'
+>
 
-  if (error) throw queryError('Unable to load recent totals', error)
-
+export function totalsByLocalDay(entries: DayTotalsSource[]): Map<string, DayTotals> {
   const totalsByDay = new Map<string, DayTotals>()
-  for (const entry of data ?? []) {
-    const totals = totalsByDay.get(entry.local_day) ?? {
-      local_day: entry.local_day,
-      total_calories: 0,
-      total_protein: 0,
-      total_carbs: 0,
-      total_fat: 0,
-      entry_count: 0,
-    }
+  for (const entry of entries) {
+    const totals = totalsByDay.get(entry.local_day) ?? emptyDayTotals(entry.local_day)
     totals.total_calories += entry.calories_kcal ?? 0
     totals.total_protein += entry.protein_g ?? 0
     totals.total_carbs += entry.carbs_g ?? 0
@@ -138,36 +91,107 @@ export async function fetchDayTotals(
     totals.entry_count += 1
     totalsByDay.set(entry.local_day, totals)
   }
-
-  return Array.from({ length: dayCount }, (_, index) => {
-    const localDay = shiftLocalDay(startDay, index)
-    return (
-      totalsByDay.get(localDay) ?? {
-        local_day: localDay,
-        total_calories: 0,
-        total_protein: 0,
-        total_carbs: 0,
-        total_fat: 0,
-        entry_count: 0,
-      }
-    )
-  })
+  return totalsByDay
 }
 
+/**
+ * One windowed query serves the whole dashboard: the selected day's entry
+ * list, its totals, and the seven-day series. The window and the selected
+ * day previously fetched the same rows twice.
+ */
+export async function fetchDashboardWindow(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+  endDay: string,
+  selectedDay: string,
+  dayCount = 7,
+): Promise<{ totals: DayTotals; entries: EntryListItem[]; recentDays: DayTotals[] }> {
+  const startDay = shiftLocalDay(endDay, -(dayCount - 1))
+  const windowStart = selectedDay < startDay ? selectedDay : startDay
+  const { data, error } = await supabase
+    .from('entries')
+    .select(ENTRY_COLUMNS)
+    .eq('user_id', userId)
+    .eq('status', 'complete')
+    .gte('local_day', windowStart)
+    .lte('local_day', endDay)
+    .order('occurred_at', { ascending: false })
+    .order('id', { ascending: false })
+
+  if (error) throw queryError('Unable to load daily entries', error)
+
+  const windowEntries = data ?? []
+  const entries = windowEntries.filter((entry) => entry.local_day === selectedDay)
+  const totalsByDay = totalsByLocalDay(windowEntries)
+  return {
+    totals: totalsByDay.get(selectedDay) ?? emptyDayTotals(selectedDay),
+    entries,
+    recentDays: Array.from({ length: dayCount }, (_, index) => {
+      const localDay = shiftLocalDay(startDay, index)
+      return totalsByDay.get(localDay) ?? emptyDayTotals(localDay)
+    }),
+  }
+}
+
+/**
+ * Target rows in the visible window plus the latest one before it — enough
+ * to resolve the effective target for every visible day without reading the
+ * whole account history.
+ */
 export async function fetchDailyTargetHistory(
   supabase: ShudoSupabaseClient,
   userId: string,
   endDay: string,
+  startDay?: string,
 ): Promise<DailyTargetSnapshot[]> {
-  const { data, error } = await supabase
-    .from('daily_targets')
-    .select('target_day,calories_kcal,protein_g,carbs_g,fat_g')
-    .eq('user_id', userId)
-    .lte('target_day', endDay)
-    .order('target_day', { ascending: true })
+  const windowStart = startDay ?? endDay
+  const [windowResult, priorResult] = await Promise.all([
+    supabase
+      .from('daily_targets')
+      .select('target_day,calories_kcal,protein_g,carbs_g,fat_g')
+      .eq('user_id', userId)
+      .gte('target_day', windowStart)
+      .lte('target_day', endDay)
+      .order('target_day', { ascending: true }),
+    supabase
+      .from('daily_targets')
+      .select('target_day,calories_kcal,protein_g,carbs_g,fat_g')
+      .eq('user_id', userId)
+      .lt('target_day', windowStart)
+      .order('target_day', { ascending: false })
+      .limit(1),
+  ])
 
-  if (error) throw queryError('Unable to load target history', error)
-  return data ?? []
+  if (windowResult.error) {
+    throw queryError('Unable to load target history', windowResult.error)
+  }
+  if (priorResult.error) {
+    throw queryError('Unable to load target history', priorResult.error)
+  }
+  return [...(priorResult.data ?? []), ...(windowResult.data ?? [])]
+}
+
+/**
+ * True per-day totals for a bounded day range. The history page uses this so
+ * a day straddling a pagination boundary still shows its full-day totals
+ * rather than the sum of only the rows on the current page.
+ */
+export async function fetchDayTotalsInRange(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+  startDay: string,
+  endDay: string,
+): Promise<Map<string, DayTotals>> {
+  const { data, error } = await supabase
+    .from('entries')
+    .select('local_day,protein_g,carbs_g,fat_g,calories_kcal')
+    .eq('user_id', userId)
+    .eq('status', 'complete')
+    .gte('local_day', startDay)
+    .lte('local_day', endDay)
+
+  if (error) throw queryError('Unable to load day totals', error)
+  return totalsByLocalDay(data ?? [])
 }
 
 export async function fetchAllEntries(

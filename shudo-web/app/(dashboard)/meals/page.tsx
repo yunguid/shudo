@@ -3,7 +3,12 @@ import Link from 'next/link'
 import { Camera, ChevronLeft, ChevronRight } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import { getCurrentUser } from '@/lib/auth'
-import { fetchAllEntries, fetchProfileSettings, summarizeEntry } from '@/lib/supabase/queries'
+import {
+  fetchAllEntries,
+  fetchDayTotalsInRange,
+  fetchProfileSettings,
+  summarizeEntry,
+} from '@/lib/supabase/queries'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { formatDayLabel, formatEntryTime, resolveEntryTimestamp } from '@/lib/utils'
 import type { EntryListItem } from '@/types/database'
@@ -48,6 +53,17 @@ export default async function MealsPage({ searchParams }: MealsPageProps) {
   if (total > 0 && page > totalPages) redirect(`/meals?page=${totalPages}`)
 
   const groupedEntries = groupEntries(entries)
+  // Entries are ordered newest-first, so the page's day range is
+  // [last entry's day, first entry's day]. True day totals keep a day that
+  // straddles a pagination boundary from showing a partial sum.
+  const dayTotals = entries.length
+    ? await fetchDayTotalsInRange(
+      supabase,
+      user.id,
+      entries[entries.length - 1].local_day,
+      entries[0].local_day,
+    )
+    : new Map()
 
   return (
     <div className="space-y-7">
@@ -62,8 +78,11 @@ export default async function MealsPage({ searchParams }: MealsPageProps) {
       {entries.length ? (
         <div className="space-y-5">
           {Array.from(groupedEntries.entries()).map(([day, dayEntries]) => {
-            const calories = dayEntries.reduce((sum, entry) => sum + (entry.calories_kcal ?? 0), 0)
-            const protein = dayEntries.reduce((sum, entry) => sum + (entry.protein_g ?? 0), 0)
+            const totals = dayTotals.get(day)
+            const calories = totals?.total_calories ??
+              dayEntries.reduce((sum, entry) => sum + (entry.calories_kcal ?? 0), 0)
+            const protein = totals?.total_protein ??
+              dayEntries.reduce((sum, entry) => sum + (entry.protein_g ?? 0), 0)
 
             return (
               <section aria-labelledby={`day-${day}`} className="overflow-hidden rounded-[1.75rem] bg-surface/60" key={day}>

@@ -22,7 +22,9 @@ export async function fetchEnabledOAuthProviders(
 
   try {
     const response = await fetch(`${baseUrl}/auth/v1/settings`, {
-      cache: 'no-store',
+      // Server-rendered on the login page; a short revalidation keeps the
+      // provider list fresh without a per-request Auth round trip.
+      next: { revalidate: 300 },
       headers: { apikey: publishableKey },
       signal,
     })

@@ -4,8 +4,7 @@ import { redirect } from 'next/navigation'
 import { DayNavigator } from '@/components/day-navigator'
 import { getCurrentUser } from '@/lib/auth'
 import {
-  fetchDayData,
-  fetchDayTotals,
+  fetchDashboardWindow,
   fetchDailyTargetHistory,
   fetchProfileSettings,
   summarizeEntry,
@@ -19,6 +18,7 @@ import {
   formatShortDay,
   isLocalDay,
   resolveEntryTimestamp,
+  shiftLocalDay,
 } from '@/lib/utils'
 
 interface DashboardPageProps {
@@ -36,10 +36,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const requestedDay = Array.isArray(day) ? day[0] : day
   const selectedDay = isLocalDay(requestedDay) && requestedDay <= todayDay ? requestedDay : todayDay
 
-  const [{ totals, entries }, recentDays, targetHistory] = await Promise.all([
-    fetchDayData(supabase, user.id, selectedDay),
-    fetchDayTotals(supabase, user.id, selectedDay),
-    fetchDailyTargetHistory(supabase, user.id, selectedDay),
+  const windowStart = shiftLocalDay(selectedDay, -6)
+  const [{ totals, entries, recentDays }, targetHistory] = await Promise.all([
+    fetchDashboardWindow(supabase, user.id, selectedDay, selectedDay),
+    fetchDailyTargetHistory(supabase, user.id, selectedDay, windowStart),
   ])
 
   const target = effectiveMacroTarget(targetHistory, selectedDay, profile.dailyMacroTarget)
@@ -67,12 +67,19 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               </h1>
               <span className="text-sm text-muted">/ {target.calories_kcal.toLocaleString()} kcal</span>
             </div>
-            <progress
+            <div
               aria-label={`${Math.round(calorieProgress)} percent of calorie target`}
-              className="mt-5 h-2 w-full overflow-hidden rounded-full bg-surface-strong accent-accent sm:w-96"
-              max="100"
-              value={calorieProgress}
-            />
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={Math.round(calorieProgress)}
+              className="mt-5 h-2 w-full overflow-hidden rounded-full bg-surface-strong sm:w-96"
+              role="progressbar"
+            >
+              <div
+                className="h-full rounded-full bg-accent transition-[width]"
+                style={{ width: `${calorieProgress}%` }}
+              />
+            </div>
           </div>
 
           <dl className="grid grid-cols-3 gap-7 sm:gap-10">
