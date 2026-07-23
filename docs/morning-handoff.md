@@ -29,8 +29,14 @@ per guardrails):
    modules). **No new migration was added**; schema is unchanged.
 2. `scripts/deploy-vercel-production.zsh` then `--apply` — web companion.
 
-The native app changes are already in the Release build installed on the
-phone (if the overnight install step succeeded; see the final summary).
+The phone was locked/asleep when the overnight run finished, so the signed
+install did not run (the guarded installer refuses an unavailable device).
+Everything up to signing passed. To get the finished build on the phone:
+unlock it, keep it connected, then run:
+
+```bash
+scripts/install-ios-device.zsh
+```
 
 ## Ready now
 

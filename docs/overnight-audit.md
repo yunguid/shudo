@@ -10,8 +10,30 @@ Working directly on `main`; each batch is committed after focused verification.
 | Deno `fmt --check`, `lint`, `check` (all functions) | PASS | |
 | Deno function tests (`deno test`) | PASS | |
 | Native unit tests (`xcodebuild test`, iPhone 17 Pro sim, warnings-as-errors) | PASS | ~14 s test phase |
-| Web tests/lint/typecheck/build | see below | run during investigation |
+| Web tests/lint/typecheck/build | PASS | 45 tests; `npm ci` realigned Next 16.2.10→16.2.11 |
 | Worktree | clean at `fc19b0e`, synced with `origin/main` | |
+
+## Final verification (after all changes)
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| `scripts/verify-release.zsh` (full gate) | **PASS** | migration hashes, script guards, web ci/test/lint/typecheck/build/audit, authenticated Vercel snapshot pull/build/dry-deploy manifest, Deno fmt/lint/test/check, fresh + legacy-restore PostgreSQL shapes, native unit **and UI** tests (125 passed / 0 failed, warnings as errors), `verify-ios-release.zsh` unsigned device Release + privacy metadata |
+| Deno function tests | PASS (69) | includes new `withTimeout` tests |
+| Web suite | PASS (45 tests, lint, typecheck, prod build) | |
+| Native suite | PASS (125 incl. UI tests) | new tests: token-response user-id, upload encoding, signed-URL cache expiry + sign-out epoch, batch-sign parsing, status-snapshot parse/merge, radius tokens |
+| Device install (`install-ios-device.zsh`) | **NOT COMPLETED — phone unavailable** | The paired iPhone showed `unavailable` (locked/asleep) at 09:30; the guarded installer refused, by design. Everything is verified up to signing. In the morning: unlock the phone, keep it connected, run `scripts/install-ios-device.zsh` (~2 min). |
+
+Gate environment note: run the gate as `LC_ALL=en_US.UTF-8 ./scripts/verify-release.zsh`
+from a non-interactive shell — Postgres 17's throwaway server refuses to start
+without a locale ("postmaster became multithreaded during startup").
+
+Production deployment needed to activate tonight's backend/web changes (not
+performed overnight, per guardrails): `scripts/deploy-supabase-production.zsh
+--apply` (Edge Functions only; **no new migrations**) and
+`scripts/deploy-vercel-production.zsh --apply`. Until the Supabase deploy, the
+app runs against the previous Edge Functions — fully compatible: every native
+change degrades gracefully (batch signing falls back per-path; polling
+projection and multipart contract are unchanged server-side).
 
 Toolchain: Xcode 26.6 (via `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`;
 system `xcode-select` points at CommandLineTools), Deno 2.9.3, Node 24.16, Supabase CLI
