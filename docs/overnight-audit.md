@@ -223,6 +223,32 @@ Accepted residual risks (documented, not fixed):
   phase's steady-state polls; the title now updates at the
   transcribing→analyzing transition full fetch (previously every poll).
 
+## Follow-on feature: barcode scanning (same session, after the overnight run)
+
+Scanning a packaged food's barcode (or a GS1 QR code) resolves nutrition from
+Open Food Facts and adds a **removable card** to the composer: product name,
+brand + serving size, label macros scaled live by an amount stepper
+(servings, or grams for per-100 g labels). The card is a proposal — the ✕
+rejects it; photos, voice, and text stay fully available alongside. On
+submit the label facts serialize into the entry text after the user's own
+words, and the analysis prompt now instructs the model to trust quoted label
+facts and scale by the stated amount (prompt line inert until the next
+Supabase deploy; the feature works without it).
+
+Design decisions:
+- Lookup database: Open Food Facts (no API key, no new secrets; barcode is
+  a product ID, not personal data). Misses steer the user to photograph the
+  label — the existing photo pipeline reads labels, so a miss still works.
+- No live camera in Simulator → the scanner falls back to typed-code entry
+  (medium-height sheet), which also covers damaged barcodes on device.
+- Wire format unchanged: everything rides the existing text field, so
+  quotas, idempotent retries, and corrections apply untouched. No backend
+  or schema changes required for the feature itself.
+- Verified in-simulator with live lookups: US serving-label product
+  (Cheerios, zero-padded UPC-A), per-100 g product, miss state, card
+  removal, stepper scaling (1 → 2 servings doubled macros), and
+  accessibility-medium Dynamic Type.
+
 ## Morning phone QA checklist (ordered)
 
 1. Open Shudo → Today loads; thumbnails appear without flashing placeholders.

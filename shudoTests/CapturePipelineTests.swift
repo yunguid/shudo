@@ -251,6 +251,7 @@ struct CapturePipelineTests {
             isPreparingImage: false,
             hasAudio: false,
             hasImage: false,
+            hasScannedFood: false,
             note: "salmon and rice"
         ))
         #expect(!EntryComposerPolicy.canSubmit(
@@ -258,7 +259,17 @@ struct CapturePipelineTests {
             isPreparingImage: true,
             hasAudio: true,
             hasImage: false,
+            hasScannedFood: false,
             note: "salmon and rice"
+        ))
+        // A scanned label alone is a submittable capture.
+        #expect(EntryComposerPolicy.canSubmit(
+            isSubmitting: false,
+            isPreparingImage: false,
+            hasAudio: false,
+            hasImage: false,
+            hasScannedFood: true,
+            note: ""
         ))
     }
 
@@ -277,6 +288,7 @@ struct CapturePipelineTests {
             isPreparingImage: false,
             hasAudio: false,
             hasImage: false,
+            hasScannedFood: false,
             note: String(repeating: "b", count: EntryComposerPolicy.maximumNoteLength + 1)
         ))
     }
@@ -295,17 +307,26 @@ struct CapturePipelineTests {
         #expect(!EntryComposerPolicy.shouldDiscardRecording(
             isSubmitting: false,
             isShowingCamera: true,
-            isShowingPhotoPicker: false
+            isShowingPhotoPicker: false,
+            isShowingBarcodeScanner: false
         ))
         #expect(!EntryComposerPolicy.shouldDiscardRecording(
             isSubmitting: false,
             isShowingCamera: false,
-            isShowingPhotoPicker: true
+            isShowingPhotoPicker: true,
+            isShowingBarcodeScanner: false
+        ))
+        #expect(!EntryComposerPolicy.shouldDiscardRecording(
+            isSubmitting: false,
+            isShowingCamera: false,
+            isShowingPhotoPicker: false,
+            isShowingBarcodeScanner: true
         ))
         #expect(EntryComposerPolicy.shouldDiscardRecording(
             isSubmitting: false,
             isShowingCamera: false,
-            isShowingPhotoPicker: false
+            isShowingPhotoPicker: false,
+            isShowingBarcodeScanner: false
         ))
     }
 

@@ -5,17 +5,23 @@ import UIKit
 enum EntryComposerPolicy {
     static let maximumNoteLength = 12_000
 
+    static let maximumScannedItems = 4
+
     static func canSubmit(
         isSubmitting: Bool,
         isPreparingImage: Bool,
         hasAudio: Bool,
         hasImage: Bool,
+        hasScannedFood: Bool,
         note: String
     ) -> Bool {
         !isSubmitting
             && !isPreparingImage
             && note.utf16.count <= maximumNoteLength
-            && (hasAudio || hasImage || !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            && (hasAudio
+                || hasImage
+                || hasScannedFood
+                || !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     static func boundedNote(_ note: String) -> String {
@@ -32,9 +38,13 @@ enum EntryComposerPolicy {
     static func shouldDiscardRecording(
         isSubmitting: Bool,
         isShowingCamera: Bool,
-        isShowingPhotoPicker: Bool
+        isShowingPhotoPicker: Bool,
+        isShowingBarcodeScanner: Bool
     ) -> Bool {
-        !isSubmitting && !isShowingCamera && !isShowingPhotoPicker
+        !isSubmitting
+            && !isShowingCamera
+            && !isShowingPhotoPicker
+            && !isShowingBarcodeScanner
     }
 }
 
@@ -47,6 +57,8 @@ struct EntryComposerView: View {
     @State private var images: [UIImage] = []
     @State private var isShowingCamera = false
     @State private var isShowingPhotoPicker = false
+    @State private var isShowingBarcodeScanner = false
+    @State private var scannedPortions: [ScannedPortion] = []
     @State private var isPreparingImage = false
     @State private var imageLoadGeneration = UUID()
     @State private var imagePreparationTask: Task<Void, Never>?
@@ -80,6 +92,7 @@ struct EntryComposerView: View {
             isPreparingImage: isPreparingImage,
             hasAudio: hasAudio,
             hasImage: !images.isEmpty,
+            hasScannedFood: !scannedPortions.isEmpty,
             note: note
         )
     }
@@ -93,6 +106,7 @@ struct EntryComposerView: View {
                         dayLabel
                         voiceCapture
                         imageCapture
+                        scannedFoodSection
                         noteField
 
                         if let error = localError ?? audio.errorMessage {
@@ -134,6 +148,13 @@ struct EntryComposerView: View {
             maxSelectionCount: max(1, ImageProcessor.maximumPhotoCount - images.count),
             matching: .images
         )
+        .sheet(isPresented: $isShowingBarcodeScanner) {
+            BarcodeScannerSheet { product in
+                appendScannedProduct(product)
+            }
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(Design.Radius.sheet)
+        }
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
         .task {
@@ -148,13 +169,15 @@ struct EntryComposerView: View {
             _ = await audio.startRecording()
         }
         .onDisappear {
-            // A camera or photo picker temporarily covers this view. Preserve a
-            // finished voice note across that system presentation and clean it
-            // up only when the composer itself is actually leaving.
+            // A camera, photo picker, or barcode scanner temporarily covers
+            // this view. Preserve a finished voice note across that system
+            // presentation and clean it up only when the composer itself is
+            // actually leaving.
             guard EntryComposerPolicy.shouldDiscardRecording(
                 isSubmitting: isSubmitting,
                 isShowingCamera: isShowingCamera,
-                isShowingPhotoPicker: isShowingPhotoPicker
+                isShowingPhotoPicker: isShowingPhotoPicker,
+                isShowingBarcodeScanner: isShowingBarcodeScanner
             ) else { return }
             imagePreparationTask?.cancel()
             imagePreparationTask = nil
@@ -285,15 +308,36 @@ struct EntryComposerView: View {
                     }
                 }
 
-                mediaButton(
-                    title: images.isEmpty ? "Photos" : "Add photos",
-                    systemImage: "photo.on.rectangle"
-                ) {
+                mediaButton(title: "Photos", systemImage: "photo.on.rectangle") {
                     if audio.isRecording { audio.stopRecording() }
                     isShowingPhotoPicker = true
                 }
+
+                scanButton
             }
         }
+    }
+
+    /// Barcode scanning adds a removable label card; it does not consume a
+    /// photo slot, so it stays enabled while photos are full.
+    private var scanButton: some View {
+        Button {
+            if audio.isRecording { audio.stopRecording() }
+            isShowingBarcodeScanner = true
+        } label: {
+            Label("Scan", systemImage: "barcode.viewfinder")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .background(Design.Color.elevated, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(
+            isSubmitting
+                || scannedPortions.count >= EntryComposerPolicy.maximumScannedItems
+        )
+        .accessibilityHint("Scans a packaged food barcode and adds its nutrition label")
     }
 
     private func mediaButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -502,6 +546,36 @@ struct EntryComposerView: View {
         }
     }
 
+    @ViewBuilder
+    private var scannedFoodSection: some View {
+        if !scannedPortions.isEmpty {
+            VStack(spacing: 10) {
+                ForEach($scannedPortions) { $portion in
+                    ScannedFoodCard(
+                        portion: $portion,
+                        isDisabled: isSubmitting,
+                        onRemove: { removeScannedPortion(id: portion.id) }
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+        }
+    }
+
+    private func appendScannedProduct(_ product: ScannedProduct) {
+        guard scannedPortions.count < EntryComposerPolicy.maximumScannedItems else { return }
+        localError = nil
+        withAnimation(.snappy) {
+            scannedPortions.append(ScannedPortion(product: product))
+        }
+    }
+
+    private func removeScannedPortion(id: UUID) {
+        withAnimation(.snappy) {
+            scannedPortions.removeAll { $0.id == id }
+        }
+    }
+
     private func removePhoto(at offset: Int) {
         guard images.indices.contains(offset) else { return }
         withAnimation(.snappy) {
@@ -513,7 +587,16 @@ struct EntryComposerView: View {
     private func submit() {
         if audio.isRecording { audio.stopRecording() }
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        let text = trimmed.isEmpty ? nil : trimmed
+        // The user's own words lead; scanned label facts follow so the first
+        // line stays a natural meal title and the model reads the labels as
+        // supporting facts.
+        let scanText = BarcodeNutrition.submissionText(for: scannedPortions)
+        let combined = [trimmed, scanText]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        let text = combined.isEmpty
+            ? nil
+            : EntryComposerPolicy.boundedNote(combined)
         let audioData = audio.recordedData()
         let hasSelectedImages = !images.isEmpty
         let selectedImages = images
@@ -558,6 +641,237 @@ struct EntryComposerView: View {
         let total = max(0, Int(duration.rounded(.down)))
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+}
+
+/// A scanned packaged food shown as a removable card: the label's macros
+/// (scaled live by the chosen amount), the serving context, and an amount
+/// stepper. The card is a proposal — the person can adjust or reject it
+/// without touching their note, photos, or voice recording.
+private struct ScannedFoodCard: View {
+    @Binding var portion: ScannedPortion
+    let isDisabled: Bool
+    let onRemove: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            macroSummary
+            HairlineRule()
+            amountRow
+        }
+        .padding(16)
+        .background(
+            Design.Color.elevated,
+            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
+        )
+        .opacity(isDisabled ? 0.6 : 1)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "barcode.viewfinder")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Design.Color.accentSecondary)
+                .frame(width: 26, height: 26)
+                .background(Design.Color.glassFill, in: Circle())
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(portion.product.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Design.Color.ink)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = headerDetail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(Design.Color.muted)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Design.Color.muted)
+                    .frame(width: 30, height: 30)
+                    .background(Design.Color.glassFill, in: Circle())
+                    .contentShape(Circle().inset(by: -7))
+            }
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
+            .accessibilityLabel("Remove \(portion.product.name)")
+        }
+    }
+
+    private var headerDetail: String? {
+        // The amount row already speaks in servings, so the detail line only
+        // carries the brand and what one serving is.
+        let serving = portion.product.usesServingUnits
+            ? portion.product.servingSize
+            : "per 100 g"
+        return [portion.product.brands, serving]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+            .nilIfEmpty
+    }
+
+    @ViewBuilder
+    private var macroSummary: some View {
+        if let macros = portion.scaledMacros {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    calorieText(macros)
+                    macroChips(macros)
+                    Spacer(minLength: 0)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    calorieText(macros)
+                    HStack(spacing: 14) { macroChips(macros) }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityMacroSummary(macros))
+        }
+    }
+
+    private func calorieText(_ macros: ScannedProduct.Macros) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(macros.caloriesKcal.map { BarcodeNutrition.compactAmount($0) } ?? "—")
+                .font(.headline)
+                .foregroundStyle(Design.Color.ink)
+                .monospacedDigit()
+                .contentTransition(reduceMotion ? .identity : .numericText())
+            Text("kcal")
+                .font(.caption2)
+                .foregroundStyle(Design.Color.muted)
+        }
+    }
+
+    @ViewBuilder
+    private func macroChips(_ macros: ScannedProduct.Macros) -> some View {
+        macroChip("P", macros.proteinG, Design.Color.ringProtein)
+        macroChip("C", macros.carbsG, Design.Color.ringCarb)
+        macroChip("F", macros.fatG, Design.Color.ringFat)
+    }
+
+    @ViewBuilder
+    private func macroChip(_ label: String, _ value: Double?, _ color: Color) -> some View {
+        if let value {
+            HStack(spacing: 4) {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text("\(label) \(BarcodeNutrition.compactAmount(value))g")
+                    .font(.caption2)
+                    .foregroundStyle(Design.Color.muted)
+                    .monospacedDigit()
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+            }
+        }
+    }
+
+    private var amountRow: some View {
+        HStack(spacing: 12) {
+            Text("Amount")
+                .font(.caption)
+                .foregroundStyle(Design.Color.muted)
+
+            Spacer(minLength: 0)
+
+            stepButton(systemImage: "minus", enabled: canDecrement) {
+                adjustQuantity(by: -ScannedPortion.quantityStep)
+            }
+            .accessibilityHidden(true)
+
+            Text(portion.quantityLabel)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+                .monospacedDigit()
+                .contentTransition(reduceMotion ? .identity : .numericText())
+                .frame(minWidth: 92)
+                .accessibilityLabel("Amount")
+                .accessibilityValue(portion.quantityLabel)
+                .accessibilityAdjustableAction { direction in
+                    switch direction {
+                    case .increment:
+                        adjustQuantity(by: ScannedPortion.quantityStep)
+                    case .decrement:
+                        adjustQuantity(by: -ScannedPortion.quantityStep)
+                    @unknown default:
+                        break
+                    }
+                }
+
+            stepButton(systemImage: "plus", enabled: canIncrement) {
+                adjustQuantity(by: ScannedPortion.quantityStep)
+            }
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var canDecrement: Bool {
+        !isDisabled && portion.quantity > ScannedPortion.minimumQuantity
+    }
+
+    private var canIncrement: Bool {
+        !isDisabled && portion.quantity < ScannedPortion.maximumQuantity
+    }
+
+    private func stepButton(
+        systemImage: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
+                .frame(width: 34, height: 34)
+                .background(Design.Color.glassFill, in: Circle())
+                .contentShape(Circle().inset(by: -5))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    private func adjustQuantity(by delta: Double) {
+        let updated = min(
+            ScannedPortion.maximumQuantity,
+            max(ScannedPortion.minimumQuantity, portion.quantity + delta)
+        )
+        guard updated != portion.quantity else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        if reduceMotion {
+            portion.quantity = updated
+        } else {
+            withAnimation(.snappy(duration: 0.18)) {
+                portion.quantity = updated
+            }
+        }
+    }
+
+    private func accessibilityMacroSummary(_ macros: ScannedProduct.Macros) -> String {
+        var parts: [String] = []
+        if let kcal = macros.caloriesKcal {
+            parts.append("\(BarcodeNutrition.compactAmount(kcal)) kilocalories")
+        }
+        if let protein = macros.proteinG {
+            parts.append("protein \(BarcodeNutrition.compactAmount(protein)) grams")
+        }
+        if let carbs = macros.carbsG {
+            parts.append("carbs \(BarcodeNutrition.compactAmount(carbs)) grams")
+        }
+        if let fat = macros.fatG {
+            parts.append("fat \(BarcodeNutrition.compactAmount(fat)) grams")
+        }
+        return parts.joined(separator: ", ")
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 private struct AudioMeterView: View {

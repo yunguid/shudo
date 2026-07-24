@@ -133,6 +133,7 @@ async function analyze(
     text: [
       "Estimate the nutrition for this meal from the description and photo.",
       "Use realistic portion assumptions when exact amounts are unavailable.",
+      "When the description quotes packaged-product nutrition facts (for example from a scanned barcode label), trust those numbers and scale them by the stated quantity instead of re-estimating the product.",
       "Write analysis_preview first as a short, warm, natural-language sentence summarizing the meal and its likely quantities. Never put JSON syntax in that sentence.",
       MEAL_COPY_INSTRUCTION,
       "Keep the title short and useful in a meal history.",
