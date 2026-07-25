@@ -844,9 +844,14 @@ private struct EntryCorrectionSheet: View {
                                 radius: reduceMotion ? 0 : 24
                             )
 
-                        Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.white)
+                        if audio.isStartingRecording {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(.white)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -873,12 +878,14 @@ private struct EntryCorrectionSheet: View {
     }
 
     private var recordingButtonLabel: String {
-        audio.isRecording
+        if audio.isStartingRecording { return "Starting the microphone" }
+        return audio.isRecording
             ? "Stop correction recording, \(formatTime(audio.elapsedTime)) recorded"
             : "Start correction recording"
     }
 
     private func toggleRecording() async {
+        guard !audio.isStartingRecording else { return }
         errorMessage = nil
         focusedField = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()

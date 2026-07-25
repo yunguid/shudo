@@ -105,10 +105,11 @@ struct EntryComposerView: View {
                     VStack(spacing: 28) {
                         dayLabel
                         voiceCapture
-                        imageCapture
-                        scannedFoodSection
-                        noteField
 
+                        // Directly under the recording controls: an error
+                        // below the note field could sit off-screen once a
+                        // photo was attached, making a failed start look
+                        // like a dead button.
                         if let error = localError ?? audio.errorMessage {
                             Text(error)
                                 .font(.footnote)
@@ -117,6 +118,10 @@ struct EntryComposerView: View {
                                 .frame(maxWidth: .infinity)
                                 .transition(.opacity)
                         }
+
+                        imageCapture
+                        scannedFoodSection
+                        noteField
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
@@ -253,9 +258,14 @@ struct EntryComposerView: View {
                             .frame(width: 76, height: 76)
                             .shadow(color: Design.Color.accentPrimary.opacity(audio.isRecording ? 0.12 : 0.28), radius: 24)
 
-                        Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.white)
+                        if audio.isStartingRecording {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(.white)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -434,11 +444,13 @@ struct EntryComposerView: View {
     }
 
     private var voiceHeadline: String {
+        if audio.isStartingRecording { return "Starting…" }
         if audio.isRecording { return formatTime(audio.elapsedTime) }
         return hasAudio ? "Voice note ready" : "Describe what you ate"
     }
 
     private var voiceDetail: String {
+        if audio.isStartingRecording { return "Getting the microphone ready" }
         if audio.isRecording {
             return "\(formatTime(audio.remainingTime)) remaining · tap when done"
         }
@@ -449,6 +461,7 @@ struct EntryComposerView: View {
     }
 
     private var recordingButtonLabel: String {
+        if audio.isStartingRecording { return "Starting the microphone" }
         if audio.isRecording {
             return "Stop recording, \(formatTime(audio.remainingTime)) remaining"
         }
@@ -456,6 +469,9 @@ struct EntryComposerView: View {
     }
 
     private func toggleRecording() async {
+        // Ignore taps while the microphone warms up; a queued toggle used to
+        // stop the recording the instant it finally started.
+        guard !audio.isStartingRecording else { return }
         localError = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if audio.isRecording {

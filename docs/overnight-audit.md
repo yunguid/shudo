@@ -249,6 +249,32 @@ Design decisions:
   removal, stepper scaling (1 → 2 servings doubled macros), and
   accessibility-medium Dynamic Type.
 
+## Bug fix: dead microphone button in the composer (reported 2026-07-25)
+
+Reported flow: open composer via **Log meal**, attach a photo, tap the mic —
+nothing happens. Reproduced in the simulator, where it also failed with no
+photo at all; the photo was incidental.
+
+Root cause: `AVAudioSession.setCategory/setActive` and recorder warm-up are
+blocking system calls, and the whole `AudioRecorder` is `@MainActor` — so
+the mic tap froze the main thread for as long as activation took (seconds on
+device with a Bluetooth/post-picker handoff; effectively forever on a wedged
+audio server). Queued taps then executed after activation and stopped the
+recording the instant it began. Two aggravators: the failure error text
+rendered below the note field (off-screen once a photo was attached), and
+`AVAudioSession.setActive(false)` on the stop path had the same main-thread
+blocking problem.
+
+Fix: session activation + recorder warm-up run off the main actor behind a
+12 s deadline implemented as an unstructured race (a task group would await
+the uncancellable blocked child, defeating the deadline); a late-arriving
+recorder is stopped so nothing records invisibly. The UI shows an explicit
+"Starting… / Getting the microphone ready" state with a spinner; taps during
+warm-up are ignored (composer, correction sheet, onboarding); deactivation
+moved off-main; the composer's error text moved directly under the recording
+controls. Verified in-simulator: responsive spinner state, deadline error
+surfaces visibly, button recovers and is retryable; full native suite green.
+
 ## Morning phone QA checklist (ordered)
 
 1. Open Shudo → Today loads; thumbnails appear without flashing placeholders.

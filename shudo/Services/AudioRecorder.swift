@@ -1,16 +1,24 @@
 import AVFoundation
 import Foundation
+import os
 
 @MainActor
 final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRecorderDelegate {
-    static let maximumDuration: TimeInterval = 15 * 60
+    nonisolated static let maximumDuration: TimeInterval = 15 * 60
 
     @Published private(set) var isRecording = false
+    /// True while the audio session activates and the recorder warms up.
+    /// Session activation is a blocking system call that can take seconds
+    /// (Bluetooth negotiation, post-picker handoff), so the UI shows a
+    /// starting state instead of freezing or silently ignoring the tap.
+    @Published private(set) var isStartingRecording = false
     @Published private(set) var recordedFileURL: URL?
     @Published private(set) var elapsedTime: TimeInterval = 0
     @Published private(set) var meterLevels: [CGFloat] = Array(repeating: 0.06, count: 28)
     @Published private(set) var didReachMaximumDuration = false
     @Published var errorMessage: String?
+
+    nonisolated static let startTimeout: TimeInterval = 12
 
     private var recorder: AVAudioRecorder?
     private var meterTimer: Timer?
@@ -39,45 +47,40 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     }
 
     func startRecording() async -> Bool {
-        guard !Task.isCancelled else { return false }
+        guard !Task.isCancelled, !isRecording, !isStartingRecording else { return false }
         errorMessage = nil
+        // Discard before flagging the start: discardRecording clears
+        // isStartingRecording so a composer teardown can abort a warm-up
+        // already in flight.
+        discardRecording()
+        isStartingRecording = true
+        defer { isStartingRecording = false }
+
         let granted = await requestPermission()
-        guard !Task.isCancelled else { return false }
+        guard !Task.isCancelled, isStartingRecording else { return false }
         guard granted else {
             errorMessage = "Microphone access is required to record a meal."
             return false
         }
 
-        discardRecording()
-        let session = AVAudioSession.sharedInstance()
+        let url = Self.makeTempURL()
         do {
-            try session.setCategory(
-                .playAndRecord,
-                mode: .spokenAudio,
-                options: [.defaultToSpeaker, .allowBluetoothHFP]
-            )
-            try session.setActive(true)
-
-            let url = Self.makeTempURL()
-            let settings: [String: Any] = [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 24_000,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 48_000,
-                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
-            ]
-            let recorder = try AVAudioRecorder(url: url, settings: settings)
-            recorder.delegate = self
-            recorder.isMeteringEnabled = true
-            recorder.prepareToRecord()
-            guard recorder.record(forDuration: Self.maximumDuration) else {
-                throw NSError(
-                    domain: "AudioRecorder",
-                    code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "Recording could not start."]
-                )
+            // Session activation and input warm-up are blocking system calls
+            // that can take seconds; running them on the main actor froze the
+            // whole composer and made queued taps stop the recording the
+            // moment it finally began.
+            let recorder = try await Self.withStartDeadline {
+                try Self.activateSessionAndStartRecorder(url: url)
+            }
+            guard !Task.isCancelled, isStartingRecording else {
+                // The composer went away while the recorder warmed up.
+                recorder.stop()
+                try? FileManager.default.removeItem(at: url)
+                Self.deactivateSessionInBackground()
+                return false
             }
 
+            recorder.delegate = self
             self.recorder = recorder
             recordedFileURL = url
             startedAt = Date()
@@ -89,9 +92,97 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         } catch {
             isRecording = false
             recordedFileURL = nil
-            errorMessage = error.localizedDescription
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            errorMessage = (error as? AudioStartError)?.message
+                ?? "The microphone couldn’t start. Try again."
+            Self.deactivateSessionInBackground()
             return false
+        }
+    }
+
+    private struct AudioStartError: Error {
+        let message: String
+    }
+
+    private nonisolated static func activateSessionAndStartRecorder(
+        url: URL
+    ) throws -> AVAudioRecorder {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(
+            .playAndRecord,
+            mode: .spokenAudio,
+            options: [.defaultToSpeaker, .allowBluetoothHFP]
+        )
+        try session.setActive(true)
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 24_000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 48_000,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+        ]
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        recorder.isMeteringEnabled = true
+        recorder.prepareToRecord()
+        guard recorder.record(forDuration: maximumDuration) else {
+            throw AudioStartError(message: "Recording could not start.")
+        }
+        return recorder
+    }
+
+    /// Runs the blocking start work off the main actor, bounded so a wedged
+    /// audio server surfaces as a retryable error instead of a stuck button.
+    /// Deliberately an unstructured race: a task group would await the
+    /// uncancellable blocked child before rethrowing, defeating the deadline.
+    private nonisolated static func withStartDeadline(
+        _ work: @escaping () throws -> AVAudioRecorder
+    ) async throws -> AVAudioRecorder {
+        let hasResumed = OSAllocatedUnfairLock(initialState: false)
+        func claimResume() -> Bool {
+            hasResumed.withLock { resumed in
+                if resumed { return false }
+                resumed = true
+                return true
+            }
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            Task.detached(priority: .userInitiated) {
+                do {
+                    let recorder = try work()
+                    if claimResume() {
+                        continuation.resume(returning: recorder)
+                    } else {
+                        // The deadline already fired; stop the orphan so it
+                        // cannot keep recording invisibly.
+                        recorder.stop()
+                        deactivateSessionInBackground()
+                    }
+                } catch {
+                    if claimResume() {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+            Task.detached {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(startTimeout * 1_000_000_000)
+                )
+                if claimResume() {
+                    continuation.resume(throwing: AudioStartError(
+                        message: "The microphone is taking too long to start. Try again."
+                    ))
+                }
+            }
+        }
+    }
+
+    private nonisolated static func deactivateSessionInBackground() {
+        Task.detached(priority: .utility) {
+            try? AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
         }
     }
 
@@ -106,6 +197,9 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
 
     func discardRecording() {
         if isRecording { stopRecording() }
+        // Aborts an in-flight start: the warm-up continuation checks this
+        // flag and tears its recorder down instead of surfacing it.
+        isStartingRecording = false
         if let recordedFileURL { try? FileManager.default.removeItem(at: recordedFileURL) }
         recordedFileURL = nil
         recorder = nil
@@ -187,7 +281,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         stopMetering()
         elapsedTime = reachedMaximum ? Self.maximumDuration : duration
         didReachMaximumDuration = reachedMaximum
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        Self.deactivateSessionInBackground()
     }
 
     private func finishSystemEndedRecording(
@@ -205,7 +299,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
             if let recordedFileURL { try? FileManager.default.removeItem(at: recordedFileURL) }
             recordedFileURL = nil
         }
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        Self.deactivateSessionInBackground()
     }
 
     private func currentDuration(recorder: AVAudioRecorder?) -> TimeInterval {

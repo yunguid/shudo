@@ -190,14 +190,23 @@ struct OnboardingView: View {
                                 radius: 24
                             )
 
-                        Image(systemName: audio.isRecording ? "stop.fill" : "waveform")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.white)
+                        if audio.isStartingRecording {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: audio.isRecording ? "stop.fill" : "waveform")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(.white)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
                 .disabled(isPreparing)
-                .accessibilityLabel(audio.isRecording ? "Stop recording" : "Start recording")
+                .accessibilityLabel(
+                    audio.isStartingRecording
+                        ? "Starting the microphone"
+                        : audio.isRecording ? "Stop recording" : "Start recording"
+                )
             }
         }
         .padding(22)
@@ -638,6 +647,7 @@ struct OnboardingView: View {
 
     @MainActor
     private func toggleRecording() async {
+        guard !audio.isStartingRecording else { return }
         errorMessage = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if audio.isRecording {
