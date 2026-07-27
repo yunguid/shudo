@@ -51,6 +51,8 @@ Deno.test("Responses SSE parser survives chunk boundaries and returns canonical 
   );
 
   assertEquals(result.responseId, "resp_test");
+  assertEquals(result.webSearchUsed, false);
+  assertEquals(result.webSearchSources, []);
   assertEquals(
     result.outputText,
     '{"analysis_preview":"A chicken bowl","title":"Chicken bowl"}',
@@ -59,6 +61,33 @@ Deno.test("Responses SSE parser survives chunk boundaries and returns canonical 
     '{"analysis_preview":"A chicken ',
     '{"analysis_preview":"A chicken bowl","title":"Chicken bowl"}',
   ]);
+});
+
+Deno.test("Responses SSE parser preserves hosted web search usage and source metadata", async () => {
+  const completed = event("response.completed", {
+    response: {
+      id: "resp_search",
+      status: "completed",
+      output: [{
+        type: "web_search_call",
+        action: {
+          type: "search",
+          sources: [{
+            type: "url",
+            url: "https://restaurant.example/nutrition",
+          }],
+        },
+      }, {
+        type: "message",
+        content: [{ type: "output_text", text: '{"title":"Meal"}' }],
+      }],
+    },
+  });
+  const result = await readResponsesEventStream(streamChunks([completed]));
+  assertEquals(result.webSearchUsed, true);
+  assertEquals(result.webSearchSources, [{
+    url: "https://restaurant.example/nutrition",
+  }]);
 });
 
 Deno.test("Responses SSE parser rejects provider errors and truncated streams", async () => {

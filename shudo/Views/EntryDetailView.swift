@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import UIKit
 
@@ -98,7 +99,8 @@ struct EntryDetailView: View {
                                 DetailTextSection(
                                     title: "Analysis notes",
                                     systemImage: "doc.text.magnifyingglass",
-                                    text: notes
+                                    text: notes,
+                                    rendersMarkdownLinks: notes.contains("\n\nOnline sources: ")
                                 )
                             }
 
@@ -475,23 +477,37 @@ private struct DetailTextSection: View {
     let systemImage: String
     let text: String
     let collapsedByDefault: Bool
+    let rendersMarkdownLinks: Bool
     @State private var isExpanded: Bool
 
     init(
         title: String,
         systemImage: String,
         text: String,
-        collapsedByDefault: Bool = false
+        collapsedByDefault: Bool = false,
+        rendersMarkdownLinks: Bool = false
     ) {
         self.title = title
         self.systemImage = systemImage
         self.text = text
         self.collapsedByDefault = collapsedByDefault
+        self.rendersMarkdownLinks = rendersMarkdownLinks
         _isExpanded = State(initialValue: false)
     }
 
     private var offersExpansion: Bool {
         EntryDetailPresentation.offersExpansion(for: text)
+    }
+
+    private var renderedText: AttributedString {
+        guard rendersMarkdownLinks,
+              let attributed = try? AttributedString(
+                  markdown: text,
+                  options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+              ) else {
+            return AttributedString(text)
+        }
+        return attributed
     }
 
     var body: some View {
@@ -523,7 +539,7 @@ private struct DetailTextSection: View {
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(text)
+                    Text(renderedText)
                         .font(.subheadline)
                         .foregroundStyle(Design.Color.ink)
                         .fixedSize(horizontal: false, vertical: true)
@@ -549,7 +565,7 @@ private struct DetailTextSection: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             } else if !collapsedByDefault {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(text)
+                    Text(renderedText)
                         .font(.subheadline)
                         .foregroundStyle(Design.Color.ink)
                         .lineLimit(offersExpansion ? 5 : nil)

@@ -1,10 +1,16 @@
 import { responseOutputText } from "./analysis.ts";
+import {
+  responseWebSearchMetadata,
+  type WebSearchSource,
+} from "./meal_research.ts";
 
 export const MAX_STREAMED_OUTPUT_CHARACTERS = 40_000;
 
 export type ResponsesStreamResult = {
   outputText: string;
   responseId: string | null;
+  webSearchUsed: boolean;
+  webSearchSources: WebSearchSource[];
 };
 
 type OutputObserver = (outputText: string) => Promise<void>;
@@ -55,7 +61,15 @@ export async function readResponsesEventStream(
   let buffered = "";
   let outputText = "";
   let responseId: string | null = null;
+  let webSearchUsed = false;
+  const webSearchSourceUrls = new Set<string>();
   let completed = false;
+
+  const observeWebSearchMetadata = (candidate: Record<string, unknown>) => {
+    const metadata = responseWebSearchMetadata(candidate);
+    webSearchUsed ||= metadata.used;
+    for (const source of metadata.sources) webSearchSourceUrls.add(source.url);
+  };
 
   const handleMessage = async (block: string): Promise<void> => {
     const message = parseSSEMessage(block);
@@ -78,6 +92,18 @@ export async function readResponsesEventStream(
     const response = responseFromEvent(payload);
     if (response && typeof response.id === "string") {
       responseId = response.id;
+    }
+    if (response) observeWebSearchMetadata(response);
+    if (eventType?.startsWith("response.web_search_call.")) {
+      webSearchUsed = true;
+    }
+    if (
+      (eventType === "response.output_item.added" ||
+        eventType === "response.output_item.done") &&
+      payload.item && typeof payload.item === "object" &&
+      !Array.isArray(payload.item)
+    ) {
+      observeWebSearchMetadata({ output: [payload.item] });
     }
 
     if (eventType === "response.output_text.delta") {
@@ -160,5 +186,14 @@ export async function readResponsesEventStream(
   if (!completed) {
     throw new Error("Meal analysis stream ended before completion");
   }
-  return { outputText, responseId };
+  return {
+    outputText,
+    responseId,
+    webSearchUsed,
+    webSearchSources: Array.from(webSearchSourceUrls).slice(0, 5).map((
+      url,
+    ) => ({
+      url,
+    })),
+  };
 }
