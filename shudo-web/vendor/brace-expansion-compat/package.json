@@ -1,0 +1,21 @@
+{
+  "name": "brace-expansion",
+  "version": "5.0.8-shudo.1",
+  "private": true,
+  "description": "Compatibility facade for patched brace-expansion",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.cjs",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "require": "./index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "brace-expansion-patched": "npm:brace-expansion@5.0.8"
+  }
+}
