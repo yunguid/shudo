@@ -50,6 +50,13 @@ struct NutrientTrendsView: View {
                         Text("Target")
                     }
                     Spacer(minLength: 8)
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Design.Color.warning.opacity(0.9))
+                            .frame(width: 8, height: 8)
+                        Text("Over")
+                    }
+                    Spacer(minLength: 8)
                     Text("Latest")
                 }
                 .font(.caption2)
@@ -95,7 +102,8 @@ struct NutrientTrendsView: View {
                             trendBar(
                                 ratio: week.ratio(for: metric),
                                 color: color,
-                                height: geometry.size.height
+                                height: geometry.size.height,
+                                isLatest: week.id == weeks.last?.id
                             )
                         }
                     }
@@ -106,27 +114,52 @@ struct NutrientTrendsView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .frame(height: 32)
+            .frame(height: 40)
             .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary(for: metric, in: weeks))
     }
 
-    private func trendBar(ratio: Double?, color: Color, height: CGFloat) -> some View {
+    /// A week's bar: solid metric color up to the target line; anything
+    /// beyond the target renders as an amber overflow segment above it, so
+    /// over- vs under-target weeks read at a glance. The latest week is
+    /// full-strength; history sits back slightly.
+    private func trendBar(
+        ratio: Double?,
+        color: Color,
+        height: CGFloat,
+        isLatest: Bool
+    ) -> some View {
         RoundedRectangle(cornerRadius: 2.5, style: .continuous)
             .fill(Design.Color.elevated)
             .overlay(alignment: .bottom) {
                 if let ratio {
-                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                        .fill(color.opacity(ratio > 1 ? 0.82 : 0.64))
-                        .frame(
-                            height: max(
-                                2,
-                                height * min(max(ratio, 0), chartMaximumRatio)
-                                    / chartMaximumRatio
+                    let clamped = min(max(ratio, 0), chartMaximumRatio)
+                    let underHeight = max(2, height * min(clamped, 1) / chartMaximumRatio)
+                    let overHeight = clamped > 1
+                        ? height * (clamped - 1) / chartMaximumRatio
+                        : 0
+                    VStack(spacing: 0) {
+                        if overHeight > 0 {
+                            UnevenRoundedRectangle(
+                                topLeadingRadius: 2.5,
+                                topTrailingRadius: 2.5,
+                                style: .continuous
                             )
+                            .fill(Design.Color.warning.opacity(isLatest ? 0.95 : 0.7))
+                            .frame(height: overHeight)
+                        }
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: overHeight > 0 ? 0 : 2.5,
+                            bottomLeadingRadius: 2.5,
+                            bottomTrailingRadius: 2.5,
+                            topTrailingRadius: overHeight > 0 ? 0 : 2.5,
+                            style: .continuous
                         )
+                        .fill(color.opacity(isLatest ? 1 : 0.66))
+                        .frame(height: underHeight)
+                    }
                 }
             }
             .frame(maxWidth: .infinity)

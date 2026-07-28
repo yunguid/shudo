@@ -532,3 +532,57 @@ struct NativeExperienceTests {
         #expect(parsed.last?.target.proteinG == 150)
     }
 }
+
+// MARK: - Heatmap presentation policy
+
+extension NativeExperienceTests {
+    @Test func adherenceLevelsBucketScoresIntoFiveDistinctSteps() {
+        #expect(NutritionProgressPolicy.adherenceLevel(nil) == 0)
+        #expect(NutritionProgressPolicy.adherenceLevel(0.0) == 1)
+        #expect(NutritionProgressPolicy.adherenceLevel(0.54) == 1)
+        #expect(NutritionProgressPolicy.adherenceLevel(0.55) == 2)
+        #expect(NutritionProgressPolicy.adherenceLevel(0.74) == 2)
+        #expect(NutritionProgressPolicy.adherenceLevel(0.75) == 3)
+        #expect(NutritionProgressPolicy.adherenceLevel(0.89) == 3)
+        #expect(NutritionProgressPolicy.adherenceLevel(0.9) == 4)
+        #expect(NutritionProgressPolicy.adherenceLevel(1.0) == 4)
+    }
+
+    @Test func weekdayRowsAlignToTheCalendarsFirstWeekday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        // 2026-07-20 is a Monday.
+        let monday = try #require(
+            ISO8601DateFormatter().date(from: "2026-07-20T12:00:00Z")
+        )
+
+        calendar.firstWeekday = 1 // Sunday-first: Monday sits on row 1.
+        #expect(NutritionProgressPolicy.weekdayRow(for: monday, calendar: calendar) == 1)
+
+        calendar.firstWeekday = 2 // Monday-first: Monday sits on row 0.
+        #expect(NutritionProgressPolicy.weekdayRow(for: monday, calendar: calendar) == 0)
+    }
+
+    @Test func heatmapCellsCarryTheDaysTotalsAndEffectiveTargetForTheReadout() throws {
+        let ending = try #require(ISO8601DateFormatter().date(from: "2026-07-21T16:00:00Z"))
+        let total = DailyNutritionTotal(
+            localDay: "2026-07-21",
+            proteinG: 150,
+            carbsG: 250,
+            fatG: 70,
+            caloriesKcal: 2_200,
+            entryCount: 2
+        )
+        let cells = NutritionProgressPolicy.heatmapCells(
+            totals: [total],
+            target: .defaultDaily,
+            endingOn: ending,
+            timezone: "UTC",
+            dayCount: 2
+        )
+
+        #expect(cells.last?.total == total)
+        #expect(cells.last?.effectiveTarget == .defaultDaily)
+        #expect(cells.first?.total == nil)
+    }
+}

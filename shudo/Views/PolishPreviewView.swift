@@ -269,12 +269,15 @@ struct PolishPreviewView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "America/New_York")
         formatter.dateFormat = "yyyy-MM-dd"
+        // Spread across all adherence buckets (including over-target weeks)
+        // so heatmap levels and trend overflow segments are all visible in
+        // the preview.
         return (0..<84).compactMap { offset in
             guard offset % 6 != 0,
                   let date = calendar.date(byAdding: .day, value: -offset, to: Date()) else {
                 return nil
             }
-            let variation = Double((offset % 7) - 3) * 0.035
+            let variation = Double((offset % 9) - 4) * 0.07
             return DailyNutritionTotal(
                 localDay: formatter.string(from: date),
                 proteinG: profile.dailyMacroTarget.proteinG * (0.96 + variation),

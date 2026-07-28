@@ -85,6 +85,10 @@ struct AdherenceHeatmapCell: Equatable, Identifiable {
     let localDay: String
     let adherence: Double?
     let entryCount: Int
+    /// The day's logged totals and the target in force that day, carried so
+    /// a tapped cell can show verifiable numbers instead of only a color.
+    let total: DailyNutritionTotal?
+    let effectiveTarget: MacroTarget
 
     var id: String { localDay }
 }
@@ -210,9 +214,30 @@ enum NutritionProgressPolicy {
                 date: date,
                 localDay: localDay,
                 adherence: total.flatMap { adherence(total: $0, target: effectiveTarget) },
-                entryCount: total?.entryCount ?? 0
+                entryCount: total?.entryCount ?? 0,
+                total: total,
+                effectiveTarget: effectiveTarget
             )
         }
+    }
+
+    /// Buckets a continuous adherence score into the heatmap's five visual
+    /// levels (0 = nothing logged, 1...4 = far from target through on
+    /// target). Discrete steps are distinguishable at cell size where a
+    /// continuous opacity ramp is not.
+    static func adherenceLevel(_ adherence: Double?) -> Int {
+        guard let adherence else { return 0 }
+        if adherence >= 0.9 { return 4 }
+        if adherence >= 0.75 { return 3 }
+        if adherence >= 0.55 { return 2 }
+        return 1
+    }
+
+    /// Which row (0...6) a date occupies in a weekday-aligned heatmap
+    /// column, honoring the calendar's first weekday.
+    static func weekdayRow(for date: Date, calendar: Calendar) -> Int {
+        let weekday = calendar.component(.weekday, from: date)
+        return (weekday - calendar.firstWeekday + 7) % 7
     }
 
     static func nutrientTrendWeeks(
