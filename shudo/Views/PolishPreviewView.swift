@@ -123,9 +123,22 @@ struct PolishPreviewView: View {
                     status: .complete
                 ),
                 Entry(
+                    id: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
+                    createdAt: Date().addingTimeInterval(-4_800),
+                    summary: "Chipotle chicken burrito bowl",
+                    imageURL: nil,
+                    proteinG: 54,
+                    carbsG: 88,
+                    fatG: 24,
+                    caloriesKcal: 800,
+                    localDay: Self.localDay,
+                    status: .complete,
+                    analysisNotes: "Standard portions from the online menu.\n\nOnline sources: [chipotle.com](https://www.chipotle.com/nutrition-calculator)."
+                ),
+                Entry(
                     id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
                     createdAt: Date().addingTimeInterval(-2_400),
-                    summary: "Greek yogurt, berries, honey",
+                    summary: "Sweetgreen harvest bowl, look it up",
                     imageURL: nil,
                     proteinG: 0,
                     carbsG: 0,
@@ -133,9 +146,8 @@ struct PolishPreviewView: View {
                     caloriesKcal: 0,
                     localDay: Self.localDay,
                     status: .analyzing,
-                    statusMessage: "Updating nutrition estimate",
-                    statusUpdatedAt: Date(),
-                    analysisPreview: "Checking the portion and topping details…"
+                    statusMessage: "Checking nutrition sources",
+                    statusUpdatedAt: Date()
                 )
             ]
         )
@@ -144,41 +156,49 @@ struct PolishPreviewView: View {
     private static let entryDetail = SupabaseService.EntryDetail(
         createdAt: Date().addingTimeInterval(-7_200),
         imageURL: nil,
-        title: "Chicken rice bowl",
-        rawText: "Chicken thigh, jasmine rice, vegetables, and a little sesame sauce.",
-        transcript: "Chicken rice bowl with about two cups of rice, grilled chicken thigh, mixed vegetables, and sesame sauce.",
-        proteinG: 58,
-        carbsG: 72,
-        fatG: 19,
-        caloriesKcal: 695,
+        title: "Chipotle chicken burrito bowl",
+        rawText: "Chipotle burrito bowl with chicken, white rice, black beans, cheese, and mild salsa. Look up the nutrition online.",
+        transcript: "Chipotle bowl with chicken, white rice, black beans, cheese, and mild salsa. Look it up online for the real numbers.",
+        proteinG: 54,
+        carbsG: 88,
+        fatG: 24,
+        caloriesKcal: 800,
         items: [
             SupabaseService.EntryDetailItem(
-                name: "Grilled chicken thigh",
-                amount: "170 g",
-                proteinG: 43,
+                name: "Grilled chicken",
+                amount: "4 oz",
+                proteinG: 38,
                 carbsG: 0,
-                fatG: 13,
-                caloriesKcal: 305
+                fatG: 7,
+                caloriesKcal: 220
             ),
             SupabaseService.EntryDetailItem(
-                name: "Jasmine rice",
-                amount: "1½ cups cooked",
+                name: "Cilantro-lime white rice",
+                amount: "1¼ cups",
+                proteinG: 5,
+                carbsG: 52,
+                fatG: 3,
+                caloriesKcal: 260
+            ),
+            SupabaseService.EntryDetailItem(
+                name: "Black beans",
+                amount: "½ cup",
                 proteinG: 7,
-                carbsG: 68,
+                carbsG: 22,
                 fatG: 1,
-                caloriesKcal: 310
+                caloriesKcal: 130
             ),
             SupabaseService.EntryDetailItem(
-                name: "Mixed vegetables and sesame sauce",
+                name: "Cheese and mild salsa",
                 amount: "1 serving",
-                proteinG: 8,
-                carbsG: 4,
-                fatG: 5,
-                caloriesKcal: 80
+                proteinG: 4,
+                carbsG: 14,
+                fatG: 13,
+                caloriesKcal: 190
             )
         ],
-        analysisNotes: "Portions are estimated from the description. Sauce and cooking oil create most of the uncertainty.",
-        confidence: 0.82
+        analysisNotes: "Values follow the restaurant's own nutrition calculator for these exact portions.\n\nOnline sources: [chipotle.com](https://www.chipotle.com/nutrition-calculator), [nutritionix.com](https://www.nutritionix.com/brand/chipotle-mexican-grill).",
+        confidence: 0.9
     )
 
     private static var profilePhoto: UIImage {

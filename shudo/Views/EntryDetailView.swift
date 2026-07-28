@@ -65,6 +65,9 @@ struct EntryDetailView: View {
             GeometryReader { viewport in
                 ScrollView {
                     if let detail {
+                        let research = EntryResearchPresentation.breakdown(
+                            notes: detail.analysisNotes
+                        )
                         VStack(alignment: .leading, spacing: 26) {
                             photo(detail.imageURL)
 
@@ -77,7 +80,7 @@ struct EntryDetailView: View {
                                     .foregroundStyle(Design.Color.muted)
                             }
 
-                            macroSummary(detail)
+                            macroSummary(detail, research: research)
 
                             correctionAction
 
@@ -95,12 +98,12 @@ struct EntryDetailView: View {
                                 }
                             }
 
-                            if let notes = nonempty(detail.analysisNotes) {
+                            if let notes = research.displayNotes {
                                 DetailTextSection(
                                     title: "Analysis notes",
                                     systemImage: "doc.text.magnifyingglass",
                                     text: notes,
-                                    rendersMarkdownLinks: notes.contains("\n\nOnline sources: ")
+                                    rendersInlineMarkdown: research.rendersInlineMarkdown
                                 )
                             }
 
@@ -202,7 +205,10 @@ struct EntryDetailView: View {
             }
     }
 
-    private func macroSummary(_ detail: SupabaseService.EntryDetail) -> some View {
+    private func macroSummary(
+        _ detail: SupabaseService.EntryDetail,
+        research: EntryResearchPresentation.NotesBreakdown
+    ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline) {
@@ -229,7 +235,95 @@ struct EntryDetailView: View {
                     macroValue("Fat", detail.fatG, Design.Color.ringFat)
                 }
             }
+
+            researchProvenance(research.provenance)
         }
+    }
+
+    /// Where the meal's numbers came from: verified against online sources
+    /// (with tappable links), or explicitly an estimate when lookup found
+    /// nothing or was unavailable. Ordinary meals show nothing here.
+    @ViewBuilder
+    private func researchProvenance(
+        _ provenance: EntryResearchPresentation.Provenance
+    ) -> some View {
+        switch provenance {
+        case .none:
+            EmptyView()
+        case .verified(let sources):
+            VStack(alignment: .leading, spacing: 10) {
+                Label {
+                    Text("Checked online")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.ink)
+                } icon: {
+                    Image(systemName: "checkmark.seal")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.accentSecondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    sources.isEmpty
+                        ? "Nutrition checked against online sources"
+                        : "Nutrition checked against \(sources.count) online source\(sources.count == 1 ? "" : "s")"
+                )
+
+                if !sources.isEmpty {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { sourceChips(sources) }
+                        VStack(alignment: .leading, spacing: 8) { sourceChips(sources) }
+                    }
+                }
+            }
+        case .unverified:
+            estimateNotice("Estimate — no authoritative source found online")
+        case .unavailable:
+            estimateNotice("Estimate — online lookup was unavailable")
+        }
+    }
+
+    @ViewBuilder
+    private func sourceChips(
+        _ sources: [EntryResearchPresentation.Source]
+    ) -> some View {
+        ForEach(sources) { source in
+            Link(destination: source.url) {
+                HStack(spacing: 5) {
+                    Image(systemName: "globe")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Design.Color.accentSecondary)
+                    Text(source.host)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Design.Color.ink)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Design.Color.glassFill, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                )
+                // ~44pt tap target beyond the visual chip.
+                .contentShape(Capsule().inset(by: -7))
+            }
+            .accessibilityLabel("Source: \(source.host)")
+            .accessibilityHint("Opens in your browser")
+        }
+    }
+
+    private func estimateNotice(_ message: String) -> some View {
+        Label {
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(Design.Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "info.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Design.Color.muted)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func calorieSummary(_ detail: SupabaseService.EntryDetail) -> some View {
@@ -477,7 +571,7 @@ private struct DetailTextSection: View {
     let systemImage: String
     let text: String
     let collapsedByDefault: Bool
-    let rendersMarkdownLinks: Bool
+    let rendersInlineMarkdown: Bool
     @State private var isExpanded: Bool
 
     init(
@@ -485,13 +579,13 @@ private struct DetailTextSection: View {
         systemImage: String,
         text: String,
         collapsedByDefault: Bool = false,
-        rendersMarkdownLinks: Bool = false
+        rendersInlineMarkdown: Bool = false
     ) {
         self.title = title
         self.systemImage = systemImage
         self.text = text
         self.collapsedByDefault = collapsedByDefault
-        self.rendersMarkdownLinks = rendersMarkdownLinks
+        self.rendersInlineMarkdown = rendersInlineMarkdown
         _isExpanded = State(initialValue: false)
     }
 
@@ -500,7 +594,7 @@ private struct DetailTextSection: View {
     }
 
     private var renderedText: AttributedString {
-        guard rendersMarkdownLinks,
+        guard rendersInlineMarkdown,
               let attributed = try? AttributedString(
                   markdown: text,
                   options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)

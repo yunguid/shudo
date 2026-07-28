@@ -3,7 +3,7 @@ import Foundation
 struct SupabaseService: Sendable, WeeklySummaryProviding {
     static let signedImageConcurrencyLimit = 4
     static let maximumProfilePhotoBytes = 2_097_152
-    static let entryListColumns = "id,local_day,occurred_at,created_at,updated_at,status,status_message,analysis_preview,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts"
+    static let entryListColumns = "id,local_day,occurred_at,created_at,updated_at,status,status_message,analysis_preview,title,raw_text,protein_g,carbs_g,fat_g,calories_kcal,image_path,error_message,processing_attempts,analysis_notes"
     /// Status polling runs every 650 ms while a meal analyzes; this projection
     /// deliberately omits `raw_text` (up to 30 KB with a transcript) and other
     /// row content. Content fields DO change at status transitions, so the
@@ -11,7 +11,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
     /// visible row and uses this slim projection only for same-status polls.
     static let entryStatusColumns = "id,local_day,status,status_message,analysis_preview,error_message,processing_attempts,updated_at"
 
-    private struct ParsedEntry {
+    struct ParsedEntry {
         var entry: Entry
         let imagePath: String?
     }
@@ -874,7 +874,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         return parsed.entry
     }
 
-    private func parseEntry(_ object: [String: Any]) -> ParsedEntry? {
+    func parseEntry(_ object: [String: Any]) -> ParsedEntry? {
         guard let idString = object["id"] as? String,
               let id = UUID(uuidString: idString) else { return nil }
 
@@ -909,7 +909,8 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
                 errorMessage: object["error_message"] as? String,
                 statusUpdatedAt: Self.parseDate(object["updated_at"]),
                 processingAttempts: Int(Self.toDouble(object["processing_attempts"])),
-                analysisPreview: object["analysis_preview"] as? String
+                analysisPreview: object["analysis_preview"] as? String,
+                analysisNotes: object["analysis_notes"] as? String
             ),
             imagePath: imagePath?.isEmpty == false ? imagePath : nil
         )

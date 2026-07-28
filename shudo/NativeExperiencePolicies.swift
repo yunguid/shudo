@@ -365,6 +365,159 @@ enum EntryDetailPresentation {
     }
 }
 
+/// Presents web-research provenance from the fields the server already
+/// writes. Copy contract with supabase/functions/_shared/entry_processor.ts
+/// (RESEARCH_STATUS_MESSAGES) and _shared/meal_research.ts (disclosure
+/// strings): both sides pin these exact strings in tests, and unknown text
+/// degrades to today's plain rendering rather than breaking.
+enum EntryResearchPresentation {
+    /// Server-authored processing phases that mean live web research. An
+    /// unrecognized message simply renders without the research glyph.
+    static let researchingStatusMessages: Set<String> = [
+        "Searching the web",
+        "Checking nutrition sources",
+        "Calculating from sources",
+    ]
+
+    static func isResearching(statusMessage: String?) -> Bool {
+        guard let statusMessage else { return false }
+        return researchingStatusMessages.contains(
+            statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    static let sourcesPrefix = "Online sources: "
+    static let verifiedLinklessDisclosure = "Checked against online sources."
+    static let unavailableDisclosurePrefix = "Online lookup was unavailable"
+    static let emptyDisclosurePrefix = "No authoritative online nutrition source"
+
+    struct Source: Equatable, Identifiable {
+        let host: String
+        let url: URL
+
+        var id: URL { url }
+    }
+
+    enum Provenance: Equatable {
+        case none
+        /// Research succeeded; sources may be empty when links were too long
+        /// to attach safely.
+        case verified(sources: [Source])
+        /// The web was searched but no authoritative source was found.
+        case unverified
+        /// Online lookup failed and the meal fell back to a plain estimate.
+        case unavailable
+    }
+
+    struct NotesBreakdown: Equatable {
+        let provenance: Provenance
+        /// Model prose with the research lines removed; nil when nothing
+        /// remains to show.
+        let displayNotes: String?
+        /// True when the server escaped the prose for markdown (verified
+        /// meals), so display must render inline markdown to undo escapes.
+        let rendersInlineMarkdown: Bool
+    }
+
+    static func breakdown(notes: String?) -> NotesBreakdown {
+        let trimmed = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else {
+            return NotesBreakdown(
+                provenance: .none,
+                displayNotes: nil,
+                rendersInlineMarkdown: false
+            )
+        }
+
+        var paragraphs = trimmed.components(separatedBy: "\n\n")
+        let last = paragraphs[paragraphs.count - 1]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        func remainingProse() -> String? {
+            paragraphs.removeLast()
+            let prose = paragraphs
+                .joined(separator: "\n\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return prose.isEmpty ? nil : prose
+        }
+
+        if last.hasPrefix(sourcesPrefix) {
+            let sources = parseSources(
+                String(last.dropFirst(sourcesPrefix.count))
+            )
+            return NotesBreakdown(
+                provenance: .verified(sources: sources),
+                displayNotes: remainingProse(),
+                rendersInlineMarkdown: true
+            )
+        }
+        if last == verifiedLinklessDisclosure {
+            return NotesBreakdown(
+                provenance: .verified(sources: []),
+                displayNotes: remainingProse(),
+                rendersInlineMarkdown: true
+            )
+        }
+        if last.hasPrefix(emptyDisclosurePrefix) {
+            return NotesBreakdown(
+                provenance: .unverified,
+                displayNotes: remainingProse(),
+                rendersInlineMarkdown: false
+            )
+        }
+        if last.hasPrefix(unavailableDisclosurePrefix) {
+            return NotesBreakdown(
+                provenance: .unavailable,
+                displayNotes: remainingProse(),
+                rendersInlineMarkdown: false
+            )
+        }
+        return NotesBreakdown(
+            provenance: .none,
+            displayNotes: trimmed,
+            rendersInlineMarkdown: false
+        )
+    }
+
+    static func hasVerifiedResearch(notes: String?) -> Bool {
+        if case .verified = breakdown(notes: notes).provenance { return true }
+        return false
+    }
+
+    /// Parses "[host](url), [host](url)." — the server guarantees links are
+    /// never truncated mid-markdown, but a malformed tail is dropped rather
+    /// than rendered.
+    private static func parseSources(_ line: String) -> [Source] {
+        var sources: [Source] = []
+        var seen = Set<URL>()
+        var remainder = Substring(line)
+
+        while let open = remainder.firstIndex(of: "[") {
+            guard let close = remainder[open...].firstIndex(of: "]"),
+                  remainder.index(after: close) < remainder.endIndex,
+                  remainder[remainder.index(after: close)] == "(",
+                  let terminator = remainder[close...].firstIndex(of: ")")
+            else { break }
+
+            let host = remainder[remainder.index(after: open)..<close]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let target = remainder[
+                remainder.index(close, offsetBy: 2)..<terminator
+            ].trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if !host.isEmpty,
+               let url = URL(string: target),
+               url.scheme == "https" || url.scheme == "http",
+               !seen.contains(url) {
+                seen.insert(url)
+                sources.append(Source(host: host, url: url))
+            }
+            remainder = remainder[remainder.index(after: terminator)...]
+        }
+        return sources
+    }
+}
+
 struct MacroTargetDraft: Equatable {
     var calories: String
     var protein: String

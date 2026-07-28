@@ -134,6 +134,17 @@ export type MealAnalysisDependencies = {
   now?: () => number;
 };
 
+/// Copy contract with the iOS client (EntryResearchPresentation in
+/// shudo/NativeExperiencePolicies.swift). Each message is written only when
+/// the provider stream actually reports the matching moment, so the visible
+/// phase never runs ahead of reality. Change these together with the client.
+export const RESEARCH_STATUS_MESSAGES = {
+  searching: "Searching the web",
+  reviewingSources: "Checking nutrition sources",
+  calculating: "Calculating from sources",
+  estimatingWithoutSources: "Estimating without online sources",
+} as const;
+
 function researchInstructions(
   mode: MealResearchMode,
   lookupUnavailable: boolean,
@@ -199,6 +210,8 @@ export async function analyzeMeal(
   analysisContext: string | null,
   imageUrl: string | null,
   publishPreview: (preview: string) => Promise<void>,
+  publishStatus: (statusMessage: string) => Promise<void> = () =>
+    Promise.resolve(),
   dependencies: MealAnalysisDependencies = {},
 ): Promise<{
   analysis: ParsedAnalysis;
@@ -212,6 +225,12 @@ export async function analyzeMeal(
   const now = dependencies.now ?? Date.now;
   const deadline = now() + ANALYSIS_TIMEOUT_MS;
   const requestedMode = mealResearchMode(combinedText, analysisContext);
+
+  let searchPhaseVisible = false;
+  const publishResearchPhase = async (message: string): Promise<void> => {
+    searchPhaseVisible = true;
+    await publishStatus(message);
+  };
 
   const attempt = async (
     activeMode: MealResearchMode,
@@ -274,6 +293,18 @@ export async function analyzeMeal(
     const streamResult = await readResponsesEventStream(
       response.body,
       (partialOutput) => previewPublisher.observe(partialOutput),
+      async (phase) => {
+        // Only real stream moments update the visible phase, and only when a
+        // search actually ran: ordinary meals keep their existing quiet path.
+        if (!searchEnabled) return;
+        if (phase === "web_search_started") {
+          await publishResearchPhase(RESEARCH_STATUS_MESSAGES.searching);
+        } else if (phase === "web_search_completed") {
+          await publishResearchPhase(RESEARCH_STATUS_MESSAGES.reviewingSources);
+        } else if (phase === "output_started" && searchPhaseVisible) {
+          await publishStatus(RESEARCH_STATUS_MESSAGES.calculating);
+        }
+      },
     );
     const research: MealResearchResult = {
       requested: requestedMode !== "none",
@@ -299,6 +330,9 @@ export async function analyzeMeal(
     }
     if (deadline - now() <= 0) throw error;
     console.warn("meal_web_search_degraded", { message: String(error) });
+    // Tell the user the switch is happening rather than leaving a stale
+    // "Searching the web" while the tool-free fallback runs.
+    await publishStatus(RESEARCH_STATUS_MESSAGES.estimatingWithoutSources);
     return await attempt("none", true);
   }
 }
@@ -439,6 +473,27 @@ export async function processStoredEntry(
           console.warn("entry_analysis_preview_update_failed", {
             entryId,
             message: String(previewError),
+          });
+        }
+      },
+      async (statusMessage) => {
+        try {
+          await updateEntry(
+            admin,
+            entryId,
+            userId,
+            activeProcessingAttempt,
+            { status_message: statusMessage },
+          );
+        } catch (statusError) {
+          if (statusError instanceof LostProcessingLeaseError) {
+            throw statusError;
+          }
+          // Phase text is progress decoration; a transient write failure must
+          // not discard an otherwise valid meal analysis.
+          console.warn("entry_research_status_update_failed", {
+            entryId,
+            message: String(statusError),
           });
         }
       },

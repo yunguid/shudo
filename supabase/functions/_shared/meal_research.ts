@@ -14,7 +14,7 @@ export type MealResearchResult = {
 };
 
 const EXPLICIT_LOOKUP_PATTERNS = [
-  /\b(?:look\s*up|google|browse|research)\b/i,
+  /\b(?:look\s*up|look\s+(?:it|this|that|them)\s+up|google|browse|research)\b/i,
   /\bsearch(?:\s+(?:online|the\s+web|the\s+internet|for))?\b/i,
   /\bcheck\s+(?:online|the\s+web|the\s+internet|the\s+(?:restaurant|menu|nutrition)\s+(?:site|website))\b/i,
   /\b(?:find|get|check)\b.{0,80}\b(?:nutrition(?:al)?(?:\s+facts?)?|calories?|macros?|menu\s+item)\b/i,
@@ -105,6 +105,22 @@ export function responseWebSearchMetadata(
   };
 }
 
+/// Copy contract with the iOS client (EntryResearchPresentation in
+/// shudo/NativeExperiencePolicies.swift). The client parses these exact
+/// strings out of analysis_notes to render provenance; change them together.
+export const RESEARCH_SOURCES_PREFIX = "Online sources: ";
+export const RESEARCH_VERIFIED_LINKLESS_DISCLOSURE =
+  "Checked against online sources.";
+export const RESEARCH_UNAVAILABLE_DISCLOSURE =
+  "Online lookup was unavailable, so these nutrition values are estimates rather than verified restaurant facts.";
+export const RESEARCH_EMPTY_DISCLOSURE =
+  "No authoritative online nutrition source was found, so unverified values are clearly treated as estimates.";
+
+const MAX_NOTES_CHARACTERS = 1_000;
+const MAX_SOURCE_LINE_CHARACTERS = 760;
+const MAX_LINKED_SOURCE_URL_CHARACTERS = 360;
+const MAX_LINKED_SOURCES = 3;
+
 function unicodePrefix(value: string, maxCharacters: number): string {
   return Array.from(value).slice(0, maxCharacters).join("");
 }
@@ -113,11 +129,28 @@ function markdownUrl(value: string): string {
   return value.replaceAll("(", "%28").replaceAll(")", "%29");
 }
 
+/**
+ * Builds the sources line so it always fits the notes budget whole: overlong
+ * URLs are skipped and links stop before the line could ever be truncated
+ * mid-markdown, which would render as broken syntax on the client.
+ */
 function sourceLinks(sources: WebSearchSource[]): string {
-  return sources.slice(0, 3).map(({ url }) => {
+  let line = "";
+  let linked = 0;
+  for (const { url } of sources) {
+    if (linked >= MAX_LINKED_SOURCES) break;
+    if (Array.from(url).length > MAX_LINKED_SOURCE_URL_CHARACTERS) continue;
     const hostname = new URL(url).hostname.replace(/^www\./, "");
-    return `[${hostname}](${markdownUrl(url)})`;
-  }).join(", ");
+    const link = `[${hostname}](${markdownUrl(url)})`;
+    const candidate = line ? `${line}, ${link}` : link;
+    if (
+      Array.from(RESEARCH_SOURCES_PREFIX + candidate).length + 1 >
+        MAX_SOURCE_LINE_CHARACTERS
+    ) break;
+    line = candidate;
+    linked += 1;
+  }
+  return line;
 }
 
 function modelNotesWithoutReservedSources(value: string | null): string | null {
@@ -147,28 +180,36 @@ export function applyMealResearchResult(
     return sanitizedAnalysis;
   }
 
+  const verified = research.used && !research.degraded &&
+    research.sources.length > 0;
   let disclosure: string;
   if (research.degraded || !research.used) {
-    disclosure =
-      "Online lookup was unavailable, so these nutrition values are estimates rather than verified restaurant facts.";
+    disclosure = RESEARCH_UNAVAILABLE_DISCLOSURE;
   } else if (research.sources.length === 0) {
-    disclosure =
-      "No authoritative online nutrition source was found, so unverified values are clearly treated as estimates.";
+    disclosure = RESEARCH_EMPTY_DISCLOSURE;
   } else {
-    disclosure = `Online sources: ${sourceLinks(research.sources)}.`;
+    const links = sourceLinks(research.sources);
+    disclosure = links
+      ? `${RESEARCH_SOURCES_PREFIX}${links}.`
+      : RESEARCH_VERIFIED_LINKLESS_DISCLOSURE;
   }
+  // The disclosure is the point of the research feature, so it gets the notes
+  // budget first and the model's prose is trimmed to whatever remains. Links
+  // are never cut mid-markdown.
+  const proseBudget = Math.max(
+    0,
+    Math.min(
+      650,
+      MAX_NOTES_CHARACTERS - Array.from(disclosure).length - 2,
+    ),
+  );
   const existing = unicodePrefix(
-    research.sources.length > 0 && research.used && !research.degraded
-      ? escapeMarkdown(modelNotes ?? "")
-      : modelNotes ?? "",
-    650,
+    verified ? escapeMarkdown(modelNotes ?? "") : modelNotes ?? "",
+    proseBudget,
   );
-  const notes = unicodePrefix(
-    [existing, disclosure].filter(Boolean).join("\n\n"),
-    1_000,
-  );
+  const notes = [existing, disclosure].filter(Boolean).join("\n\n");
 
-  if (research.used && research.sources.length > 0 && !research.degraded) {
+  if (verified) {
     return { ...sanitizedAnalysis, notes };
   }
   return {

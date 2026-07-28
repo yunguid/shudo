@@ -15,6 +15,18 @@ export type ResponsesStreamResult = {
 
 type OutputObserver = (outputText: string) => Promise<void>;
 
+/**
+ * Coarse, user-meaningful moments observed in the provider stream. Each is
+ * reported at most once, in stream order, so callers can surface honest
+ * progress without inventing states the stream never confirmed.
+ */
+export type ResponsesStreamPhase =
+  | "web_search_started"
+  | "web_search_completed"
+  | "output_started";
+
+type PhaseObserver = (phase: ResponsesStreamPhase) => Promise<void>;
+
 type SSEMessage = {
   event: string | null;
   data: string;
@@ -55,6 +67,7 @@ function checkedOutput(value: string): string {
 export async function readResponsesEventStream(
   stream: ReadableStream<Uint8Array>,
   observeOutput: OutputObserver = () => Promise.resolve(),
+  observePhase: PhaseObserver = () => Promise.resolve(),
 ): Promise<ResponsesStreamResult> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -64,6 +77,13 @@ export async function readResponsesEventStream(
   let webSearchUsed = false;
   const webSearchSourceUrls = new Set<string>();
   let completed = false;
+  const reportedPhases = new Set<ResponsesStreamPhase>();
+
+  const reportPhase = async (phase: ResponsesStreamPhase): Promise<void> => {
+    if (reportedPhases.has(phase)) return;
+    reportedPhases.add(phase);
+    await observePhase(phase);
+  };
 
   const observeWebSearchMetadata = (candidate: Record<string, unknown>) => {
     const metadata = responseWebSearchMetadata(candidate);
@@ -96,6 +116,10 @@ export async function readResponsesEventStream(
     if (response) observeWebSearchMetadata(response);
     if (eventType?.startsWith("response.web_search_call.")) {
       webSearchUsed = true;
+      await reportPhase("web_search_started");
+      if (eventType === "response.web_search_call.completed") {
+        await reportPhase("web_search_completed");
+      }
     }
     if (
       (eventType === "response.output_item.added" ||
@@ -104,6 +128,14 @@ export async function readResponsesEventStream(
       !Array.isArray(payload.item)
     ) {
       observeWebSearchMetadata({ output: [payload.item] });
+      if (
+        (payload.item as Record<string, unknown>).type === "web_search_call"
+      ) {
+        await reportPhase("web_search_started");
+        if (eventType === "response.output_item.done") {
+          await reportPhase("web_search_completed");
+        }
+      }
     }
 
     if (eventType === "response.output_text.delta") {
@@ -111,6 +143,7 @@ export async function readResponsesEventStream(
         throw new Error("Meal analysis stream was malformed");
       }
       outputText = checkedOutput(outputText + payload.delta);
+      await reportPhase("output_started");
       await observeOutput(outputText);
       return;
     }

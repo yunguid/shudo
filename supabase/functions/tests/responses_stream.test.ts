@@ -90,6 +90,98 @@ Deno.test("Responses SSE parser preserves hosted web search usage and source met
   }]);
 });
 
+Deno.test("Responses SSE parser reports each lifecycle phase once, in stream order", async () => {
+  const searchItem = {
+    type: "web_search_call",
+    id: "ws_1",
+    status: "completed",
+    action: { type: "search", sources: [] },
+  };
+  const outputText = '{"title":"Meal"}';
+  const source = [
+    event("response.created", {
+      response: { id: "resp_phases", status: "in_progress" },
+    }),
+    // Duplicated lifecycle events must still produce a single report each.
+    event("response.web_search_call.in_progress", { item_id: "ws_1" }),
+    event("response.web_search_call.searching", { item_id: "ws_1" }),
+    event("response.web_search_call.completed", { item_id: "ws_1" }),
+    event("response.output_item.done", { item: searchItem }),
+    event("response.output_text.delta", { delta: outputText }),
+    event("response.output_text.delta", { delta: "" }),
+    event("response.completed", {
+      response: {
+        id: "resp_phases",
+        status: "completed",
+        output: [searchItem, {
+          type: "message",
+          content: [{ type: "output_text", text: outputText }],
+        }],
+      },
+    }),
+  ].join("");
+  const phases: string[] = [];
+  const result = await readResponsesEventStream(
+    streamChunks([source]),
+    () => Promise.resolve(),
+    (phase) => {
+      phases.push(phase);
+      return Promise.resolve();
+    },
+  );
+
+  assertEquals(phases, [
+    "web_search_started",
+    "web_search_completed",
+    "output_started",
+  ]);
+  assertEquals(result.webSearchUsed, true);
+});
+
+Deno.test("Responses SSE parser reports search phases from output items alone", async () => {
+  // Some streams only surface the tool call as an output item; the phase
+  // reporting must not depend on the dedicated lifecycle event names.
+  const searchItem = {
+    type: "web_search_call",
+    id: "ws_2",
+    status: "completed",
+    action: { type: "search", sources: [] },
+  };
+  const outputText = '{"title":"Meal"}';
+  const source = [
+    event("response.output_item.added", {
+      item: { type: "web_search_call", id: "ws_2", status: "in_progress" },
+    }),
+    event("response.output_item.done", { item: searchItem }),
+    event("response.output_text.delta", { delta: outputText }),
+    event("response.completed", {
+      response: {
+        id: "resp_item_phases",
+        status: "completed",
+        output: [searchItem, {
+          type: "message",
+          content: [{ type: "output_text", text: outputText }],
+        }],
+      },
+    }),
+  ].join("");
+  const phases: string[] = [];
+  await readResponsesEventStream(
+    streamChunks([source]),
+    () => Promise.resolve(),
+    (phase) => {
+      phases.push(phase);
+      return Promise.resolve();
+    },
+  );
+
+  assertEquals(phases, [
+    "web_search_started",
+    "web_search_completed",
+    "output_started",
+  ]);
+});
+
 Deno.test("Responses SSE parser rejects provider errors and truncated streams", async () => {
   for (
     const source of [

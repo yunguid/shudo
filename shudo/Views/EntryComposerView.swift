@@ -370,7 +370,7 @@ struct EntryComposerView: View {
     private var noteField: some View {
         ZStack(alignment: .topLeading) {
             if note.isEmpty {
-                Text("Optional note — portions, ingredients, anything useful")
+                Text("Optional note — portions, brands, or ask to check nutrition online")
                     .font(.body)
                     .foregroundStyle(Design.Color.muted)
                     .padding(.horizontal, 16)

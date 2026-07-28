@@ -86,6 +86,17 @@ struct EntryCard: View {
     }
 
     private var processing: Bool { isRetrying || entry.status.isProcessing }
+
+    private var isResearchingOnline: Bool {
+        !isRetrying && EntryResearchPresentation.isResearching(
+            statusMessage: entry.displayStatusMessage
+        )
+    }
+
+    private var wasCheckedOnline: Bool {
+        entry.status == .complete
+            && EntryResearchPresentation.hasVerifiedResearch(notes: entry.analysisNotes)
+    }
     
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -111,13 +122,23 @@ struct EntryCard: View {
                 if processing {
                     VStack(alignment: .leading, spacing: 7) {
                         HStack(spacing: 7) {
-                            Capsule()
-                                .fill(Design.Color.accentPrimary.opacity(0.32))
-                                .frame(width: 24, height: 5)
-                                .shimmering()
+                            if isResearchingOnline {
+                                ResearchActivityGlyph()
+                                    .transition(.opacity)
+                            } else {
+                                Capsule()
+                                    .fill(Design.Color.accentPrimary.opacity(0.32))
+                                    .frame(width: 24, height: 5)
+                                    .shimmering()
+                                    .transition(.opacity)
+                            }
                             TypewriterStatusText(text: entry.displayStatusMessage)
                         }
                         .foregroundStyle(Design.Color.accentSecondary)
+                        .animation(
+                            reduceMotion ? nil : .easeOut(duration: 0.2),
+                            value: isResearchingOnline
+                        )
 
                         if let preview = AnalysisPreviewPresentation.text(
                             entry.analysisPreview,
@@ -200,6 +221,7 @@ struct EntryCard: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(
                         "Protein \(Int(entry.proteinG.rounded()))g, Carbs \(Int(entry.carbsG.rounded()))g, Fat \(Int(entry.fatG.rounded()))g, Calories \(Int(entry.caloriesKcal.rounded()))kcal"
+                            + (wasCheckedOnline ? ", checked online" : "")
                     )
                 }
             }
@@ -265,7 +287,7 @@ struct EntryCard: View {
     }
 
     private var completedCalorieText: some View {
-        (
+        HStack(spacing: 5) {
             Text("\(Int(entry.caloriesKcal.rounded()))")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Design.Color.ink)
@@ -273,7 +295,14 @@ struct EntryCard: View {
             + Text(" kcal")
                 .font(.caption2)
                 .foregroundStyle(Design.Color.muted)
-        )
+
+            if wasCheckedOnline {
+                Image(systemName: "globe")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Design.Color.accentSecondary)
+                    .accessibilityHidden(true)
+            }
+        }
         .completedResultReveal(isVisible: isRevealed(.calories))
     }
 
@@ -361,6 +390,31 @@ private extension View {
     }
 }
 
+/// The compact research indicator: a globe that breathes while Shudo is
+/// actually consulting the web, in the same slot as the ordinary shimmer
+/// capsule. The phase text next to it carries the meaning; the glyph makes
+/// the state recognizable at a glance.
+private struct ResearchActivityGlyph: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dimmed = false
+
+    var body: some View {
+        Image(systemName: "globe")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(Design.Color.accentPrimary)
+            .opacity(dimmed ? 0.45 : 1)
+            .accessibilityHidden(true)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(
+                    .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
+                ) {
+                    dimmed = true
+                }
+            }
+    }
+}
+
 private struct TypewriterStatusText: View {
     let text: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -377,6 +431,7 @@ private struct TypewriterStatusText: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
+        .accessibilityAddTraits(.updatesFrequently)
         .task(id: "\(text)|\(reduceMotion)") {
             if reduceMotion {
                 visibleText = text
