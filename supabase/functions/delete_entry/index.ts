@@ -9,10 +9,12 @@ import {
   json,
   runInBackground,
 } from "../_shared/http.ts";
+import { refreshWeeklySummaryForDay } from "../_shared/weekly_summary.ts";
 
 type DeletableEntry = {
   id: string;
   status: string;
+  local_day: string | null;
 };
 
 async function currentEntry(
@@ -21,7 +23,7 @@ async function currentEntry(
   userId: string,
 ): Promise<DeletableEntry | null> {
   const { data, error } = await admin.from("entries")
-    .select("id,status")
+    .select("id,status,local_day")
     .eq("id", entryId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -78,6 +80,17 @@ Deno.serve(async (req: Request) => {
           message: String(cleanupError),
         });
       }),
+    );
+    // Deleting a meal from an already-summarized past week makes that
+    // week's stored overview stale; re-run it after responding.
+    runInBackground(
+      refreshWeeklySummaryForDay(admin, userId, entry.local_day)
+        .catch((refreshError) => {
+          console.error("weekly_summary_refresh_failed", {
+            entryId,
+            message: String(refreshError),
+          });
+        }),
     );
     return json({ deleted: true, entry_id: entryId });
   } catch (error) {

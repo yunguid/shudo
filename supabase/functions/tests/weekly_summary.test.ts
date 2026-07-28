@@ -6,6 +6,7 @@ import {
   WEEKLY_COPY_INSTRUCTION,
   WEEKLY_SUMMARY_MODEL,
   WEEKLY_SUMMARY_SCHEMA,
+  weekStartOf,
 } from "../_shared/weekly_summary.ts";
 import { assertEquals, assertThrows } from "./assertions.ts";
 
@@ -211,4 +212,11 @@ Deno.test("day digests carry weekday, calories vs effective target, and bounded 
   assertEquals(saturday.meals.length, 2);
   assertEquals(saturday.meals[0], "Burger and two beers");
   assertEquals(saturday.meals[1], "A".repeat(60)); // titles bounded to 60 chars
+});
+
+Deno.test("weekStartOf maps any local day to its ISO Monday", () => {
+  assertEquals(weekStartOf("2026-07-20"), "2026-07-20"); // Monday stays
+  assertEquals(weekStartOf("2026-07-22"), "2026-07-20"); // midweek
+  assertEquals(weekStartOf("2026-07-26"), "2026-07-20"); // Sunday belongs to the week it ends
+  assertEquals(weekStartOf("2026-01-01"), "2025-12-29"); // year boundary
 });

@@ -10,7 +10,7 @@ import {
   assertNeutralGeneratedCopy,
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
-import { requiredEnv, withTimeout } from "./http.ts";
+import { requiredEnv, runInBackground, withTimeout } from "./http.ts";
 import {
   applyMealResearchResult,
   type MealResearchMode,
@@ -20,6 +20,7 @@ import {
 import { readResponsesEventStream } from "./responses_stream.ts";
 import { safetyIdentifier } from "./safety.ts";
 import { drainStorageCleanup } from "./storage_cleanup.ts";
+import { refreshWeeklySummaryForDay } from "./weekly_summary.ts";
 
 export const ANALYSIS_MODEL = "gpt-5.6-sol";
 export const TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
@@ -34,6 +35,7 @@ const MAX_COMBINED_TEXT_LENGTH = 30_000;
 
 type StoredEntry = {
   id: string;
+  local_day: string | null;
   input_text: string | null;
   transcript: string | null;
   raw_text: string | null;
@@ -351,7 +353,7 @@ export async function processStoredEntry(
 
     const { data, error } = await admin.from("entries")
       .select(
-        "id,input_text,transcript,raw_text,analysis_context,image_path,audio_path,transcription_model",
+        "id,local_day,input_text,transcript,raw_text,analysis_context,image_path,audio_path,transcription_model",
       )
       .eq("id", entryId)
       .eq("user_id", userId)
@@ -530,6 +532,19 @@ export async function processStoredEntry(
       processed_at: new Date().toISOString(),
       lease_expires_at: null,
     });
+    // A meal logged for a past day that just finished processing makes that
+    // week's stored overview stale; re-run it without holding this worker's
+    // durability or cleanup paths (same-week completions no-op inside the
+    // helper).
+    runInBackground(
+      refreshWeeklySummaryForDay(admin, userId, entry.local_day)
+        .catch((refreshError) => {
+          console.error("weekly_summary_refresh_failed", {
+            entryId,
+            message: String(refreshError),
+          });
+        }),
+    );
     // Analysis is already durable and visible before best-effort cleanup does
     // any remote Storage work. The outbox + scheduled drainer remain the retry
     // guarantee if this worker is stopped here.

@@ -23,7 +23,9 @@ import {
   HttpError,
   json,
   requiredEnv,
+  runInBackground,
 } from "../_shared/http.ts";
+import { refreshWeeklySummaryForDay } from "../_shared/weekly_summary.ts";
 import { requireMultipartContentType } from "../_shared/capture_validation.ts";
 import { modelQuotaHttpError } from "../_shared/quotas.ts";
 import { safetyIdentifier } from "../_shared/safety.ts";
@@ -39,6 +41,7 @@ const MAX_BASE_DESCRIPTION_CHARACTERS = 30_000;
 type CorrectionEntry = {
   id: string;
   status: string;
+  local_day: string | null;
   raw_text: string | null;
   input_text: string | null;
   transcript: string | null;
@@ -154,7 +157,7 @@ async function fetchCorrectionEntry(
 ): Promise<CorrectionEntry> {
   const { data, error } = await admin.from("entries")
     .select(
-      "id,status,raw_text,input_text,transcript,analysis_context,image_path",
+      "id,status,local_day,raw_text,input_text,transcript,analysis_context,image_path",
     )
     .eq("id", entryId)
     .eq("user_id", userId)
@@ -309,6 +312,24 @@ Deno.serve(async (req: Request) => {
       );
     }
     ownsReservation = false;
+
+    // A corrected meal in an already-summarized past week makes that week's
+    // stored overview stale; re-run it after responding.
+    const correctionAdmin = admin;
+    const correctedUserId = userId;
+    const correctedLocalDay = entry.local_day;
+    runInBackground(
+      refreshWeeklySummaryForDay(
+        correctionAdmin,
+        correctedUserId,
+        correctedLocalDay,
+      ).catch((refreshError) => {
+        console.error("weekly_summary_refresh_failed", {
+          entryId,
+          message: String(refreshError),
+        });
+      }),
+    );
 
     return json({
       entry_id: entryId,

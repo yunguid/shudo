@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { responseOutputText } from "./analysis.ts";
 import {
   assertNeutralGeneratedCopy,
@@ -129,6 +130,15 @@ export function safePriorCompletedWeekStart(
 export function addCalendarDays(day: string, count: number): string {
   const date = new Date(`${day}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + count);
+  return date.toISOString().slice(0, 10);
+}
+
+/// Monday of the ISO week containing a local-day string — the same week
+/// key `claim_weekly_summary` requires.
+export function weekStartOf(localDay: string): string {
+  const date = new Date(`${localDay}T00:00:00.000Z`);
+  const isoDay = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - (isoDay - 1));
   return date.toISOString().slice(0, 10);
 }
 
@@ -388,4 +398,166 @@ export async function writeWeeklyNarrative(
     ...parseWeeklyNarrative(JSON.parse(responseOutputText(payload))),
     responseId: typeof payload.id === "string" ? payload.id : null,
   };
+}
+
+export type WeeklySummaryClaim = {
+  summary_id: string;
+  input_fingerprint: string;
+  generation_attempt: number;
+};
+
+export type WeeklySummaryProfile = {
+  user_id: string;
+  daily_macro_target: Record<string, unknown> | null;
+};
+
+/// Generates and stores the narrative for an already-claimed week. The
+/// update is fenced on the claim's fingerprint and attempt, so a summary
+/// re-claimed mid-generation (because the week's entries changed again)
+/// never gets overwritten by this older pass.
+export async function generateClaimedSummary(
+  admin: SupabaseClient,
+  profile: WeeklySummaryProfile,
+  weekStart: string,
+  claim: WeeklySummaryClaim,
+): Promise<boolean> {
+  try {
+    const weekEnd = addCalendarDays(weekStart, 6);
+    const [entriesResult, targetsResult] = await Promise.all([
+      admin.from("entries")
+        .select(
+          "local_day,title,items,calories_kcal,protein_g,carbs_g,fat_g",
+        )
+        .eq("user_id", profile.user_id)
+        .eq("status", "complete")
+        .gte("local_day", weekStart)
+        .lt("local_day", addCalendarDays(weekStart, 7)),
+      // At most seven changes can occur inside a seven-day week because the
+      // ledger has one row per day; the eighth row is the preceding target.
+      admin.from("daily_targets")
+        .select("target_day,calories_kcal,protein_g,carbs_g,fat_g")
+        .eq("user_id", profile.user_id)
+        .lte("target_day", weekEnd)
+        .order("target_day", { ascending: false })
+        .limit(8),
+    ]);
+    if (entriesResult.error) throw entriesResult.error;
+    if (targetsResult.error) throw targetsResult.error;
+    const { adherence, repeatedFoods, foodCandidates, dayDigests } =
+      aggregateWeeklyEntries(
+        (entriesResult.data ?? []) as WeeklyEntry[],
+        (targetsResult.data ?? []) as WeeklyTarget[],
+        profile.daily_macro_target ?? {},
+      );
+    const narrative = await writeWeeklyNarrative(
+      profile.user_id,
+      weekStart,
+      adherence,
+      repeatedFoods,
+      foodCandidates,
+      dayDigests,
+    );
+    const { data: updated, error: updateError } = await admin
+      .from("weekly_summaries")
+      .update({
+        status: "complete",
+        headline: narrative.headline,
+        narrative: narrative.narrative,
+        repeated_foods: repeatedFoods,
+        patterns: narrative.patterns,
+        adherence,
+        suggestions: narrative.suggestions,
+        analysis_model: WEEKLY_SUMMARY_MODEL,
+        provider_response_id: narrative.responseId,
+        generated_at: new Date().toISOString(),
+        lease_expires_at: null,
+        error_message: null,
+      })
+      .eq("id", claim.summary_id)
+      .eq("user_id", profile.user_id)
+      .eq("input_fingerprint", claim.input_fingerprint)
+      .eq("generation_attempt", claim.generation_attempt)
+      .eq("status", "generating")
+      .select("id")
+      .maybeSingle();
+    if (updateError) throw updateError;
+    return updated !== null;
+  } catch (error) {
+    await admin.from("weekly_summaries").update({
+      status: "failed",
+      lease_expires_at: null,
+      error_message: String(error).slice(0, 500),
+    })
+      .eq("id", claim.summary_id)
+      .eq("user_id", profile.user_id)
+      .eq("input_fingerprint", claim.input_fingerprint)
+      .eq("generation_attempt", claim.generation_attempt)
+      .eq("status", "generating");
+    console.error("weekly_summary_user_failed", {
+      userId: profile.user_id,
+      weekStart,
+      message: String(error),
+    });
+    return false;
+  }
+}
+
+/// Re-runs the stored overview of the week containing `localDay` after a
+/// meal in it changed (correction, deletion, or a late-logged meal
+/// finishing). No-ops when the day sits in the still-open current week,
+/// when that week was never summarized (touching an ancient meal must not
+/// backfill history unprompted), or when the fingerprint is unchanged. Two
+/// passes close the race where the week changes again mid-generation.
+export async function refreshWeeklySummaryForDay(
+  admin: SupabaseClient,
+  userId: string,
+  localDay: string | null | undefined,
+): Promise<void> {
+  if (!localDay || !/^\d{4}-\d{2}-\d{2}$/.test(localDay)) return;
+  const weekStart = weekStartOf(localDay);
+
+  const { data: profileRow, error: profileError } = await admin
+    .from("profiles")
+    .select("user_id,timezone,daily_macro_target")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  const profile = profileRow as
+    | (WeeklySummaryProfile & { timezone: string })
+    | null;
+  if (!profile) return;
+
+  const priorCompleted = safePriorCompletedWeekStart(
+    new Date(),
+    profile.timezone,
+  );
+  if (!priorCompleted || weekStart > priorCompleted) return;
+
+  const { data: existing, error: existingError } = await admin
+    .from("weekly_summaries")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("week_start", weekStart)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (!existing) return;
+
+  for (let pass = 0; pass < 2; pass++) {
+    const { data: claimData, error: claimError } = await admin.rpc(
+      "claim_weekly_summary",
+      { p_user_id: userId, p_week_start: weekStart },
+    );
+    if (claimError) throw claimError;
+    const claim = Array.isArray(claimData)
+      ? claimData[0] as WeeklySummaryClaim | undefined
+      : undefined;
+    if (!claim) return;
+    const completed = await generateClaimedSummary(
+      admin,
+      profile,
+      weekStart,
+      claim,
+    );
+    if (!completed) return;
+  }
 }

@@ -1,18 +1,11 @@
 import "jsr:@supabase/functions-js@2.110.7/edge-runtime.d.ts";
-import {
-  createClient,
-  type SupabaseClient,
-} from "jsr:@supabase/supabase-js@2.110.7";
+import { createClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { json, requiredEnv } from "../_shared/http.ts";
 import { secretMatches } from "../_shared/secrets.ts";
 import {
-  addCalendarDays,
-  aggregateWeeklyEntries,
+  generateClaimedSummary,
   safePriorCompletedWeekStart,
-  WEEKLY_SUMMARY_MODEL,
-  type WeeklyEntry,
-  type WeeklyTarget,
-  writeWeeklyNarrative,
+  type WeeklySummaryClaim,
 } from "../_shared/weekly_summary.ts";
 
 type Profile = {
@@ -21,98 +14,7 @@ type Profile = {
   daily_macro_target: Record<string, unknown>;
 };
 
-type Claim = {
-  summary_id: string;
-  input_fingerprint: string;
-  generation_attempt: number;
-};
-
-async function generateOne(
-  admin: SupabaseClient,
-  profile: Profile,
-  weekStart: string,
-  claim: Claim,
-): Promise<boolean> {
-  try {
-    const weekEnd = addCalendarDays(weekStart, 6);
-    const [entriesResult, targetsResult] = await Promise.all([
-      admin.from("entries")
-        .select(
-          "local_day,title,items,calories_kcal,protein_g,carbs_g,fat_g",
-        )
-        .eq("user_id", profile.user_id)
-        .eq("status", "complete")
-        .gte("local_day", weekStart)
-        .lt("local_day", addCalendarDays(weekStart, 7)),
-      // At most seven changes can occur inside a seven-day week because the
-      // ledger has one row per day; the eighth row is the preceding target.
-      admin.from("daily_targets")
-        .select("target_day,calories_kcal,protein_g,carbs_g,fat_g")
-        .eq("user_id", profile.user_id)
-        .lte("target_day", weekEnd)
-        .order("target_day", { ascending: false })
-        .limit(8),
-    ]);
-    if (entriesResult.error) throw entriesResult.error;
-    if (targetsResult.error) throw targetsResult.error;
-    const { adherence, repeatedFoods, foodCandidates, dayDigests } =
-      aggregateWeeklyEntries(
-        (entriesResult.data ?? []) as WeeklyEntry[],
-        (targetsResult.data ?? []) as WeeklyTarget[],
-        profile.daily_macro_target ?? {},
-      );
-    const narrative = await writeWeeklyNarrative(
-      profile.user_id,
-      weekStart,
-      adherence,
-      repeatedFoods,
-      foodCandidates,
-      dayDigests,
-    );
-    const { data: updated, error: updateError } = await admin
-      .from("weekly_summaries")
-      .update({
-        status: "complete",
-        headline: narrative.headline,
-        narrative: narrative.narrative,
-        repeated_foods: repeatedFoods,
-        patterns: narrative.patterns,
-        adherence,
-        suggestions: narrative.suggestions,
-        analysis_model: WEEKLY_SUMMARY_MODEL,
-        provider_response_id: narrative.responseId,
-        generated_at: new Date().toISOString(),
-        lease_expires_at: null,
-        error_message: null,
-      })
-      .eq("id", claim.summary_id)
-      .eq("user_id", profile.user_id)
-      .eq("input_fingerprint", claim.input_fingerprint)
-      .eq("generation_attempt", claim.generation_attempt)
-      .eq("status", "generating")
-      .select("id")
-      .maybeSingle();
-    if (updateError) throw updateError;
-    return updated !== null;
-  } catch (error) {
-    await admin.from("weekly_summaries").update({
-      status: "failed",
-      lease_expires_at: null,
-      error_message: String(error).slice(0, 500),
-    })
-      .eq("id", claim.summary_id)
-      .eq("user_id", profile.user_id)
-      .eq("input_fingerprint", claim.input_fingerprint)
-      .eq("generation_attempt", claim.generation_attempt)
-      .eq("status", "generating");
-    console.error("weekly_summary_user_failed", {
-      userId: profile.user_id,
-      weekStart,
-      message: String(error),
-    });
-    return false;
-  }
-}
+type Claim = WeeklySummaryClaim;
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -191,7 +93,7 @@ Deno.serve(async (req: Request) => {
 
     const outcomes = await Promise.all(
       jobs.map((job) =>
-        generateOne(admin, job.profile, job.weekStart, job.claim)
+        generateClaimedSummary(admin, job.profile, job.weekStart, job.claim)
       ),
     );
     return json({
