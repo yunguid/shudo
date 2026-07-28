@@ -596,3 +596,77 @@ struct EntrySubmissionLifecycleTests {
         #expect(vm.errorMessage == nil)
     }
 }
+
+// MARK: - Cold-launch today snapshot
+
+@MainActor
+struct TodaySnapshotRestoreTests {
+
+    private static let profile = Profile(
+        userId: "00000000-0000-4000-8000-000000000043",
+        timezone: "America/New_York",
+        dailyMacroTarget: MacroTarget(
+            caloriesKcal: 2_400,
+            proteinG: 170,
+            carbsG: 260,
+            fatG: 70
+        )
+    )
+
+    private static func offlineAPI() -> APIService {
+        APIService(
+            supabaseUrl: URL(string: "https://offline-test.invalid")!,
+            supabaseAnonKey: "offline",
+            sessionJWTProvider: { throw URLError(.notConnectedToInternet) }
+        )
+    }
+
+    private static func meal(_ calories: Double) -> Entry {
+        Entry(
+            id: UUID(),
+            createdAt: Date().addingTimeInterval(-3_600),
+            summary: "Persisted meal",
+            imageURL: nil,
+            proteinG: 30,
+            carbsG: 40,
+            fatG: 10,
+            caloriesKcal: calories,
+            status: .complete
+        )
+    }
+
+    @Test func coldLaunchRendersThePersistedTodayListBeforeAnyNetwork() {
+        let localDay = SupabaseService().localDayString(
+            for: Date(),
+            timezone: Self.profile.timezone
+        )
+        let persisted = [Self.meal(640)]
+        TodaySnapshotCache.save(persisted, userId: Self.profile.userId, localDay: localDay)
+        defer { TodaySnapshotCache.clearAll() }
+
+        let vm = TodayViewModel(profile: Self.profile, api: Self.offlineAPI())
+
+        // Asserted synchronously after init: the snapshot is on screen before
+        // the background refresh can possibly have completed.
+        #expect(vm.entries.map(\.id) == persisted.map(\.id))
+        #expect(!vm.isLoadingDay)
+        #expect(vm.isPinnedToToday)
+        #expect(vm.todayTotals.caloriesKcal == 640)
+    }
+
+    @Test func aSnapshotFromAnotherDayIsIgnoredOnLaunch() {
+        TodaySnapshotCache.save(
+            [Self.meal(500)],
+            userId: Self.profile.userId,
+            localDay: "2000-01-01"
+        )
+        defer { TodaySnapshotCache.clearAll() }
+
+        let vm = TodayViewModel(profile: Self.profile, api: Self.offlineAPI())
+
+        // The stale snapshot must not be rendered; whether the loading
+        // skeleton is up yet depends on the async load's scheduling.
+        #expect(vm.entries.isEmpty)
+        #expect(vm.todayTotals.caloriesKcal == 0)
+    }
+}

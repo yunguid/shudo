@@ -104,6 +104,7 @@ final class AuthSessionManager: ObservableObject {
         session = nil
         deleteFromKeychain()
         ProfileCache.clearAll()
+        TodaySnapshotCache.clearAll()
         // Meal photos are personal health content: drop both the signed-URL
         // reuse cache and any response bytes the URL cache holds on disk.
         Task { await SignedImageURLCache.shared.removeAll() }

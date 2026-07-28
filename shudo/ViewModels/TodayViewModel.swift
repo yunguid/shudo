@@ -48,6 +48,17 @@ final class TodayViewModel: ObservableObject {
             // list must not overwrite a good snapshot.
             guard !suppressDayCacheWrite, !currentLocalDay.isEmpty else { return }
             dayCache[currentLocalDay] = entries
+            // Today's list is also persisted so the next cold launch renders
+            // meals in the first frame. Local not-yet-sent cards are skipped:
+            // their retry payloads live only in this process, so a relaunch
+            // could not honor the card's retry button.
+            if isPinnedToToday, let userId = profile?.userId {
+                TodaySnapshotCache.save(
+                    entries.filter { pendingSubmissions[$0.id] == nil },
+                    userId: userId,
+                    localDay: currentLocalDay
+                )
+            }
         }
     }
     @Published private(set) var currentDay: Date = Date()
@@ -74,6 +85,7 @@ final class TodayViewModel: ObservableObject {
     private var dayCacheVisitOrder: [String] = []
     private var currentLocalDay = ""
     private var suppressDayCacheWrite = false
+    private var prefetchingDays: Set<String> = []
     private static let maximumCachedDays = 16
     /// Meals accepted locally whose create call hasn't succeeded yet, keyed
     /// by placeholder id. The payload outlives the composer so failures are
@@ -136,7 +148,27 @@ final class TodayViewModel: ObservableObject {
             isLoadingDay = false
             touchDayCacheVisit(currentLocalDay)
         } else {
-            Task { await load(day: Date()) }
+            // Cold launch: render the persisted picture of today immediately
+            // (if it is still today) and let load(day:) refresh it silently.
+            let launchDay = Date()
+            let launchLocalDay = supabase.localDayString(
+                for: launchDay,
+                timezone: profile.timezone
+            )
+            if let restored = TodaySnapshotCache.load(
+                userId: profile.userId,
+                expectedLocalDay: launchLocalDay
+            ), !restored.isEmpty {
+                currentDay = launchDay
+                currentLocalDay = launchLocalDay
+                isPinnedToToday = true
+                entries = restored
+                todayTotals = Self.totals(for: restored)
+                isLoadingDay = false
+                touchDayCacheVisit(launchLocalDay)
+                Perf.mark("day.restore.visible")
+            }
+            Task { await load(day: launchDay) }
         }
     }
 
@@ -228,6 +260,8 @@ final class TodayViewModel: ObservableObject {
                 startPolling(entryId: item.id, localDay: item.localDay ?? localDay(for: day))
             }
 
+            prefetchAdjacentDays(around: day, timezone: timezone)
+
             let loadedTargetHistory = await targetRequest
             guard loadGeneration == generation else { return }
             targetHistory = Self.targetHistoryAfterLoad(
@@ -279,6 +313,45 @@ final class TodayViewModel: ObservableObject {
         while dayCacheVisitOrder.count > Self.maximumCachedDays {
             let evicted = dayCacheVisitOrder.removeFirst()
             dayCache[evicted] = nil
+        }
+    }
+
+    /// Warms the snapshots the user is most likely to swipe to next
+    /// (yesterday, and tomorrow when browsing the past), so first visits to
+    /// neighbors render instantly too. Cache-only: no visible state, no
+    /// pollers; the visit itself still refreshes.
+    private func prefetchAdjacentDays(around day: Date, timezone: String) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
+        var candidates: [Date] = []
+        if let previous = calendar.date(byAdding: .day, value: -1, to: day) {
+            candidates.append(previous)
+        }
+        if !isPinnedToToday, let next = calendar.date(byAdding: .day, value: 1, to: day),
+           calendar.compare(next, to: Date(), toGranularity: .day) != .orderedDescending {
+            candidates.append(next)
+        }
+
+        for candidate in candidates {
+            let key = supabase.localDayString(for: candidate, timezone: timezone)
+            guard dayCache[key] == nil, !prefetchingDays.contains(key) else { continue }
+            prefetchingDays.insert(key)
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.prefetchingDays.remove(key) }
+                guard let fetched = try? await self.supabase.fetchEntries(
+                    for: candidate,
+                    timezone: timezone
+                ) else { return }
+                // First write wins only if the day is still uncached — a
+                // real visit's fresher data must not be overwritten.
+                guard self.dayCache[key] == nil else { return }
+                self.dayCache[key] = fetched
+                if !self.dayCacheVisitOrder.contains(key) {
+                    // Eligible for eviction before any visited day.
+                    self.dayCacheVisitOrder.insert(key, at: 0)
+                }
+            }
         }
     }
 
