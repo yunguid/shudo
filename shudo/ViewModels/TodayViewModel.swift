@@ -1,10 +1,5 @@
 import Foundation
 
-enum EntrySubmissionResult: Equatable {
-    case accepted
-    case rejected(String)
-}
-
 /// A locally accepted meal correction. The composer hands this to
 /// `TodayViewModel` and dismisses immediately; the payload is kept until the
 /// server accepts the update so a failure can be retried without retyping or
@@ -45,7 +40,16 @@ enum EntryCorrectionPresentation {
 final class TodayViewModel: ObservableObject {
     @Published var profile: Profile?
     @Published private(set) var todayTotals: DayTotals = .empty
-    @Published private(set) var entries: [Entry] = []
+    @Published private(set) var entries: [Entry] = [] {
+        didSet {
+            // Write-through snapshot of the visible day, so returning to it
+            // renders instantly instead of flashing a loading skeleton. The
+            // load-failure path suppresses this: a fallback (possibly empty)
+            // list must not overwrite a good snapshot.
+            guard !suppressDayCacheWrite, !currentLocalDay.isEmpty else { return }
+            dayCache[currentLocalDay] = entries
+        }
+    }
     @Published private(set) var currentDay: Date = Date()
     @Published var isPresentingComposer = false
     @Published var errorMessage: String?
@@ -64,6 +68,18 @@ final class TodayViewModel: ObservableObject {
     private let fetchEntryById: (UUID) async throws -> Entry?
 
     private var loadGeneration = UUID()
+    /// Per-day entry snapshots for instant day switching; pruned LRU by
+    /// visit order. Keys are localDay strings for the profile's timezone.
+    private var dayCache: [String: [Entry]] = [:]
+    private var dayCacheVisitOrder: [String] = []
+    private var currentLocalDay = ""
+    private var suppressDayCacheWrite = false
+    private static let maximumCachedDays = 16
+    /// Meals accepted locally whose create call hasn't succeeded yet, keyed
+    /// by placeholder id. The payload outlives the composer so failures are
+    /// retryable without recomposing anything.
+    private var pendingSubmissions: [UUID: PendingEntrySubmission] = [:]
+    private var submissionTasks: [UUID: Task<Void, Never>] = [:]
     private var pollingTasks: [UUID: Task<Void, Never>] = [:]
     private var pollingTokens: [UUID: UUID] = [:]
     private var autoResumeRequestStates: [UUID: AutoResumeRequestState] = [:]
@@ -109,11 +125,16 @@ final class TodayViewModel: ObservableObject {
         self.profile = profile
         self.effectiveTarget = profile.dailyMacroTarget
         if let preloadedEntries {
+            currentDay = preloadedDay
+            currentLocalDay = supabase.localDayString(
+                for: preloadedDay,
+                timezone: profile.timezone
+            )
             entries = preloadedEntries
             todayTotals = Self.totals(for: preloadedEntries)
-            currentDay = preloadedDay
             isPinnedToToday = true
             isLoadingDay = false
+            touchDayCacheVisit(currentLocalDay)
         } else {
             Task { await load(day: Date()) }
         }
@@ -146,6 +167,7 @@ final class TodayViewModel: ObservableObject {
     }
 
     func load(day: Date) async {
+        Perf.mark("day.load.begin")
         let timezone = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier
         let requestedLocalDay = supabase.localDayString(for: day, timezone: timezone)
         let visibleLocalDay = entries.first?.localDay
@@ -159,9 +181,31 @@ final class TodayViewModel: ObservableObject {
         completionRevealEntryIds.removeAll()
         loadGeneration = generation
         currentDay = day
+        currentLocalDay = requestedLocalDay
         isPinnedToToday = isToday(day, timezone: timezone)
-        isLoadingDay = true
         errorMessage = nil
+
+        // Days already on screen or previously visited render instantly and
+        // refresh in the background; only unseen days show the skeleton.
+        let contentAlreadyVisible: Bool
+        if requestedLocalDay == visibleLocalDay, !entries.isEmpty {
+            // Reloading the visible day (pull-to-refresh, foreground
+            // reconcile): keep the content instead of flashing skeletons.
+            contentAlreadyVisible = true
+            isLoadingDay = false
+        } else if requestedLocalDay != visibleLocalDay,
+                  let cached = dayCache[requestedLocalDay] {
+            entries = cached
+            reapplyCorrectionStateAfterLoad()
+            recomputeTotals()
+            isLoadingDay = false
+            contentAlreadyVisible = true
+            Perf.mark("day.load.cached.visible")
+        } else {
+            contentAlreadyVisible = false
+            isLoadingDay = true
+        }
+        touchDayCacheVisit(requestedLocalDay)
 
         do {
             // Target history improves progress accuracy, but it must not make the
@@ -178,6 +222,7 @@ final class TodayViewModel: ObservableObject {
                 fallback: profile?.dailyMacroTarget ?? .defaultDaily
             )
             isLoadingDay = false
+            Perf.mark("day.load.visible")
 
             for item in items where item.status.isProcessing && correctionTasks[item.id] == nil {
                 startPolling(entryId: item.id, localDay: item.localDay ?? localDay(for: day))
@@ -196,14 +241,20 @@ final class TodayViewModel: ObservableObject {
             )
         } catch {
             guard loadGeneration == generation else { return }
-            let fallback = Self.visibleStateAfterLoadFailure(
-                previousEntries: previouslyVisibleEntries,
-                previousTotals: previouslyVisibleTotals,
-                visibleLocalDay: visibleLocalDay,
-                requestedLocalDay: requestedLocalDay
-            )
-            entries = fallback.entries
-            todayTotals = fallback.totals
+            if !contentAlreadyVisible {
+                let fallback = Self.visibleStateAfterLoadFailure(
+                    previousEntries: previouslyVisibleEntries,
+                    previousTotals: previouslyVisibleTotals,
+                    visibleLocalDay: visibleLocalDay,
+                    requestedLocalDay: requestedLocalDay
+                )
+                // A fallback (possibly empty) list is not server truth for
+                // the requested day; never let it overwrite a snapshot.
+                suppressDayCacheWrite = true
+                entries = fallback.entries
+                suppressDayCacheWrite = false
+                todayTotals = fallback.totals
+            }
             effectiveTarget = NutritionProgressPolicy.effectiveTarget(
                 on: requestedLocalDay,
                 history: targetHistory,
@@ -217,6 +268,17 @@ final class TodayViewModel: ObservableObject {
             }
             isLoadingDay = false
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Records a visit for LRU pruning; the snapshot itself is written by
+    /// the `entries` write-through.
+    private func touchDayCacheVisit(_ localDay: String) {
+        dayCacheVisitOrder.removeAll { $0 == localDay }
+        dayCacheVisitOrder.append(localDay)
+        while dayCacheVisitOrder.count > Self.maximumCachedDays {
+            let evicted = dayCacheVisitOrder.removeFirst()
+            dayCache[evicted] = nil
         }
     }
 
@@ -240,6 +302,16 @@ final class TodayViewModel: ObservableObject {
 
     func deleteEntry(_ entry: Entry) async {
         guard entry.canDelete else { return }
+        // A local submission that never reached the server has nothing to
+        // delete remotely; drop the card and its preserved payload.
+        if pendingSubmissions[entry.id] != nil {
+            submissionTasks[entry.id]?.cancel()
+            submissionTasks[entry.id] = nil
+            pendingSubmissions[entry.id] = nil
+            entries.removeAll { $0.id == entry.id }
+            recomputeTotals()
+            return
+        }
         let previousEntries = entries
         let previousTotals = todayTotals
         entries.removeAll { $0.id == entry.id }
@@ -267,19 +339,37 @@ final class TodayViewModel: ObservableObject {
         }
     }
 
-    func submitEntry(
+    struct PendingEntrySubmission {
+        let text: String?
+        let audioData: Data?
+        let imageJPEG: Data?
+        let timezone: String
+        let targetLocalDay: String
+        let clientRequestId: UUID
+        var placeholder: Entry
+    }
+
+    static let submissionFailedStatusMessage = "Not sent — check your connection and retry"
+
+    /// Accepts a composed meal locally and returns immediately: the composer
+    /// dismisses on the spot while the upload runs here, owned by this model
+    /// rather than the sheet. A failed upload flips the placeholder card into
+    /// a retryable failed state with the payload preserved — retrying re-sends
+    /// the SAME clientRequestId, so an ambiguous failure can't double-log.
+    @discardableResult
+    func acceptEntrySubmission(
         text: String?,
         audioData: Data?,
         imageJPEG: Data?,
         for targetDay: Date? = nil,
         clientRequestId: UUID = UUID()
-    ) async -> EntrySubmissionResult {
+    ) -> UUID {
         let timezone = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier
         let day = targetDay ?? currentDay
         let targetLocalDay = supabase.localDayString(for: day, timezone: timezone)
-        let temporaryId = UUID()
+        let placeholderId = UUID()
         let placeholder = Entry(
-            id: temporaryId,
+            id: placeholderId,
             createdAt: optimisticTimestamp(for: day, timezone: timezone),
             summary: optimisticTitle(
                 text: text,
@@ -300,45 +390,101 @@ final class TodayViewModel: ObservableObject {
             entries.insert(placeholder, at: 0)
         }
         errorMessage = nil
+        Perf.mark("entry.optimistic.visible")
 
+        pendingSubmissions[placeholderId] = PendingEntrySubmission(
+            text: text,
+            audioData: audioData,
+            imageJPEG: imageJPEG,
+            timezone: timezone,
+            targetLocalDay: targetLocalDay,
+            clientRequestId: clientRequestId,
+            placeholder: placeholder
+        )
+        startSubmission(placeholderId: placeholderId)
+        return placeholderId
+    }
+
+    /// Whether a timeline row is a local submission that has no server row
+    /// yet (still uploading, or failed before reaching the server).
+    func isPendingSubmission(_ entryId: UUID) -> Bool {
+        pendingSubmissions[entryId] != nil
+    }
+
+    private func startSubmission(placeholderId: UUID) {
+        guard submissionTasks[placeholderId] == nil,
+              let payload = pendingSubmissions[placeholderId] else { return }
+        submissionTasks[placeholderId] = Task { [weak self] in
+            guard let self else { return }
+            await self.runSubmission(placeholderId: placeholderId, payload: payload)
+            self.submissionTasks[placeholderId] = nil
+        }
+    }
+
+    private func runSubmission(
+        placeholderId: UUID,
+        payload: PendingEntrySubmission
+    ) async {
         do {
             let result = try await api.createEntry(
-                text: text,
-                audioData: audioData,
-                imageJPEG: imageJPEG,
-                timezone: timezone,
-                localDay: targetLocalDay,
-                clientRequestId: clientRequestId
+                text: payload.text,
+                audioData: payload.audioData,
+                imageJPEG: payload.imageJPEG,
+                timezone: payload.timezone,
+                localDay: payload.targetLocalDay,
+                clientRequestId: payload.clientRequestId
             )
+            guard !Task.isCancelled else { return }
+            pendingSubmissions[placeholderId] = nil
             let accepted = Entry(
                 id: result.entryId,
-                createdAt: placeholder.createdAt,
-                summary: placeholder.summary,
+                createdAt: payload.placeholder.createdAt,
+                summary: payload.placeholder.summary,
                 imageURL: nil,
                 proteinG: 0,
                 carbsG: 0,
                 fatG: 0,
                 caloriesKcal: 0,
-                localDay: targetLocalDay,
+                localDay: payload.targetLocalDay,
                 status: result.status,
                 statusMessage: result.status.defaultMessage,
                 statusUpdatedAt: Date()
             )
 
-            if let index = entries.firstIndex(where: { $0.id == temporaryId }) {
+            if entries.contains(where: { $0.id == result.entryId }) {
+                // A reload already fetched the server row (an earlier attempt
+                // landed but its response was lost); drop the placeholder
+                // instead of duplicating the id.
+                entries.removeAll { $0.id == placeholderId }
+            } else if let index = entries.firstIndex(where: { $0.id == placeholderId }) {
                 entries[index] = accepted
-            } else if localDay(for: currentDay) == targetLocalDay {
+            } else if localDay(for: currentDay) == payload.targetLocalDay {
                 entries.insert(accepted, at: 0)
+            } else if var cachedDay = dayCache[payload.targetLocalDay] {
+                // Not the visible day: keep that day's snapshot current so a
+                // revisit shows the new meal before its refresh lands.
+                cachedDay.removeAll { $0.id == placeholderId }
+                cachedDay.insert(accepted, at: 0)
+                dayCache[payload.targetLocalDay] = cachedDay
             }
             recomputeTotals()
-            startPolling(entryId: result.entryId, localDay: targetLocalDay)
-            return .accepted
+            startPolling(entryId: result.entryId, localDay: payload.targetLocalDay)
         } catch {
-            entries.removeAll { $0.id == temporaryId }
+            guard !Task.isCancelled else { return }
+            var failed = payload.placeholder
+            failed.status = .failed
+            failed.statusMessage = Self.submissionFailedStatusMessage
+            failed.errorMessage = Self.submissionErrorMessage(error)
+            failed.statusUpdatedAt = Date()
+            pendingSubmissions[placeholderId]?.placeholder = failed
+            if let index = entries.firstIndex(where: { $0.id == placeholderId }) {
+                entries[index] = failed
+            } else if var cachedDay = dayCache[payload.targetLocalDay],
+                      let index = cachedDay.firstIndex(where: { $0.id == placeholderId }) {
+                cachedDay[index] = failed
+                dayCache[payload.targetLocalDay] = cachedDay
+            }
             recomputeTotals()
-            let message = Self.submissionErrorMessage(error)
-            errorMessage = message
-            return .rejected(message)
         }
     }
 
@@ -354,6 +500,21 @@ final class TodayViewModel: ObservableObject {
 
     func retryEntry(_ entry: Entry) async {
         guard entry.status == .failed else { return }
+        // A failed local submission retries by re-sending its preserved
+        // payload (same clientRequestId — the server dedupes), not by asking
+        // the server to resume a row that never existed.
+        if pendingSubmissions[entry.id] != nil {
+            guard submissionTasks[entry.id] == nil else { return }
+            if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+                entries[index].status = .queued
+                entries[index].statusMessage = "Uploading"
+                entries[index].errorMessage = nil
+                entries[index].statusUpdatedAt = Date()
+                pendingSubmissions[entry.id]?.placeholder = entries[index]
+            }
+            startSubmission(placeholderId: entry.id)
+            return
+        }
         let targetLocalDay = entry.localDay ?? localDay(for: currentDay)
         let outcome = await requestResume(
             entry: entry,
@@ -937,6 +1098,13 @@ final class TodayViewModel: ObservableObject {
             if let row = entries.first(where: { $0.id == id }), !row.status.isProcessing {
                 correctionSnapshots[id] = nil
             }
+        }
+        // Local submissions have no server row yet; re-overlay them so a
+        // reload can't drop a meal that is still uploading or awaiting retry.
+        for (id, payload) in pendingSubmissions
+        where payload.targetLocalDay == currentLocalDay
+            && !entries.contains(where: { $0.id == id }) {
+            entries.insert(payload.placeholder, at: 0)
         }
     }
 

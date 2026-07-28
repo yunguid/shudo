@@ -82,6 +82,12 @@ struct TodayView: View {
     @StateObject private var vm: TodayViewModel
     @ObservedObject private var router = AppRouter.shared
     @State private var formatterCache = DayFormatterCache()
+    /// The composer's recorder, owned here so a mic tap can start the audio
+    /// warm-up immediately — overlapping session activation with the sheet
+    /// presentation instead of waiting for the composer to appear. Held in a
+    /// non-observing box: the recorder's 16Hz meter updates must re-render
+    /// only the composer, never this whole screen.
+    @StateObject private var composerAudioHolder = UnobservedHolder(AudioRecorder())
 
     @State private var isShowingAccount = false
     @State private var isShowingDatePicker = false
@@ -127,7 +133,11 @@ struct TodayView: View {
                 onCorrectionSubmit: submitCorrection
             )
         } else {
-            EntryDetailView(entryId: entry.id, onCorrectionSubmit: submitCorrection)
+            EntryDetailView(
+                entryId: entry.id,
+                seed: entry,
+                onCorrectionSubmit: submitCorrection
+            )
         }
     }
 
@@ -176,9 +186,10 @@ struct TodayView: View {
             EntryComposerView(
                 selectedDay: capturedDay,
                 timezone: vm.profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier,
-                autoStartRecording: composerAutoStartsRecording
+                autoStartRecording: composerAutoStartsRecording,
+                audio: composerAudioHolder.value
             ) { text, audio, imageJPEG, clientRequestId in
-                await vm.submitEntry(
+                vm.acceptEntrySubmission(
                     text: text,
                     audioData: audio,
                     imageJPEG: imageJPEG,
@@ -620,7 +631,18 @@ struct TodayView: View {
     }
 
     private func openComposer(autoStartRecording: Bool) {
+        Perf.mark(autoStartRecording ? "mic.tap" : "compose.tap")
         composerAutoStartsRecording = autoStartRecording
+        // Warm the microphone right at the tap so permission checks, session
+        // activation, and recorder start run concurrently with the sheet
+        // animation — the user can begin speaking before the sheet settles.
+        // Skipped when another sheet could delay the composer's presentation;
+        // the composer's own fallback start covers that path, and a dismissal
+        // mid-warm-up aborts through the composer's onDisappear discard.
+        if autoStartRecording, !isShowingAccount, !isShowingDatePicker {
+            let recorder = composerAudioHolder.value
+            Task { _ = await recorder.startRecording() }
+        }
         vm.isPresentingComposer = true
     }
 

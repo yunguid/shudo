@@ -24,14 +24,23 @@ struct EntryDetailView: View {
     /// pops immediately after handing off.
     private let onCorrectionSubmit: (EntryCorrectionSubmission) -> Void
     private let loadsRemotely: Bool
+    /// What the timeline already knows about this meal (title, macros,
+    /// photo). Rendered immediately so navigation never blocks on the
+    /// network; the full fetch fills in the breakdown, notes, and sources.
+    private let seed: Entry?
     @State private var detail: SupabaseService.EntryDetail?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var expandedItemIndices: Set<Int> = []
     @State private var isShowingCorrection = false
 
-    init(entryId: UUID, onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void) {
+    init(
+        entryId: UUID,
+        seed: Entry? = nil,
+        onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void
+    ) {
         self.entryId = entryId
+        self.seed = seed
         loadsRemotely = true
         self.onCorrectionSubmit = onCorrectionSubmit
     }
@@ -42,6 +51,7 @@ struct EntryDetailView: View {
         onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void = { _ in }
     ) {
         self.entryId = entryId
+        seed = nil
         loadsRemotely = false
         self.onCorrectionSubmit = onCorrectionSubmit
         _detail = State(initialValue: previewDetail)
@@ -59,16 +69,7 @@ struct EntryDetailView: View {
                         )
                         VStack(alignment: .leading, spacing: 26) {
                             photo(detail.imageURL)
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(detail.title)
-                                    .font(.title2.weight(.bold))
-                                    .foregroundStyle(Design.Color.ink)
-                                Text(detail.createdAt, style: .time)
-                                    .font(.caption)
-                                    .foregroundStyle(Design.Color.muted)
-                            }
-
+                            titleHeader(detail.title, createdAt: detail.createdAt)
                             macroSummary(detail, research: research)
 
                             correctionAction
@@ -127,6 +128,26 @@ struct EntryDetailView: View {
                         )
                         .padding(.horizontal, EntryDetailLayoutPolicy.horizontalPadding)
                         .padding(.vertical, 14)
+                    } else if let seed {
+                        // The timeline's card data renders in the first frame;
+                        // only the breakdown below it waits for the fetch.
+                        VStack(alignment: .leading, spacing: 26) {
+                            photo(seed.imageURL)
+                            titleHeader(seed.summary, createdAt: seed.createdAt)
+                            seedMacroSummary(seed)
+                            correctionAction
+                            if isLoading {
+                                breakdownSkeleton
+                            } else {
+                                inlineLoadFailure
+                            }
+                        }
+                        .frame(
+                            width: EntryDetailLayoutPolicy.contentWidth(for: viewport.size.width),
+                            alignment: .leading
+                        )
+                        .padding(.horizontal, EntryDetailLayoutPolicy.horizontalPadding)
+                        .padding(.vertical, 14)
                     } else if isLoading {
                         loadingView
                     } else {
@@ -138,19 +159,92 @@ struct EntryDetailView: View {
         }
         .navigationTitle("Meal")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { Perf.mark("detail.appear") }
         .task {
             guard loadsRemotely else { return }
             await load()
         }
         .sheet(isPresented: $isShowingCorrection) {
             EntryCorrectionSheet(
-                entryTitle: detail?.title ?? "this meal",
+                entryTitle: detail?.title ?? seed?.summary ?? "this meal",
                 onSubmit: onCorrectionSubmit,
                 onAccepted: returnToSelectedDay
             )
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(Design.Radius.sheet)
         }
+    }
+
+    private func titleHeader(_ title: String, createdAt: Date) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(Design.Color.ink)
+            Text(createdAt, style: .time)
+                .font(.caption)
+                .foregroundStyle(Design.Color.muted)
+        }
+    }
+
+    /// Macro summary rendered from the timeline card's values while the
+    /// authoritative detail row loads. Confidence and research provenance
+    /// are omitted — they aren't known until the fetch lands.
+    private func seedMacroSummary(_ seed: Entry) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            calorieSummary(seed.caloriesKcal)
+            if EntryDetailLayoutPolicy.stacksMacroCards(for: dynamicTypeSize) {
+                VStack(spacing: 10) {
+                    macroValue("Protein", seed.proteinG, Design.Color.ringProtein)
+                    macroValue("Carbs", seed.carbsG, Design.Color.ringCarb)
+                    macroValue("Fat", seed.fatG, Design.Color.ringFat)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    macroValue("Protein", seed.proteinG, Design.Color.ringProtein)
+                    macroValue("Carbs", seed.carbsG, Design.Color.ringCarb)
+                    macroValue("Fat", seed.fatG, Design.Color.ringFat)
+                }
+            }
+        }
+    }
+
+    private var breakdownSkeleton: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Capsule().fill(Design.Color.elevated).frame(width: 120, height: 14)
+            ForEach(0..<3, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 8) {
+                    Capsule().fill(Design.Color.elevated).frame(width: 190, height: 11)
+                    Capsule().fill(Design.Color.elevated).frame(width: 240, height: 9)
+                }
+            }
+        }
+        .shimmering()
+        .accessibilityLabel("Loading meal details")
+    }
+
+    /// Shown under the seed content when the detail fetch failed: the meal's
+    /// numbers are already on screen, so the failure is a quiet inline row
+    /// instead of a full-screen error.
+    private var inlineLoadFailure: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.muted)
+            Text(errorMessage ?? "The full breakdown couldn’t be loaded.")
+                .font(.footnote)
+                .foregroundStyle(Design.Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("Try again") { Task { await load() } }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Design.Color.accentSecondary)
+                .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(
+            Design.Color.elevated,
+            in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
+        )
     }
 
     @ViewBuilder
@@ -202,12 +296,12 @@ struct EntryDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline) {
-                    calorieSummary(detail)
+                    calorieSummary(detail.caloriesKcal)
                     Spacer(minLength: 12)
                     confidenceLabel(detail)
                 }
                 VStack(alignment: .leading, spacing: 5) {
-                    calorieSummary(detail)
+                    calorieSummary(detail.caloriesKcal)
                     confidenceLabel(detail)
                 }
             }
@@ -326,9 +420,9 @@ struct EntryDetailView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func calorieSummary(_ detail: SupabaseService.EntryDetail) -> some View {
+    private func calorieSummary(_ caloriesKcal: Double) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("\(Int(detail.caloriesKcal.rounded()))")
+            Text("\(Int(caloriesKcal.rounded()))")
                 .font(.system(size: calorieFontSize, weight: .bold))
                 .foregroundStyle(Design.Color.ink)
                 .monospacedDigit()
@@ -337,7 +431,7 @@ struct EntryDetailView: View {
                 .foregroundStyle(Design.Color.muted)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(Int(detail.caloriesKcal.rounded())) kilocalories")
+        .accessibilityLabel("\(Int(caloriesKcal.rounded())) kilocalories")
     }
 
     @ViewBuilder

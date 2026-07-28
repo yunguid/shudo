@@ -50,7 +50,7 @@ enum EntryComposerPolicy {
 
 struct EntryComposerView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var audio = AudioRecorder()
+    @ObservedObject private var audio: AudioRecorder
 
     @State private var note = ""
     @State private var pickedImages: [PhotosPickerItem] = []
@@ -71,18 +71,25 @@ struct EntryComposerView: View {
     let selectedDay: Date
     let timezone: String
     let autoStartRecording: Bool
-    let onSubmit: (String?, Data?, Data?, UUID) async -> EntrySubmissionResult
+    /// Hands the composed meal to the owner and returns immediately — the
+    /// upload runs on the Today screen's card, so this sheet never holds the
+    /// user through the network round trip.
+    let onSubmit: (String?, Data?, Data?, UUID) -> Void
+    private let dayText: String
 
     init(
         selectedDay: Date,
         timezone: String,
         autoStartRecording: Bool = false,
-        onSubmit: @escaping (String?, Data?, Data?, UUID) async -> EntrySubmissionResult
+        audio: AudioRecorder,
+        onSubmit: @escaping (String?, Data?, Data?, UUID) -> Void
     ) {
         self.selectedDay = selectedDay
         self.timezone = timezone
         self.autoStartRecording = autoStartRecording
+        self.audio = audio
         self.onSubmit = onSubmit
+        dayText = Self.dayLabelText(selectedDay: selectedDay, timezone: timezone)
     }
 
     private var hasAudio: Bool { audio.recordedFileURL != nil }
@@ -162,15 +169,17 @@ struct EntryComposerView: View {
         }
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
+        .onAppear { Perf.mark("composer.appear") }
         .task {
             guard autoStartRecording, !didAutoStart else { return }
             didAutoStart = true
-            do {
-                try await Task.sleep(nanoseconds: 180_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
+            // The Today screen normally starts the microphone warm-up at tap
+            // time so it overlaps this sheet's presentation. This fallback
+            // covers presentations where that start couldn't run (a capture
+            // deep link arriving while another sheet was up) without
+            // double-starting or retrying a start that already failed.
+            guard !audio.isRecording, !audio.isStartingRecording,
+                  audio.recordedFileURL == nil, audio.errorMessage == nil else { return }
             _ = await audio.startRecording()
         }
         .onDisappear {
@@ -432,7 +441,10 @@ struct EntryComposerView: View {
         .background(.ultraThinMaterial)
     }
 
-    private var dayText: String {
+    /// Computed once at init: body re-evaluates at ~16Hz while recording
+    /// (meter levels + elapsed time), and building a Calendar and
+    /// DateFormatter on each evaluation was measurable main-thread churn.
+    static func dayLabelText(selectedDay: Date, timezone: String) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
         if calendar.isDateInToday(selectedDay) { return "Today" }
@@ -503,6 +515,7 @@ struct EntryComposerView: View {
             return
         }
 
+        Perf.mark("photo.prepare.begin")
         isPreparingImage = true
         localError = nil
         let availableSlots = max(0, ImageProcessor.maximumPhotoCount - images.count)
@@ -535,6 +548,7 @@ struct EntryComposerView: View {
                 withAnimation(.snappy) {
                     images.append(contentsOf: preparedImages.prefix(remainingSlots))
                 }
+                Perf.mark("photo.thumbs.visible")
                 localError = preparedImages.count < selectedItems.count
                     ? "Some photos couldn’t be loaded."
                     : nil
@@ -613,6 +627,7 @@ struct EntryComposerView: View {
     }
 
     private func submit() {
+        Perf.mark("entry.submit.tap")
         settleVoiceCapture()
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         // The user's own words lead; scanned label facts follow so the first
@@ -649,18 +664,16 @@ struct EntryComposerView: View {
                 }
                 return
             }
-            let result = await onSubmit(text, audioData, imageJPEG, clientRequestId)
             await MainActor.run {
+                // Locally accepted: the Today screen owns the upload from
+                // here (its card shows progress and any retryable failure),
+                // so the sheet closes now instead of holding through the
+                // network round trip.
+                onSubmit(text, audioData, imageJPEG, clientRequestId)
+                audio.discardRecording()
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 isSubmitting = false
-                switch result {
-                case .accepted:
-                    audio.discardRecording()
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    dismiss()
-                case .rejected(let message):
-                    localError = message
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
+                dismiss()
             }
         }
     }

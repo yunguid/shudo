@@ -26,10 +26,19 @@ enum AppTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Palettes are built once per process. `Design.Color` resolves one of
+    /// these on every color access during every body evaluation, so this must
+    /// not allocate 13 fresh Colors each time (recording UI re-renders at
+    /// ~16Hz and touches dozens of colors per pass).
     var palette: Design.Palette {
         switch self {
-        case .groovebox:
-            Design.Palette(
+        case .groovebox: Self.grooveboxPalette
+        case .moss: Self.mossPalette
+        case .dusk: Self.duskPalette
+        }
+    }
+
+    private static let grooveboxPalette = Design.Palette(
                 paper: Color(red: 0.035, green: 0.037, blue: 0.040),
                 elevated: Color(red: 0.082, green: 0.084, blue: 0.089),
                 ink: Color(red: 0.935, green: 0.925, blue: 0.895),
@@ -44,8 +53,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
                 ringCarb: Color(red: 0.500, green: 0.665, blue: 0.555),
                 ringFat: Color(red: 0.735, green: 0.625, blue: 0.445)
             )
-        case .moss:
-            Design.Palette(
+
+    private static let mossPalette = Design.Palette(
                 paper: Color(red: 0.025, green: 0.027, blue: 0.030),
                 elevated: Color(red: 0.072, green: 0.077, blue: 0.081),
                 ink: Color(red: 0.915, green: 0.925, blue: 0.920),
@@ -60,8 +69,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
                 ringCarb: Color(red: 0.475, green: 0.650, blue: 0.555),
                 ringFat: Color(red: 0.710, green: 0.620, blue: 0.465)
             )
-        case .dusk:
-            Design.Palette(
+
+    private static let duskPalette = Design.Palette(
                 paper: Color(red: 0.045, green: 0.037, blue: 0.033),
                 elevated: Color(red: 0.100, green: 0.082, blue: 0.073),
                 ink: Color(red: 0.930, green: 0.900, blue: 0.855),
@@ -76,8 +85,6 @@ enum AppTheme: String, CaseIterable, Identifiable {
                 ringCarb: Color(red: 0.505, green: 0.650, blue: 0.535),
                 ringFat: Color(red: 0.735, green: 0.565, blue: 0.390)
             )
-        }
-    }
 
     static var selected: AppTheme {
         guard let stored = UserDefaults.standard.string(forKey: storageKey),

@@ -44,6 +44,10 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     override init() {
         super.init()
         observeSystemAudioNotifications()
+        // Category configuration is sticky and does not touch the microphone
+        // or other apps' audio; doing it once at creation keeps that IPC off
+        // the tap-to-recording critical path.
+        Self.prewarmSessionCategory()
     }
 
     deinit {
@@ -73,6 +77,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
 
     func startRecording() async -> Bool {
         guard !Task.isCancelled, !isRecording, !isStartingRecording else { return false }
+        Perf.mark("mic.start.begin")
         errorMessage = nil
         // Discard before flagging the start: discardRecording clears
         // isStartingRecording so a composer teardown can abort a warm-up
@@ -87,6 +92,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
             errorMessage = "Microphone access is required to record a meal."
             return false
         }
+        Perf.mark("mic.permission.ok")
 
         let url = Self.makeTempURL()
         do {
@@ -113,8 +119,10 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
             didReachMaximumDuration = false
             isRecording = true
             startMetering()
+            Perf.mark("mic.record.live")
             return true
         } catch {
+            Perf.mark("mic.start.fail")
             isRecording = false
             recordedFileURL = nil
             errorMessage = (error as? AudioStartError)?.message
@@ -128,16 +136,35 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         let message: String
     }
 
-    private nonisolated static func activateSessionAndStartRecorder(
-        url: URL
-    ) throws -> AVAudioRecorder {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(
+    /// Serialized on `sessionQueue`. Set on first configure; cleared when a
+    /// media-services reset wipes the session's state.
+    private nonisolated(unsafe) static var sessionCategoryConfigured = false
+
+    /// Applies the recording category off the critical path. Safe to run at
+    /// any time: category alone never interrupts other audio or lights the
+    /// microphone indicator — only activation does.
+    nonisolated static func prewarmSessionCategory() {
+        sessionQueue.async { try? configureSessionCategoryIfNeeded() }
+    }
+
+    private nonisolated static func configureSessionCategoryIfNeeded() throws {
+        guard !sessionCategoryConfigured else { return }
+        try AVAudioSession.sharedInstance().setCategory(
             .playAndRecord,
             mode: .spokenAudio,
             options: [.defaultToSpeaker, .allowBluetoothHFP]
         )
+        sessionCategoryConfigured = true
+    }
+
+    private nonisolated static func activateSessionAndStartRecorder(
+        url: URL
+    ) throws -> AVAudioRecorder {
+        Perf.mark("mic.session.begin")
+        let session = AVAudioSession.sharedInstance()
+        try configureSessionCategoryIfNeeded()
         try session.setActive(true)
+        Perf.mark("mic.session.active")
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -328,6 +355,9 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     /// After a media-server crash every audio object this class holds is
     /// dead and the file under it is unreliable; drop the take and say so.
     private func handleMediaServicesReset() {
+        // The reset wiped the session's configuration; the next start must
+        // re-apply the category.
+        Self.sessionQueue.async { Self.sessionCategoryConfigured = false }
         guard isRecording else { return }
         finishSystemEndedRecording(
             error: "Recording was interrupted by a system audio reset. Record again.",
@@ -337,7 +367,10 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     }
 
     private func requestPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
+        // Already-granted permission answers synchronously; the async request
+        // is only needed to show the system prompt (or confirm a denial).
+        if AVAudioApplication.shared.recordPermission == .granted { return true }
+        return await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { granted in
                 continuation.resume(returning: granted)
             }
