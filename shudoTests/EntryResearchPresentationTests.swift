@@ -124,6 +124,26 @@ struct EntryResearchPresentationTests {
         #expect(sources.map(\.url.absoluteString) == ["https://ok.example/a"])
     }
 
+    @Test func displaySourcesCollapseSameHostCitationsKeepingFirstLinkAndOrder() throws {
+        let notes = "Online sources: "
+            + "[chipotle.com](https://www.chipotle.com/nutrition-calculator), "
+            + "[chipotle.com](https://www.chipotle.com/order/build/burrito-bowl), "
+            + "[nutritionix.com](https://www.nutritionix.com/brand/chipotle)."
+        guard case .verified(let sources) =
+            EntryResearchPresentation.breakdown(notes: notes).provenance else {
+            Issue.record("Expected verified provenance")
+            return
+        }
+
+        let displayed = EntryResearchPresentation.displaySources(sources)
+        #expect(displayed.map(\.host) == ["chipotle.com", "nutritionix.com"])
+        #expect(
+            displayed.first?.url.absoluteString
+                == "https://www.chipotle.com/nutrition-calculator"
+        )
+        #expect(EntryResearchPresentation.displaySources([]) == [])
+    }
+
     @Test func verifiedResearchFlagDrivesTheListRowTrace() {
         #expect(EntryResearchPresentation.hasVerifiedResearch(
             notes: "Online sources: [a.example](https://a.example/n)."

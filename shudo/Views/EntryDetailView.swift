@@ -111,6 +111,13 @@ struct EntryDetailView: View {
                                     collapsedByDefault: true
                                 )
                             }
+
+                            if case .verified(let sources) = research.provenance {
+                                let hosts = EntryResearchPresentation.displaySources(sources)
+                                if !hosts.isEmpty {
+                                    sourcesSection(hosts)
+                                }
+                            }
                         }
                         // A vertical ScrollView otherwise adopts a wide child's ideal width.
                         // Keep collages and nutrition rows inside the visible phone viewport.
@@ -223,9 +230,11 @@ struct EntryDetailView: View {
         }
     }
 
-    /// Where the meal's numbers came from: verified against online sources
-    /// (with tappable links), or explicitly an estimate when lookup found
-    /// nothing or was unavailable. Ordinary meals show nothing here.
+    /// Where the meal's numbers came from, in one quiet line: verified
+    /// against online sources, or explicitly an estimate when lookup found
+    /// nothing or was unavailable. Ordinary meals show nothing here. The
+    /// tappable citations themselves live at the bottom of the screen —
+    /// provenance is glanceable, sources are reference material.
     @ViewBuilder
     private func researchProvenance(
         _ provenance: EntryResearchPresentation.Provenance
@@ -234,30 +243,29 @@ struct EntryDetailView: View {
         case .none:
             EmptyView()
         case .verified(let sources):
-            VStack(alignment: .leading, spacing: 10) {
-                Label {
+            let hosts = EntryResearchPresentation.displaySources(sources)
+            Label {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("Checked online")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Design.Color.ink)
-                } icon: {
-                    Image(systemName: "checkmark.seal")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.accentSecondary)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    sources.isEmpty
-                        ? "Nutrition checked against online sources"
-                        : "Nutrition checked against \(sources.count) online source\(sources.count == 1 ? "" : "s")"
-                )
-
-                if !sources.isEmpty {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { sourceChips(sources) }
-                        VStack(alignment: .leading, spacing: 8) { sourceChips(sources) }
+                    if !hosts.isEmpty {
+                        Text("· \(hosts.count) source\(hosts.count == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(Design.Color.muted)
                     }
                 }
+            } icon: {
+                Image(systemName: "checkmark.seal")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Design.Color.accentSecondary)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                hosts.isEmpty
+                    ? "Nutrition checked against online sources"
+                    : "Nutrition checked against \(hosts.count) online source\(hosts.count == 1 ? "" : "s"), listed at the end of this screen"
+            )
         case .unverified:
             estimateNotice("Estimate — no authoritative source found online")
         case .unavailable:
@@ -265,33 +273,42 @@ struct EntryDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func sourceChips(
+    /// The citation shelf at the very bottom: host chips flowing across the
+    /// full width, wrapping like text instead of stacking into a column.
+    private func sourcesSection(
         _ sources: [EntryResearchPresentation.Source]
     ) -> some View {
-        ForEach(sources) { source in
-            Link(destination: source.url) {
-                HStack(spacing: 5) {
-                    Image(systemName: "globe")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Design.Color.accentSecondary)
-                    Text(source.host)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Design.Color.ink)
-                        .lineLimit(1)
+        VStack(alignment: .leading, spacing: 9) {
+            Label("Sources", systemImage: "globe")
+                .font(.headline)
+                .foregroundStyle(Design.Color.ink)
+
+            ChipFlowLayout(spacing: 8) {
+                ForEach(sources) { source in
+                    Link(destination: source.url) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "globe")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Design.Color.accentSecondary)
+                            Text(source.host)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Design.Color.ink)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(Design.Color.glassFill, in: Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
+                        )
+                        // ~44pt tap target beyond the visual chip.
+                        .contentShape(Capsule().inset(by: -7))
+                    }
+                    .accessibilityLabel("Source: \(source.host)")
+                    .accessibilityHint("Opens in your browser")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(Design.Color.glassFill, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                )
-                // ~44pt tap target beyond the visual chip.
-                .contentShape(Capsule().inset(by: -7))
             }
-            .accessibilityLabel("Source: \(source.host)")
-            .accessibilityHint("Opens in your browser")
         }
     }
 
@@ -526,6 +543,74 @@ struct EntryDetailView: View {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+/// Lays out chips like words in a paragraph: left to right, wrapping to a
+/// new row when the width runs out, so a handful of citations fills the
+/// horizontal space instead of stacking into a one-per-line column.
+private struct ChipFlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    private func rows(
+        for subviews: Subviews,
+        in width: CGFloat
+    ) -> [[(index: Int, size: CGSize)]] {
+        var rows: [[(index: Int, size: CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if !rows[rows.count - 1].isEmpty, x + spacing + size.width > width {
+                rows.append([])
+                x = 0
+            }
+            if !rows[rows.count - 1].isEmpty { x += spacing }
+            rows[rows.count - 1].append((index, size))
+            x += size.width
+        }
+        return rows
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+        for (rowIndex, row) in rows(for: subviews, in: maxWidth).enumerated() {
+            let rowWidth = row.reduce(0) { $0 + $1.size.width }
+                + spacing * CGFloat(max(0, row.count - 1))
+            width = max(width, rowWidth)
+            height += (row.map(\.size.height).max() ?? 0)
+                + (rowIndex > 0 ? spacing : 0)
+        }
+        return CGSize(
+            width: maxWidth.isFinite ? min(width, maxWidth) : width,
+            height: height
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var y = bounds.minY
+        for row in rows(for: subviews, in: bounds.width) {
+            var x = bounds.minX
+            let rowHeight = row.map(\.size.height).max() ?? 0
+            for (index, size) in row {
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y + (rowHeight - size.height) / 2),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + spacing
+            }
+            y += rowHeight + spacing
+        }
     }
 }
 

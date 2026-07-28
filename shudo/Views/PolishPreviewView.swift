@@ -246,7 +246,7 @@ struct PolishPreviewView: View {
                 caloriesKcal: 190
             )
         ],
-        analysisNotes: "Values follow the restaurant's own nutrition calculator for these exact portions.\n\nOnline sources: [chipotle.com](https://www.chipotle.com/nutrition-calculator), [nutritionix.com](https://www.nutritionix.com/brand/chipotle-mexican-grill).",
+        analysisNotes: "Values follow the restaurant's own nutrition calculator for these exact portions.\n\nOnline sources: [chipotle.com](https://www.chipotle.com/nutrition-calculator), [chipotle.com](https://www.chipotle.com/order/build/burrito-bowl), [nutritionix.com](https://www.nutritionix.com/brand/chipotle-mexican-grill).",
         confidence: 0.9
     )
 

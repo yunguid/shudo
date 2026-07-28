@@ -484,6 +484,13 @@ enum EntryResearchPresentation {
         return false
     }
 
+    /// Collapses same-host citations for display: three deep links into one
+    /// restaurant site read as noise, so each host keeps its first link only.
+    static func displaySources(_ sources: [Source]) -> [Source] {
+        var seenHosts = Set<String>()
+        return sources.filter { seenHosts.insert($0.host).inserted }
+    }
+
     /// Parses "[host](url), [host](url)." — the server guarantees links are
     /// never truncated mid-markdown, but a malformed tail is dropped rather
     /// than rendered.
