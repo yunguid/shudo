@@ -70,6 +70,9 @@ enum DayEdgeSwipePolicy {
 struct TodayView: View {
     let profile: Profile
     private let loadsRemotely: Bool
+    /// Preview/UI-test affordance: a fixture detail used for pushed meal
+    /// screens so the full log → detail → correction journey runs offline.
+    private let previewEntryDetail: SupabaseService.EntryDetail?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
@@ -90,6 +93,7 @@ struct TodayView: View {
     init(profile: Profile) {
         self.profile = profile
         loadsRemotely = true
+        previewEntryDetail = nil
         _vm = StateObject(wrappedValue: TodayViewModel(
             profile: profile,
             api: APIService(
@@ -100,10 +104,31 @@ struct TodayView: View {
         ))
     }
 
-    init(profile: Profile, previewViewModel: TodayViewModel) {
+    init(
+        profile: Profile,
+        previewViewModel: TodayViewModel,
+        previewEntryDetail: SupabaseService.EntryDetail? = nil
+    ) {
         self.profile = profile
         loadsRemotely = false
+        self.previewEntryDetail = previewEntryDetail
         _vm = StateObject(wrappedValue: previewViewModel)
+    }
+
+    @ViewBuilder
+    private func entryDetailDestination(for entry: Entry) -> some View {
+        let submitCorrection: (EntryCorrectionSubmission) -> Void = { submission in
+            vm.submitCorrection(entryId: entry.id, submission: submission)
+        }
+        if let previewEntryDetail {
+            EntryDetailView(
+                entryId: entry.id,
+                previewDetail: previewEntryDetail,
+                onCorrectionSubmit: submitCorrection
+            )
+        } else {
+            EntryDetailView(entryId: entry.id, onCorrectionSubmit: submitCorrection)
+        }
     }
 
     var body: some View {
@@ -202,14 +227,6 @@ struct TodayView: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             guard loadsRemotely else { return }
             Task { await vm.reconcileAfterActivation() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .entryReanalysisRequested)) { notification in
-            guard loadsRemotely else { return }
-            guard let entryId = notification.object as? UUID else {
-                Task { await vm.load(day: vm.currentDay) }
-                return
-            }
-            vm.beginEntryCorrection(entryId: entryId)
         }
         .onChange(of: vm.errorMessage) { _, message in showErrorAlert = message != nil }
         .alert("Couldn’t finish that", isPresented: $showErrorAlert) {
@@ -408,7 +425,7 @@ struct TodayView: View {
                         HStack(alignment: .center, spacing: 8) {
                             if entry.status == .complete {
                                 NavigationLink {
-                                    EntryDetailView(entryId: entry.id)
+                                    entryDetailDestination(for: entry)
                                 } label: {
                                     EntryCard(
                                         entry: entry,
@@ -435,6 +452,16 @@ struct TodayView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if entry.status == .complete,
+                           let failureMessage = vm.failedCorrections[entry.id] {
+                            CorrectionRetryBanner(
+                                message: failureMessage,
+                                onRetry: { vm.retryCorrection(entryId: entry.id) },
+                                onDismiss: { vm.dismissFailedCorrection(entryId: entry.id) }
+                            )
+                            .padding(.bottom, 11)
+                        }
 
                         if index < vm.entries.count - 1 {
                             Rectangle()
@@ -601,6 +628,77 @@ struct TodayView: View {
         guard let request else { return }
         openComposer(autoStartRecording: request.autoStartRecording)
         router.consume(request)
+    }
+}
+
+/// Shown under a meal whose estimate update failed: the previous estimate is
+/// back on the card, and the preserved correction can be retried or let go
+/// without retyping or re-recording anything.
+private struct CorrectionRetryBanner: View {
+    let message: String
+    let onRetry: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 10) {
+                failureText
+                actions
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                failureText
+                HStack(spacing: 10) {
+                    actions
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    private var failureText: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(EntryCorrectionPresentation.failureHeadline)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Design.Color.danger)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(Design.Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        Button(action: onRetry) {
+            Label("Retry", systemImage: "arrow.clockwise")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Design.Color.accentSecondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 10)
+                .background(
+                    Design.Color.accentPrimary.opacity(0.12),
+                    in: Capsule()
+                )
+                // ~44pt tap target beyond the visual pill.
+                .contentShape(Rectangle().inset(by: -6))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Retry meal update")
+
+        Button(action: onDismiss) {
+            Image(systemName: "xmark")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(Design.Color.muted)
+                .frame(width: 30, height: 30)
+                .background(Design.Color.glassFill, in: Circle())
+                .contentShape(Circle().inset(by: -7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dismiss update failure")
+        .accessibilityHint("Discards the correction")
     }
 }
 

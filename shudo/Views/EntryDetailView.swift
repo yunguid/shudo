@@ -2,10 +2,6 @@ import Foundation
 import SwiftUI
 import UIKit
 
-extension Notification.Name {
-    static let entryReanalysisRequested = Notification.Name("shudo.entryReanalysisRequested")
-}
-
 enum EntryDetailLayoutPolicy {
     static let horizontalPadding: CGFloat = 20
 
@@ -23,7 +19,10 @@ struct EntryDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 40
     let entryId: UUID
-    private let reanalysisService: any EntryReanalysisServing
+    /// Receives a locally accepted correction. The owner (the Today screen)
+    /// runs the update and shows its progress on the meal card; this screen
+    /// pops immediately after handing off.
+    private let onCorrectionSubmit: (EntryCorrectionSubmission) -> Void
     private let loadsRemotely: Bool
     @State private var detail: SupabaseService.EntryDetail?
     @State private var isLoading = true
@@ -31,30 +30,20 @@ struct EntryDetailView: View {
     @State private var expandedItemIndices: Set<Int> = []
     @State private var isShowingCorrection = false
 
-    init(entryId: UUID) {
+    init(entryId: UUID, onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void) {
         self.entryId = entryId
         loadsRemotely = true
-        reanalysisService = APIService(
-            supabaseUrl: AppConfig.supabaseURL,
-            supabaseAnonKey: AppConfig.supabaseAnonKey,
-            sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
-        )
-    }
-
-    init(entryId: UUID, reanalysisService: any EntryReanalysisServing) {
-        self.entryId = entryId
-        loadsRemotely = true
-        self.reanalysisService = reanalysisService
+        self.onCorrectionSubmit = onCorrectionSubmit
     }
 
     init(
         entryId: UUID,
         previewDetail: SupabaseService.EntryDetail,
-        reanalysisService: any EntryReanalysisServing
+        onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void = { _ in }
     ) {
         self.entryId = entryId
         loadsRemotely = false
-        self.reanalysisService = reanalysisService
+        self.onCorrectionSubmit = onCorrectionSubmit
         _detail = State(initialValue: previewDetail)
         _isLoading = State(initialValue: false)
     }
@@ -149,13 +138,7 @@ struct EntryDetailView: View {
         .sheet(isPresented: $isShowingCorrection) {
             EntryCorrectionSheet(
                 entryTitle: detail?.title ?? "this meal",
-                onSubmit: { text, audioData, requestId in
-                    try await submitCorrection(
-                        text: text,
-                        audioData: audioData,
-                        clientRequestId: requestId
-                    )
-                },
+                onSubmit: onCorrectionSubmit,
                 onAccepted: returnToSelectedDay
             )
             .presentationDragIndicator(.visible)
@@ -532,26 +515,6 @@ struct EntryDetailView: View {
         isLoading = false
     }
 
-    private func submitCorrection(
-        text: String?,
-        audioData: Data?,
-        clientRequestId: UUID
-    ) async throws {
-        let result = try await reanalysisService.correctEntry(
-            id: entryId,
-            text: text,
-            audioData: audioData,
-            clientRequestId: clientRequestId
-        )
-        if result.status == .failed {
-            throw APIService.APIError.server(
-                statusCode: 409,
-                message: "The correction couldn’t be applied. Try again."
-            )
-        }
-        NotificationCenter.default.post(name: .entryReanalysisRequested, object: entryId)
-    }
-
     private func returnToSelectedDay() {
         Task { @MainActor in
             await Task.yield()
@@ -700,12 +663,12 @@ private struct EntryCorrectionSheet: View {
     @FocusState private var focusedField: FocusField?
     @StateObject private var audio = AudioRecorder()
     @State private var context = ""
-    @State private var isSubmitting = false
+    @State private var hasSubmitted = false
     @State private var errorMessage: String?
     @State private var clientRequestId = UUID()
 
     let entryTitle: String
-    let onSubmit: (String?, Data?, UUID) async throws -> Void
+    let onSubmit: (EntryCorrectionSubmission) -> Void
     let onAccepted: () -> Void
 
     private var hasAudio: Bool {
@@ -716,7 +679,7 @@ private struct EntryCorrectionSheet: View {
         EntryCorrectionPolicy.canSubmit(
             text: context,
             hasAudio: hasAudio,
-            isSubmitting: isSubmitting
+            isSubmitting: hasSubmitted
         )
     }
 
@@ -794,31 +757,7 @@ private struct EntryCorrectionSheet: View {
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(Design.Color.accentSecondary)
                                 .buttonStyle(.plain)
-                                .disabled(isSubmitting)
                             }
-                        }
-
-                        if isSubmitting {
-                            HStack(spacing: 12) {
-                                ProgressView()
-                                    .tint(Design.Color.accentSecondary)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Updating the estimate…")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(Design.Color.ink)
-                                    Text("The current meal stays visible until the update is ready.")
-                                        .font(.caption)
-                                        .foregroundStyle(Design.Color.muted)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
-                            .background(
-                                Design.Color.elevated,
-                                in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
-                            )
-                            .accessibilityElement(children: .combine)
-                            .accessibilityLabel("Updating the meal estimate. The current meal remains visible.")
                         }
                         }
                         .padding(20)
@@ -845,7 +784,7 @@ private struct EntryCorrectionSheet: View {
                         dismiss()
                     }
                         .foregroundStyle(Design.Color.muted)
-                        .disabled(isSubmitting)
+                        .disabled(hasSubmitted)
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -856,24 +795,21 @@ private struct EntryCorrectionSheet: View {
                 Button {
                     submit()
                 } label: {
-                    HStack(spacing: 9) {
-                        if isSubmitting { ProgressView().tint(.white) }
-                        Text(isSubmitting ? "Updating…" : "Update estimate")
-                    }
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background(
-                        LinearGradient(
-                            colors: canSubmit
-                                ? [Design.Color.ctaPrimary, Design.Color.ctaSecondary]
-                                : [Design.Color.subtle, Design.Color.subtle],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
-                        in: Capsule()
-                    )
+                    Text("Update estimate")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(
+                            LinearGradient(
+                                colors: canSubmit
+                                    ? [Design.Color.ctaPrimary, Design.Color.ctaSecondary]
+                                    : [Design.Color.subtle, Design.Color.subtle],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            ),
+                            in: Capsule()
+                        )
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit)
@@ -882,7 +818,6 @@ private struct EntryCorrectionSheet: View {
                 .background(.ultraThinMaterial)
             }
         }
-        .interactiveDismissDisabled(isSubmitting)
         .onDisappear {
             audio.discardRecording()
         }
@@ -923,7 +858,7 @@ private struct EntryCorrectionSheet: View {
                             .background(Design.Color.glassFill, in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(isSubmitting)
+                    .disabled(hasSubmitted)
                     .accessibilityLabel("Discard correction recording")
                 }
 
@@ -965,7 +900,7 @@ private struct EntryCorrectionSheet: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(isSubmitting)
+                .disabled(hasSubmitted)
                 .accessibilityLabel(recordingButtonLabel)
                 .accessibilityHint(audio.isRecording ? "Saves this recording" : "Uses the microphone")
             }
@@ -1006,39 +941,37 @@ private struct EntryCorrectionSheet: View {
         }
     }
 
+    /// Validates locally and hands the correction off, then leaves right
+    /// away. The update itself runs on the Today screen's meal card, so this
+    /// sheet never has to hold the user through the network round-trip.
     private func submit() {
         guard canSubmit else { return }
         if audio.isRecording { audio.stopRecording() }
-        isSubmitting = true
         errorMessage = nil
         let normalized = EntryCorrectionPolicy.normalized(context)
         let text = normalized.isEmpty ? nil : normalized
         let audioData = audio.recordedData()
         if let audioData,
            !EntryCorrectionPolicy.audioIsWithinUploadLimit(audioData.count) {
-            isSubmitting = false
             errorMessage = "That recording is too large. Discard it and record a shorter correction."
             return
         }
-        let requestId = clientRequestId
-        Task {
-            do {
-                try await onSubmit(text, audioData, requestId)
-                await MainActor.run {
-                    isSubmitting = false
-                    audio.discardRecording()
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    dismiss()
-                    onAccepted()
-                }
-            } catch {
-                await MainActor.run {
-                    isSubmitting = false
-                    errorMessage = error.localizedDescription
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
-            }
+        guard text != nil || audioData != nil else {
+            errorMessage = "Record or type what should change."
+            return
         }
+        hasSubmitted = true
+        onSubmit(
+            EntryCorrectionSubmission(
+                text: text,
+                audioData: audioData,
+                clientRequestId: clientRequestId
+            )
+        )
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        UIAccessibility.post(notification: .announcement, argument: "Updating meal")
+        dismiss()
+        onAccepted()
     }
 
     private func resetCorrection() {

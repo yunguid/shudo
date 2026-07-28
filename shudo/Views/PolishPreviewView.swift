@@ -20,9 +20,34 @@ struct PolishPreviewAccountDeletionService: AccountDeletionServing {
     func deleteAccount(confirmation: String) async throws {}
 }
 
-private struct PolishPreviewReanalysisService: EntryReanalysisServing {
+/// Deterministic offline correction backend for previews and UI tests: it
+/// takes a moment to "recalculate" so the timeline's updating state is
+/// visible, fails the first attempt when the correction text mentions
+/// "fail" (exercising the rollback + retry banner), and succeeds otherwise.
+@MainActor
+private final class PolishPreviewCorrectionService: EntryReanalysisServing {
+    static let shared = PolishPreviewCorrectionService()
+    private var attemptCounts: [UUID: Int] = [:]
+
     func reanalyzeEntry(id: UUID, context: String) async throws -> APIService.ReanalysisResult {
-        APIService.ReanalysisResult(entryId: id, status: .analyzing)
+        APIService.ReanalysisResult(entryId: id, status: .complete)
+    }
+
+    func correctEntry(
+        id: UUID,
+        text: String?,
+        audioData: Data?,
+        clientRequestId: UUID
+    ) async throws -> APIService.ReanalysisResult {
+        // Long enough for a person (or a UI test polling an animated
+        // hierarchy) to see the timeline's updating state before it settles.
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        let attempt = (attemptCounts[id] ?? 0) + 1
+        attemptCounts[id] = attempt
+        if attempt == 1, text?.localizedCaseInsensitiveContains("fail") == true {
+            throw URLError(.notConnectedToInternet)
+        }
+        return APIService.ReanalysisResult(entryId: id, status: .complete)
     }
 }
 
@@ -45,13 +70,16 @@ struct PolishPreviewView: View {
     var body: some View {
         switch screen {
         case .main:
-            TodayView(profile: Self.profile, previewViewModel: Self.todayViewModel)
+            TodayView(
+                profile: Self.profile,
+                previewViewModel: Self.todayViewModel,
+                previewEntryDetail: Self.entryDetail
+            )
         case .detail:
             NavigationStack {
                 EntryDetailView(
                     entryId: Self.completedEntryID,
-                    previewDetail: Self.entryDetail,
-                    reanalysisService: PolishPreviewReanalysisService()
+                    previewDetail: Self.entryDetail
                 )
             }
         case .settings:
@@ -77,6 +105,25 @@ struct PolishPreviewView: View {
     }
 
     private static let completedEntryID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
+    /// The fixture meal after a correction lands: smaller rice portion, so
+    /// the card visibly moves from 695 kcal to 560 kcal.
+    private static func correctedEntry(id: UUID) -> Entry {
+        Entry(
+            id: id,
+            createdAt: Date().addingTimeInterval(-7_200),
+            summary: "Chicken rice bowl",
+            imageURL: nil,
+            proteinG: 57,
+            carbsG: 49,
+            fatG: 18,
+            caloriesKcal: 560,
+            localDay: Self.localDay,
+            status: .complete,
+            statusMessage: "Ready",
+            statusUpdatedAt: Date()
+        )
+    }
 
     private static let profile = Profile(
         userId: "00000000-0000-4000-8000-000000000001",
@@ -109,6 +156,8 @@ struct PolishPreviewView: View {
                 supabaseAnonKey: "local-preview",
                 sessionJWTProvider: { "local-preview" }
             ),
+            reanalysis: PolishPreviewCorrectionService.shared,
+            fetchEntryById: { id in correctedEntry(id: id) },
             preloadedEntries: [
                 Entry(
                     id: completedEntryID,
