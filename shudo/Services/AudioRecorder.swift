@@ -19,12 +19,37 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     @Published var errorMessage: String?
 
     nonisolated static let startTimeout: TimeInterval = 12
+    /// Right after a camera or picker dismissal the audio hardware is still
+    /// being handed back to the app, and activation or record() fails for a
+    /// beat before recovering. Retry a bounded number of times so those
+    /// transients never read as a dead microphone, while a genuinely broken
+    /// start still surfaces its real error quickly.
+    nonisolated static let maximumStartAttempts = 6
+    nonisolated static let startRetryDelay: TimeInterval = 0.4
+
+    /// Every AVAudioSession mutation runs on this one serial queue. Stops
+    /// used to deactivate via unordered fire-and-forget tasks, so a stale
+    /// deactivation could land after the next start's activation and kill
+    /// the new recording.
+    private nonisolated static let sessionQueue = DispatchQueue(
+        label: "shudo.audio-session",
+        qos: .userInitiated
+    )
 
     private var recorder: AVAudioRecorder?
     private var meterTimer: Timer?
     private var startedAt: Date?
+    private var systemAudioObservers: [NSObjectProtocol] = []
+
+    override init() {
+        super.init()
+        observeSystemAudioNotifications()
+    }
 
     deinit {
+        for token in systemAudioObservers {
+            NotificationCenter.default.removeObserver(token)
+        }
         // A recorder torn down without a finish path must not leave a live
         // timer firing forever. deinit can run off the main thread, and
         // Timer.invalidate is only safe on the installing run loop's thread,
@@ -69,7 +94,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
             // that can take seconds; running them on the main actor froze the
             // whole composer and made queued taps stop the recording the
             // moment it finally began.
-            let recorder = try await Self.withStartDeadline {
+            let recorder = try await Self.startRecorderRetryingWithinDeadline {
                 try Self.activateSessionAndStartRecorder(url: url)
             }
             guard !Task.isCancelled, isStartingRecording else {
@@ -94,7 +119,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
             recordedFileURL = nil
             errorMessage = (error as? AudioStartError)?.message
                 ?? "The microphone couldn’t start. Try again."
-            Self.deactivateSessionInBackground()
+            try? FileManager.default.removeItem(at: url)
             return false
         }
     }
@@ -130,12 +155,20 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         return recorder
     }
 
-    /// Runs the blocking start work off the main actor, bounded so a wedged
-    /// audio server surfaces as a retryable error instead of a stuck button.
-    /// Deliberately an unstructured race: a task group would await the
-    /// uncancellable blocked child before rethrowing, defeating the deadline.
-    private nonisolated static func withStartDeadline(
-        _ work: @escaping () throws -> AVAudioRecorder
+    /// Runs the blocking start work off the main actor, retrying transient
+    /// failures, bounded so a wedged audio server surfaces as a retryable
+    /// error instead of a stuck button. Attempts run serially on the session
+    /// queue with a session reset between tries: right after a camera or
+    /// picker dismissal the first activation often fails or record() returns
+    /// false while the hardware is handed back, and a one-shot start read as
+    /// a dead microphone. Deliberately an unstructured race: a task group
+    /// would await the uncancellable blocked child before rethrowing,
+    /// defeating the deadline.
+    nonisolated static func startRecorderRetryingWithinDeadline(
+        deadline: TimeInterval = startTimeout,
+        retryDelay: TimeInterval = startRetryDelay,
+        maximumAttempts: Int = maximumStartAttempts,
+        attempt: @escaping () throws -> AVAudioRecorder
     ) async throws -> AVAudioRecorder {
         let hasResumed = OSAllocatedUnfairLock(initialState: false)
         func claimResume() -> Bool {
@@ -145,28 +178,46 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
                 return true
             }
         }
+        func deadlineAlreadyFired() -> Bool {
+            hasResumed.withLock { $0 }
+        }
 
         return try await withCheckedThrowingContinuation { continuation in
             Task.detached(priority: .userInitiated) {
-                do {
-                    let recorder = try work()
-                    if claimResume() {
-                        continuation.resume(returning: recorder)
-                    } else {
-                        // The deadline already fired; stop the orphan so it
-                        // cannot keep recording invisibly.
-                        recorder.stop()
+                var attemptsRemaining = max(1, maximumAttempts)
+                while true {
+                    do {
+                        let recorder = try sessionQueue.sync { try attempt() }
+                        if claimResume() {
+                            continuation.resume(returning: recorder)
+                        } else {
+                            // The deadline already fired; stop the orphan so
+                            // it cannot keep recording invisibly.
+                            recorder.stop()
+                            deactivateSessionInBackground()
+                        }
+                        return
+                    } catch {
+                        attemptsRemaining -= 1
+                        // Reset the half-configured session so the next try
+                        // (or the next tap) starts clean.
                         deactivateSessionInBackground()
-                    }
-                } catch {
-                    if claimResume() {
-                        continuation.resume(throwing: error)
+                        if attemptsRemaining <= 0 {
+                            if claimResume() {
+                                continuation.resume(throwing: error)
+                            }
+                            return
+                        }
+                        try? await Task.sleep(
+                            nanoseconds: UInt64(retryDelay * 1_000_000_000)
+                        )
+                        if deadlineAlreadyFired() { return }
                     }
                 }
             }
             Task.detached {
                 try? await Task.sleep(
-                    nanoseconds: UInt64(startTimeout * 1_000_000_000)
+                    nanoseconds: UInt64(deadline * 1_000_000_000)
                 )
                 if claimResume() {
                     continuation.resume(throwing: AudioStartError(
@@ -178,7 +229,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     }
 
     private nonisolated static func deactivateSessionInBackground() {
-        Task.detached(priority: .utility) {
+        sessionQueue.async {
             try? AVAudioSession.sharedInstance().setActive(
                 false,
                 options: .notifyOthersOnDeactivation
@@ -188,6 +239,14 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
 
     func stopRecording() {
         finishActiveRecording(reachedMaximum: false)
+    }
+
+    /// Cancels an in-flight microphone warm-up without touching a finished
+    /// voice note. Media buttons call this before presenting the camera or a
+    /// picker so a warm-up can't complete into a live recording underneath a
+    /// system capture surface, which would then kill it and strand the UI.
+    func abortStartingRecording() {
+        isStartingRecording = false
     }
 
     func recordedData() -> Data? {
@@ -229,6 +288,49 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         guard self.recorder === recorder else { return }
         finishSystemEndedRecording(
             error: error?.localizedDescription ?? "Recording couldn’t be saved.",
+            duration: currentDuration(recorder: recorder),
+            reachedMaximum: false
+        )
+    }
+
+    private func observeSystemAudioNotifications() {
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        systemAudioObservers = [
+            center.addObserver(
+                forName: AVAudioSession.interruptionNotification,
+                object: session,
+                queue: .main
+            ) { [weak self] notification in
+                MainActor.assumeIsolated { self?.handleInterruption(notification) }
+            },
+            center.addObserver(
+                forName: AVAudioSession.mediaServicesWereResetNotification,
+                object: session,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleMediaServicesReset() }
+            }
+        ]
+    }
+
+    /// The system can end a recording without any delegate callback — a
+    /// phone call, Siri, or another capture session taking the input. Finish
+    /// honestly and keep the audio captured so far; stale isRecording state
+    /// otherwise turns the next mic tap into a silent no-op stop.
+    private func handleInterruption(_ notification: Notification) {
+        guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              AVAudioSession.InterruptionType(rawValue: rawType) == .began,
+              isRecording else { return }
+        finishActiveRecording(reachedMaximum: false)
+    }
+
+    /// After a media-server crash every audio object this class holds is
+    /// dead and the file under it is unreliable; drop the take and say so.
+    private func handleMediaServicesReset() {
+        guard isRecording else { return }
+        finishSystemEndedRecording(
+            error: "Recording was interrupted by a system audio reset. Record again.",
             duration: currentDuration(recorder: recorder),
             reachedMaximum: false
         )

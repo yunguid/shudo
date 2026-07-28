@@ -660,7 +660,13 @@ struct OnboardingView: View {
 
     @MainActor
     private func prepareProposal() async {
-        if audio.isRecording { audio.stopRecording() }
+        if audio.isRecording {
+            audio.stopRecording()
+        } else if audio.isStartingRecording {
+            // Nothing recorded yet; don't let the warm-up finish into a
+            // recording underneath the submission.
+            audio.abortStartingRecording()
+        }
         guard OnboardingCapturePolicy.canSubmit(
             text: context,
             hasAudio: hasAudio,

@@ -1031,7 +1031,13 @@ private struct EntryCorrectionSheet: View {
     /// sheet never has to hold the user through the network round-trip.
     private func submit() {
         guard canSubmit else { return }
-        if audio.isRecording { audio.stopRecording() }
+        if audio.isRecording {
+            audio.stopRecording()
+        } else if audio.isStartingRecording {
+            // Nothing recorded yet; don't let the warm-up finish into a
+            // recording underneath the submission.
+            audio.abortStartingRecording()
+        }
         errorMessage = nil
         let normalized = EntryCorrectionPolicy.normalized(context)
         let text = normalized.isEmpty ? nil : normalized

@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import os
 import Testing
 import UIKit
 @testable import shudo
@@ -11,6 +13,94 @@ struct CapturePipelineTests {
         #expect(AudioRecorder.remainingTime(after: 60) == 14 * 60)
         #expect(AudioRecorder.remainingTime(after: 15 * 60) == 0)
         #expect(AudioRecorder.remainingTime(after: 16 * 60) == 0)
+    }
+
+    private static func makeIdleRecorder() throws -> (AVAudioRecorder, URL) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("capture-test-\(UUID().uuidString)")
+            .appendingPathExtension("m4a")
+        let recorder = try AVAudioRecorder(url: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 24_000,
+            AVNumberOfChannelsKey: 1
+        ])
+        return (recorder, url)
+    }
+
+    /// The post-camera handoff makes the first activation attempts fail
+    /// transiently; the start must ride through them instead of reading as
+    /// a dead microphone.
+    @Test func microphoneStartRetriesTransientFailuresUntilOneSucceeds() async throws {
+        struct TransientFailure: Error {}
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+
+        let (recorder, url) = try Self.makeIdleRecorder()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let started = try await AudioRecorder.startRecorderRetryingWithinDeadline(
+            deadline: 5,
+            retryDelay: 0.02
+        ) {
+            let attempt = attempts.withLock { count -> Int in
+                count += 1
+                return count
+            }
+            guard attempt >= 3 else { throw TransientFailure() }
+            return recorder
+        }
+
+        #expect(started === recorder)
+        #expect(attempts.withLock { $0 } == 3)
+    }
+
+    @Test func microphoneStartSurfacesTheRealErrorAfterBoundedRetries() async {
+        struct PersistentFailure: Error {}
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+
+        do {
+            _ = try await AudioRecorder.startRecorderRetryingWithinDeadline(
+                deadline: 5,
+                retryDelay: 0.01,
+                maximumAttempts: 4
+            ) {
+                attempts.withLock { $0 += 1 }
+                throw PersistentFailure()
+            }
+            Issue.record("Expected the start to fail")
+        } catch {
+            #expect(error is PersistentFailure)
+        }
+        #expect(attempts.withLock { $0 } == 4)
+    }
+
+    @Test func microphoneStartDeadlineStillFiresWhenAnAttemptWedges() async {
+        struct WedgedFailure: Error {}
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        do {
+            _ = try await AudioRecorder.startRecorderRetryingWithinDeadline(
+                deadline: 0.3,
+                retryDelay: 0.01
+            ) {
+                Thread.sleep(forTimeInterval: 1.2)
+                throw WedgedFailure()
+            }
+            Issue.record("Expected the deadline to fire")
+        } catch {
+            // The deadline's own error, not the wedged attempt's.
+            #expect(!(error is WedgedFailure))
+            #expect(clock.now - started < .seconds(1))
+        }
+    }
+
+    @MainActor
+    @Test func abortingAWarmUpClearsTheStartingStateWithoutTouchingANote() {
+        let audio = AudioRecorder()
+        audio.abortStartingRecording()
+        #expect(!audio.isStartingRecording)
+        #expect(!audio.isRecording)
+        #expect(audio.recordedFileURL == nil)
     }
 
     @Test func resumeRequestUsesStableEntryIdAndSessionJWT() throws {

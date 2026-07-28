@@ -313,13 +313,13 @@ struct EntryComposerView: View {
             HStack(spacing: 12) {
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
                     mediaButton(title: "Camera", systemImage: "camera.fill") {
-                        if audio.isRecording { audio.stopRecording() }
+                        settleVoiceCapture()
                         isShowingCamera = true
                     }
                 }
 
                 mediaButton(title: "Photos", systemImage: "photo.on.rectangle") {
-                    if audio.isRecording { audio.stopRecording() }
+                    settleVoiceCapture()
                     isShowingPhotoPicker = true
                 }
 
@@ -332,7 +332,7 @@ struct EntryComposerView: View {
     /// photo slot, so it stays enabled while photos are full.
     private var scanButton: some View {
         Button {
-            if audio.isRecording { audio.stopRecording() }
+            settleVoiceCapture()
             isShowingBarcodeScanner = true
         } label: {
             Label("Scan", systemImage: "barcode.viewfinder")
@@ -468,6 +468,18 @@ struct EntryComposerView: View {
         return "Start recording"
     }
 
+    /// Ends voice capture before another surface takes the audio hardware:
+    /// a live recording is kept as the voice note; an in-flight warm-up is
+    /// aborted, since there is nothing to keep yet and a start finishing
+    /// underneath the camera gets killed by its capture session anyway.
+    private func settleVoiceCapture() {
+        if audio.isRecording {
+            audio.stopRecording()
+        } else if audio.isStartingRecording {
+            audio.abortStartingRecording()
+        }
+    }
+
     private func toggleRecording() async {
         // Ignore taps while the microphone warms up; a queued toggle used to
         // stop the recording the instant it finally started.
@@ -601,7 +613,7 @@ struct EntryComposerView: View {
     }
 
     private func submit() {
-        if audio.isRecording { audio.stopRecording() }
+        settleVoiceCapture()
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         // The user's own words lead; scanned label facts follow so the first
         // line stays a natural meal title and the model reads the labels as
