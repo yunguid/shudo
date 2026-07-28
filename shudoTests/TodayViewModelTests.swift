@@ -479,3 +479,120 @@ struct TodayViewModelTests {
         ))
     }
 }
+
+// MARK: - VM-owned entry submission (instant composer dismissal)
+
+/// The composer hands the payload over and dismisses immediately; these
+/// cover the model-side lifecycle that replaces the old await-in-sheet flow:
+/// optimistic card, retryable failure with the payload preserved, and
+/// local-only deletion of a meal that never reached the server.
+@MainActor
+struct EntrySubmissionLifecycleTests {
+
+    private static let profile = Profile(
+        userId: "00000000-0000-4000-8000-000000000042",
+        timezone: "America/New_York",
+        dailyMacroTarget: MacroTarget(
+            caloriesKcal: 2_400,
+            proteinG: 170,
+            carbsG: 260,
+            fatG: 70
+        )
+    )
+
+    /// Fails before any network I/O: the JWT provider throws, so createEntry
+    /// rejects deterministically and fast.
+    private static func offlineAPI() -> APIService {
+        APIService(
+            supabaseUrl: URL(string: "https://offline-test.invalid")!,
+            supabaseAnonKey: "offline",
+            sessionJWTProvider: { throw URLError(.notConnectedToInternet) }
+        )
+    }
+
+    private func makeViewModel() -> TodayViewModel {
+        TodayViewModel(
+            profile: Self.profile,
+            api: Self.offlineAPI(),
+            preloadedEntries: []
+        )
+    }
+
+    @Test func acceptedSubmissionShowsAnOptimisticCardImmediately() {
+        let vm = makeViewModel()
+        let id = vm.acceptEntrySubmission(
+            text: "Chicken bowl",
+            audioData: nil,
+            imageJPEG: nil
+        )
+
+        #expect(vm.entries.first?.id == id)
+        #expect(vm.entries.first?.status == .queued)
+        #expect(vm.entries.first?.statusMessage == "Uploading")
+        #expect(vm.entries.first?.summary == "Chicken bowl")
+        #expect(vm.isPendingSubmission(id))
+    }
+
+    @Test func failedSubmissionBecomesARetryableCardWithThePayloadPreserved() async {
+        let vm = makeViewModel()
+        let id = vm.acceptEntrySubmission(
+            text: "Chicken bowl",
+            audioData: nil,
+            imageJPEG: nil
+        )
+
+        await vm.activeSubmissionTask(entryId: id)?.value
+
+        let card = vm.entries.first { $0.id == id }
+        #expect(card?.status == .failed)
+        #expect(card?.statusMessage == TodayViewModel.submissionFailedStatusMessage)
+        #expect(card?.canRetry == true)
+        #expect(card?.canDelete == true)
+        #expect(vm.isPendingSubmission(id))
+        // A failed local card must not count toward the day's totals.
+        #expect(vm.todayTotals.caloriesKcal == 0)
+    }
+
+    @Test func retryReplaysThePreservedPayloadWithoutDroppingTheCard() async {
+        let vm = makeViewModel()
+        let id = vm.acceptEntrySubmission(
+            text: "Chicken bowl",
+            audioData: nil,
+            imageJPEG: nil
+        )
+        await vm.activeSubmissionTask(entryId: id)?.value
+
+        guard let failed = vm.entries.first(where: { $0.id == id }) else {
+            Issue.record("Expected the failed card to remain on the timeline")
+            return
+        }
+        await vm.retryEntry(failed)
+
+        // The retry flips the card back to uploading, then fails again
+        // offline — still present, still retryable, payload still held.
+        await vm.activeSubmissionTask(entryId: id)?.value
+        let card = vm.entries.first { $0.id == id }
+        #expect(card?.status == .failed)
+        #expect(vm.isPendingSubmission(id))
+    }
+
+    @Test func deletingAFailedLocalSubmissionRemovesItWithoutServerWork() async {
+        let vm = makeViewModel()
+        let id = vm.acceptEntrySubmission(
+            text: "Chicken bowl",
+            audioData: nil,
+            imageJPEG: nil
+        )
+        await vm.activeSubmissionTask(entryId: id)?.value
+
+        guard let failed = vm.entries.first(where: { $0.id == id }) else {
+            Issue.record("Expected the failed card to remain on the timeline")
+            return
+        }
+        await vm.deleteEntry(failed)
+
+        #expect(!vm.entries.contains { $0.id == id })
+        #expect(!vm.isPendingSubmission(id))
+        #expect(vm.errorMessage == nil)
+    }
+}

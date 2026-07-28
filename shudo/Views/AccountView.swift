@@ -709,7 +709,10 @@ struct AccountView: View {
 
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
         guard let item else { return }
-        Task {
+        // Decoding and orientation-normalizing a library photo can be tens of
+        // megapixels of CPU work; keep it off the main thread so the picker
+        // dismissal stays smooth.
+        Task.detached(priority: .userInitiated) {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self),
                       !data.isEmpty,
@@ -724,9 +727,10 @@ struct AccountView: View {
                         message: "Choose a valid photo under 25 MB and 50 megapixels"
                     )
                 }
+                let normalized = image.normalizedForDisplay()
                 await MainActor.run {
                     selectedPhotoItem = nil
-                    cropSource = ProfilePhotoCropSource(image: image.normalizedForDisplay())
+                    cropSource = ProfilePhotoCropSource(image: normalized)
                 }
             } catch {
                 await MainActor.run {
@@ -739,15 +743,22 @@ struct AccountView: View {
 
     private func saveProfilePhoto(_ image: UIImage) {
         guard !isSavingProfilePhoto else { return }
-        guard let jpegData = image.profilePhotoJPEG() else {
-            error = "That photo couldn’t be prepared. Try another image."
-            return
-        }
         isSavingProfilePhoto = true
         error = nil
         let oldPath = profile.avatarPath
         Task {
             do {
+                // JPEG encoding (up to four quality passes) is too heavy for
+                // the main thread right as the crop sheet dismisses.
+                guard let jpegData = await Task.detached(priority: .userInitiated, operation: {
+                    image.profilePhotoJPEG()
+                }).value else {
+                    await MainActor.run {
+                        isSavingProfilePhoto = false
+                        error = "That photo couldn’t be prepared. Try another image."
+                    }
+                    return
+                }
                 let updated = try await service.uploadProfilePhoto(jpegData, replacing: oldPath)
                 await MainActor.run {
                     profile = updated

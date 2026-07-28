@@ -567,6 +567,10 @@ final class TodayViewModel: ObservableObject {
         correctionTasks[entryId]
     }
 
+    func activeSubmissionTask(entryId: UUID) -> Task<Void, Never>? {
+        submissionTasks[entryId]
+    }
+
     private func runCorrection(entryId: UUID, payload: EntryCorrectionSubmission) async {
         do {
             let result = try await reanalysis.correctEntry(
