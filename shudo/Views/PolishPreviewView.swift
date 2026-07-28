@@ -87,7 +87,8 @@ struct PolishPreviewView: View {
                 AccountView(
                     previewProfile: Self.profile,
                     profilePhoto: Self.profilePhoto,
-                    dailyTotals: Self.adherenceTotals
+                    dailyTotals: Self.adherenceTotals,
+                    weeklySummaries: Self.weeklySummaries
                 )
             }
         case .heatmap:
@@ -295,6 +296,77 @@ struct PolishPreviewView: View {
         formatter.timeZone = TimeZone(identifier: profile.timezone)
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
+    }
+
+    /// Three stored weeks so the insights card's paging, per-week numbers,
+    /// and the deeper suggestion style are all visible offline.
+    private static var weeklySummaries: [WeeklyInsightSummary] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let anchorWeekStart = calendar.date(
+            byAdding: .day,
+            value: -6,
+            to: calendar.startOfDay(for: Date())
+        ) ?? Date()
+        func week(_ offset: Int) -> (start: Date, end: Date) {
+            let start = calendar.date(
+                byAdding: .day,
+                value: -7 * offset,
+                to: anchorWeekStart
+            ) ?? anchorWeekStart
+            let end = calendar.date(byAdding: .day, value: 6, to: start) ?? start
+            return (start, end)
+        }
+        let latest = week(0)
+        let prior = week(1)
+        let earliest = week(2)
+        return [
+            WeeklyInsightSummary(
+                weekStart: latest.start,
+                weekEnd: latest.end,
+                headline: "Protein held steady while weekends ran hot",
+                narrative: "Weekdays landed within a hundred kilocalories of target. Both over-target days were Friday and Saturday, and both included two evening drinks plus a late snack.",
+                repeatedFoods: [
+                    WeeklyRepeatedFood(name: "Chicken rice bowl", count: 4),
+                    WeeklyRepeatedFood(name: "Greek yogurt with berries", count: 3)
+                ],
+                patterns: [
+                    "Calories averaged 240 higher on weekend days than weekdays",
+                    "Every day that started with a protein-forward breakfast finished within target"
+                ],
+                suggestions: [
+                    "Cap Friday and Saturday at one drink — that alone closes most of the weekend gap",
+                    "Swap the late-night trail mix for the yogurt you already like: about 180 kcal less, 12 g more protein"
+                ]
+            ),
+            WeeklyInsightSummary(
+                weekStart: prior.start,
+                weekEnd: prior.end,
+                headline: "Consistent logging, carbs drifting under",
+                narrative: "Six of seven days logged. Carbs came in under target on five days while fat ran slightly over, mostly from takeout lunches.",
+                repeatedFoods: [
+                    WeeklyRepeatedFood(name: "Chipotle bowl", count: 3)
+                ],
+                patterns: [
+                    "Lunch was the least consistent meal — three takeout days ran 20 g over on fat"
+                ],
+                suggestions: [
+                    "Order the Chipotle bowl with half cheese and add rice — trades 8 g fat for the carbs you're missing"
+                ]
+            ),
+            WeeklyInsightSummary(
+                weekStart: earliest.start,
+                weekEnd: earliest.end,
+                headline: "Strong start to the streak",
+                narrative: "First full week of logging. Targets were met four of six logged days.",
+                patterns: [
+                    "Dinner portions were the main variable on off-target days"
+                ],
+                suggestions: [
+                    "Log dinner before eating on busy nights — estimates run closer when the plate is in front of you"
+                ]
+            )
+        ]
     }
 }
 #endif

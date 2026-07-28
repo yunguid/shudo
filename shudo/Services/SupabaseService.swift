@@ -656,7 +656,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         .sorted { $0.targetDay < $1.targetDay }
     }
 
-    func fetchLatestWeeklySummary() async throws -> WeeklyInsightSummary? {
+    func fetchWeeklySummaries(limit: Int) async throws -> [WeeklyInsightSummary] {
         let jwt = try await currentJWT()
         let userId = try currentUserId()
         var components = URLComponents(
@@ -671,7 +671,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
             URLQueryItem(name: "user_id", value: "eq.\(userId)"),
             URLQueryItem(name: "status", value: "eq.complete"),
             URLQueryItem(name: "order", value: "week_start.desc"),
-            URLQueryItem(name: "limit", value: "1")
+            URLQueryItem(name: "limit", value: "\(max(1, limit))")
         ]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "GET"
@@ -693,41 +693,45 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
                 message: "Couldn’t load weekly insights"
             )
         }
-        return try Self.parseWeeklySummary(data)
+        return try Self.parseWeeklySummaries(data)
     }
 
     static func parseWeeklySummary(_ data: Data) throws -> WeeklyInsightSummary? {
+        try parseWeeklySummaries(data).first
+    }
+
+    static func parseWeeklySummaries(_ data: Data) throws -> [WeeklyInsightSummary] {
         guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw ServiceError.parseError(message: "Invalid weekly summary response")
         }
-        guard let object = objects.first else { return nil }
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd"
-        guard let startText = object["week_start"] as? String,
-              let endText = object["week_end"] as? String,
-              let weekStart = formatter.date(from: startText),
-              let weekEnd = formatter.date(from: endText) else {
-            throw ServiceError.parseError(message: "Weekly summary dates were invalid")
+        // Malformed rows are skipped rather than sinking the whole history.
+        return objects.compactMap { object in
+            guard let startText = object["week_start"] as? String,
+                  let endText = object["week_end"] as? String,
+                  let weekStart = formatter.date(from: startText),
+                  let weekEnd = formatter.date(from: endText) else { return nil }
+            let repeatedFoods: [WeeklyRepeatedFood] =
+                (object["repeated_foods"] as? [[String: Any]] ?? []).compactMap { item in
+                    guard let name = item["name"] as? String, !name.isEmpty else { return nil }
+                    let count = Int(Self.toDouble(item["count"]))
+                    guard count > 0 else { return nil }
+                    return WeeklyRepeatedFood(name: name, count: count)
+                }
+            return WeeklyInsightSummary(
+                weekStart: weekStart,
+                weekEnd: weekEnd,
+                headline: object["headline"] as? String ?? "",
+                narrative: object["narrative"] as? String ?? "",
+                repeatedFoods: repeatedFoods,
+                patterns: object["patterns"] as? [String] ?? [],
+                suggestions: object["suggestions"] as? [String] ?? []
+            )
         }
-        let repeatedFoods: [WeeklyRepeatedFood] =
-            (object["repeated_foods"] as? [[String: Any]] ?? []).compactMap { item in
-            guard let name = item["name"] as? String, !name.isEmpty else { return nil }
-            let count = Int(Self.toDouble(item["count"]))
-            guard count > 0 else { return nil }
-            return WeeklyRepeatedFood(name: name, count: count)
-            }
-        return WeeklyInsightSummary(
-            weekStart: weekStart,
-            weekEnd: weekEnd,
-            headline: object["headline"] as? String ?? "",
-            narrative: object["narrative"] as? String ?? "",
-            repeatedFoods: repeatedFoods,
-            patterns: object["patterns"] as? [String] ?? [],
-            suggestions: object["suggestions"] as? [String] ?? []
-        )
     }
 
     func localDayString(for date: Date, timezone: String) -> String {

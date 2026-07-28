@@ -63,6 +63,28 @@ export type WeeklyMetrics = {
 
 export type RepeatedFood = { name: string; count: number };
 
+/// One logged day in model-readable form: which weekday it was, how the
+/// calories landed against that day's target, and the meal titles. This is
+/// what lets the narrative name concrete levers ("both over-target days
+/// were weekends and included evening drinks") instead of generic advice.
+export type WeeklyDayDigest = {
+  local_day: string;
+  weekday: string;
+  calories_kcal: number;
+  target_calories_kcal: number;
+  meals: string[];
+};
+
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_DIGEST_MEAL_LIMIT = 6;
+const DAY_DIGEST_TITLE_LIMIT = 60;
+
+function weekdayName(localDay: string): string {
+  const date = new Date(`${localDay}T00:00:00.000Z`);
+  const day = date.getUTCDay();
+  return Number.isFinite(day) ? WEEKDAY_NAMES[day] ?? "" : "";
+}
+
 function numeric(value: number | string): number {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -118,6 +140,7 @@ export function aggregateWeeklyEntries(
   adherence: WeeklyMetrics;
   repeatedFoods: RepeatedFood[];
   foodCandidates: RepeatedFood[];
+  dayDigests: WeeklyDayDigest[];
 } {
   const days = new Map<string, {
     calories: number;
@@ -125,6 +148,7 @@ export function aggregateWeeklyEntries(
     carbs: number;
     fat: number;
   }>();
+  const dayMeals = new Map<string, string[]>();
   const foodCounts = new Map<string, { name: string; count: number }>();
 
   for (const entry of entries) {
@@ -139,6 +163,17 @@ export function aggregateWeeklyEntries(
     totals.carbs += numeric(entry.carbs_g);
     totals.fat += numeric(entry.fat_g);
     days.set(entry.local_day, totals);
+
+    const title = entry.title?.trim();
+    if (title) {
+      const meals = dayMeals.get(entry.local_day) ?? [];
+      if (meals.length < DAY_DIGEST_MEAL_LIMIT) {
+        meals.push(
+          Array.from(title).slice(0, DAY_DIGEST_TITLE_LIMIT).join(""),
+        );
+        dayMeals.set(entry.local_day, meals);
+      }
+    }
 
     const items = Array.isArray(entry.items) ? entry.items : [];
     const names = new Set<string>();
@@ -222,7 +257,21 @@ export function aggregateWeeklyEntries(
   const repeatedFoods = foodCandidates
     .filter((food) => food.count >= 2)
     .slice(0, 8);
-  return { adherence, repeatedFoods, foodCandidates };
+  const dayDigests: WeeklyDayDigest[] = [...days.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([localDay, totals]) => ({
+      local_day: localDay,
+      weekday: weekdayName(localDay),
+      calories_kcal: rounded(totals.calories),
+      target_calories_kcal: rounded(numeric(
+        (effectiveTarget(localDay).calories_kcal as
+          | number
+          | string
+          | undefined) ?? 0,
+      )),
+      meals: dayMeals.get(localDay) ?? [],
+    }));
+  return { adherence, repeatedFoods, foodCandidates, dayDigests };
 }
 
 function boundedString(value: unknown, label: string, max: number): string {
@@ -278,6 +327,7 @@ export async function writeWeeklyNarrative(
   adherence: WeeklyMetrics,
   repeatedFoods: RepeatedFood[],
   foodCandidates: RepeatedFood[] = repeatedFoods,
+  dayDigests: WeeklyDayDigest[] = [],
 ): Promise<{
   headline: string;
   narrative: string;
@@ -312,12 +362,15 @@ export async function writeWeeklyNarrative(
             "Do not recalculate or contradict the metrics. Mention incomplete logging plainly.",
             "The average_* metrics are averages over the days_logged days that have entries, not over all 7 calendar days; when days_logged is under 7, describe them as averages for logged days only.",
             "Use the bounded food candidate list to notice obviously similar meal patterns (for example variations of a wrap or bowl), but cluster conservatively and never invent a frequency.",
-            "Offer practical food-logging or meal-pattern suggestions only. Do not diagnose, prescribe treatment, or make medical claims.",
+            "The per-day rows give each logged day's weekday, calories against that day's target, and meal titles. Use them to surface day-of-week patterns (for example weekend days running over) and recurring calorie-dense items visible in the titles (for example drinks or desserts).",
+            "Ground every suggestion in a lever visible in the per-day rows, repeated foods, or metrics, and make it concrete and behavioral — a specific swap, cap, or keep the person can try next week (for example capping weekend drinks at one, or swapping a late snack for a food they already log). Quantify the expected effect only when the supplied numbers support it.",
+            "Offer practical food-logging or meal-pattern suggestions only. Do not diagnose, prescribe treatment, or make medical claims. Frame caps and swaps as options, never judgments.",
             WEEKLY_COPY_INSTRUCTION,
             `Week starting: ${weekStart}`,
             `Computed adherence: ${JSON.stringify(adherence)}`,
             `Repeated foods: ${JSON.stringify(repeatedFoods)}`,
             `Food candidates: ${JSON.stringify(foodCandidates)}`,
+            `Per-day log: ${JSON.stringify(dayDigests)}`,
           ].join("\n"),
         }],
       }],

@@ -55,17 +55,19 @@ async function generateOne(
     ]);
     if (entriesResult.error) throw entriesResult.error;
     if (targetsResult.error) throw targetsResult.error;
-    const { adherence, repeatedFoods, foodCandidates } = aggregateWeeklyEntries(
-      (entriesResult.data ?? []) as WeeklyEntry[],
-      (targetsResult.data ?? []) as WeeklyTarget[],
-      profile.daily_macro_target ?? {},
-    );
+    const { adherence, repeatedFoods, foodCandidates, dayDigests } =
+      aggregateWeeklyEntries(
+        (entriesResult.data ?? []) as WeeklyEntry[],
+        (targetsResult.data ?? []) as WeeklyTarget[],
+        profile.daily_macro_target ?? {},
+      );
     const narrative = await writeWeeklyNarrative(
       profile.user_id,
       weekStart,
       adherence,
       repeatedFoods,
       foodCandidates,
+      dayDigests,
     );
     const { data: updated, error: updateError } = await admin
       .from("weekly_summaries")

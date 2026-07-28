@@ -160,3 +160,55 @@ Deno.test("weekly adherence uses the target effective on each logged day", () =>
   assertEquals(aggregate.adherence.target_calories_kcal, 2250);
   assertEquals(aggregate.adherence.target_protein_g, 160);
 });
+
+Deno.test("day digests carry weekday, calories vs effective target, and bounded meal titles", () => {
+  const longTitle = "A".repeat(80);
+  const aggregate = aggregateWeeklyEntries([
+    {
+      local_day: "2026-07-18", // Saturday
+      title: "Burger and two beers",
+      items: [],
+      calories_kcal: 2900,
+      protein_g: 120,
+      carbs_g: 260,
+      fat_g: 110,
+    },
+    {
+      local_day: "2026-07-18",
+      title: longTitle,
+      items: [],
+      calories_kcal: 300,
+      protein_g: 10,
+      carbs_g: 30,
+      fat_g: 12,
+    },
+    {
+      local_day: "2026-07-13", // Monday
+      title: "  ",
+      items: [],
+      calories_kcal: 2000,
+      protein_g: 140,
+      carbs_g: 200,
+      fat_g: 70,
+    },
+  ], [{
+    target_day: "2026-07-01",
+    calories_kcal: 2100,
+    protein_g: 150,
+    carbs_g: 250,
+    fat_g: 70,
+  }]);
+
+  assertEquals(aggregate.dayDigests.length, 2);
+  const monday = aggregate.dayDigests[0];
+  assertEquals(monday.local_day, "2026-07-13");
+  assertEquals(monday.weekday, "Mon");
+  assertEquals(monday.meals, []); // blank titles are skipped
+  const saturday = aggregate.dayDigests[1];
+  assertEquals(saturday.weekday, "Sat");
+  assertEquals(saturday.calories_kcal, 3200);
+  assertEquals(saturday.target_calories_kcal, 2100);
+  assertEquals(saturday.meals.length, 2);
+  assertEquals(saturday.meals[0], "Burger and two beers");
+  assertEquals(saturday.meals[1], "A".repeat(60)); // titles bounded to 60 chars
+});

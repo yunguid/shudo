@@ -47,11 +47,27 @@ struct WeeklyInsightSummary: Equatable, Sendable {
 }
 
 protocol WeeklySummaryProviding {
-    func fetchLatestWeeklySummary() async throws -> WeeklyInsightSummary?
+    /// Stored weekly summaries, newest first, so past weeks stay browsable.
+    func fetchWeeklySummaries(limit: Int) async throws -> [WeeklyInsightSummary]
+}
+
+extension WeeklySummaryProviding {
+    func fetchLatestWeeklySummary() async throws -> WeeklyInsightSummary? {
+        try await fetchWeeklySummaries(limit: 1).first
+    }
 }
 
 struct EmptyWeeklySummaryProvider: WeeklySummaryProviding {
-    func fetchLatestWeeklySummary() async throws -> WeeklyInsightSummary? { nil }
+    func fetchWeeklySummaries(limit: Int) async throws -> [WeeklyInsightSummary] { [] }
+}
+
+/// Fixed summaries for previews and tests.
+struct StaticWeeklySummaryProvider: WeeklySummaryProviding {
+    let summaries: [WeeklyInsightSummary]
+
+    func fetchWeeklySummaries(limit: Int) async throws -> [WeeklyInsightSummary] {
+        Array(summaries.prefix(limit))
+    }
 }
 
 enum AccountDeletionPolicy {
@@ -238,6 +254,72 @@ enum NutritionProgressPolicy {
     static func weekdayRow(for date: Date, calendar: Calendar) -> Int {
         let weekday = calendar.component(.weekday, from: date)
         return (weekday - calendar.firstWeekday + 7) % 7
+    }
+
+    /// Averages for the exact period a stored weekly summary covers, so its
+    /// narrative can sit next to the verifiable numbers behind it. Matches
+    /// `nutrientTrendWeeks` semantics: averages over logged days only, with
+    /// each day scored against the target in force that day. Summary dates
+    /// are server local-day strings parsed at UTC midnight, so day keys are
+    /// rebuilt with the same UTC formatting.
+    static func weeklyBreakdown(
+        for summary: WeeklyInsightSummary,
+        totals: [DailyNutritionTotal],
+        fallbackTarget: MacroTarget,
+        targetHistory: [DailyMacroTargetSnapshot]
+    ) -> NutrientTrendWeek? {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        let dayCount = (calendar.dateComponents(
+            [.day],
+            from: summary.weekStart,
+            to: summary.weekEnd
+        ).day ?? 6) + 1
+        guard (1...7).contains(dayCount) else { return nil }
+
+        let totalsByDay = totals.reduce(into: [String: DailyNutritionTotal]()) { result, total in
+            result[total.localDay] = total
+        }
+
+        var actual = NutrientAccumulator()
+        var goals = NutrientAccumulator()
+        var loggedDayCount = 0
+        for dayOffset in 0..<dayCount {
+            guard let date = calendar.date(
+                byAdding: .day,
+                value: dayOffset,
+                to: summary.weekStart
+            ) else { continue }
+            let localDay = formatter.string(from: date)
+            guard let total = totalsByDay[localDay],
+                  total.entryCount > 0,
+                  actual.canInclude(total) else { continue }
+            let effectiveTarget = effectiveTarget(
+                on: localDay,
+                history: targetHistory,
+                fallback: fallbackTarget
+            )
+            guard goals.canInclude(effectiveTarget) else { continue }
+            actual.add(total)
+            goals.add(effectiveTarget)
+            loggedDayCount += 1
+        }
+
+        return NutrientTrendWeek(
+            startDate: summary.weekStart,
+            endDate: summary.weekEnd,
+            startLocalDay: formatter.string(from: summary.weekStart),
+            endLocalDay: formatter.string(from: summary.weekEnd),
+            loggedDayCount: loggedDayCount,
+            average: actual.average(dividingBy: loggedDayCount),
+            averageTarget: goals.average(dividingBy: loggedDayCount)
+        )
     }
 
     static func nutrientTrendWeeks(

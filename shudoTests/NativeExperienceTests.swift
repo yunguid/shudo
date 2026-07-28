@@ -586,3 +586,82 @@ extension NativeExperienceTests {
         #expect(cells.first?.total == nil)
     }
 }
+
+// MARK: - Weekly insight history
+
+extension NativeExperienceTests {
+    @Test func weeklyBreakdownAveragesTheSummaryPeriodOverLoggedDaysOnly() throws {
+        let formatter = ISO8601DateFormatter()
+        let summary = WeeklyInsightSummary(
+            weekStart: try #require(formatter.date(from: "2026-07-13T00:00:00Z")),
+            weekEnd: try #require(formatter.date(from: "2026-07-19T00:00:00Z")),
+            headline: "Week",
+            patterns: [],
+            suggestions: []
+        )
+        let totals = [
+            DailyNutritionTotal(
+                localDay: "2026-07-13",
+                proteinG: 150,
+                carbsG: 250,
+                fatG: 70,
+                caloriesKcal: 2_000,
+                entryCount: 2
+            ),
+            DailyNutritionTotal(
+                localDay: "2026-07-18",
+                proteinG: 170,
+                carbsG: 270,
+                fatG: 80,
+                caloriesKcal: 2_400,
+                entryCount: 3
+            ),
+            // Outside the summary period; must not count.
+            DailyNutritionTotal(
+                localDay: "2026-07-20",
+                proteinG: 999,
+                carbsG: 999,
+                fatG: 999,
+                caloriesKcal: 9_999,
+                entryCount: 1
+            )
+        ]
+
+        let week = try #require(NutritionProgressPolicy.weeklyBreakdown(
+            for: summary,
+            totals: totals,
+            fallbackTarget: .defaultDaily,
+            targetHistory: []
+        ))
+
+        #expect(week.loggedDayCount == 2)
+        #expect(week.average?.caloriesKcal == 2_200)
+        #expect(week.average?.proteinG == 160)
+        #expect(week.averageTarget?.caloriesKcal == MacroTarget.defaultDaily.caloriesKcal)
+    }
+
+    @Test func latestWeeklySummaryIsTheFirstOfTheStoredList() async throws {
+        let formatter = ISO8601DateFormatter()
+        let newest = WeeklyInsightSummary(
+            weekStart: try #require(formatter.date(from: "2026-07-13T00:00:00Z")),
+            weekEnd: try #require(formatter.date(from: "2026-07-19T00:00:00Z")),
+            headline: "Newest",
+            patterns: [],
+            suggestions: []
+        )
+        let older = WeeklyInsightSummary(
+            weekStart: try #require(formatter.date(from: "2026-07-06T00:00:00Z")),
+            weekEnd: try #require(formatter.date(from: "2026-07-12T00:00:00Z")),
+            headline: "Older",
+            patterns: [],
+            suggestions: []
+        )
+        let provider = StaticWeeklySummaryProvider(summaries: [newest, older])
+
+        let latest = try await provider.fetchLatestWeeklySummary()
+        #expect(latest == newest)
+
+        let all = try await provider.fetchWeeklySummaries(limit: 12)
+        #expect(all.count == 2)
+    }
+}

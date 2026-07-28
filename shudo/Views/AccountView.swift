@@ -26,7 +26,7 @@ struct AccountView: View {
     @State private var targetDraft: MacroTargetDraft
     @State private var dailyTotals: [DailyNutritionTotal] = []
     @State private var targetHistory: [DailyMacroTargetSnapshot] = []
-    @State private var weeklySummary: WeeklyInsightSummary?
+    @State private var weeklySummaries: [WeeklyInsightSummary] = []
     @State private var weeklySummaryError: String?
     @State private var isLoading = true
     @State private var isLoadingWeeklySummary = true
@@ -75,7 +75,8 @@ struct AccountView: View {
     init(
         previewProfile: Profile,
         profilePhoto: UIImage,
-        dailyTotals: [DailyNutritionTotal]
+        dailyTotals: [DailyNutritionTotal],
+        weeklySummaries: [WeeklyInsightSummary] = []
     ) {
         _profile = State(initialValue: previewProfile)
         _targetDraft = State(initialValue: MacroTargetDraft(target: previewProfile.dailyMacroTarget))
@@ -83,8 +84,9 @@ struct AccountView: View {
         _profilePhoto = State(initialValue: profilePhoto)
         _isLoading = State(initialValue: false)
         _isLoadingWeeklySummary = State(initialValue: false)
+        _weeklySummaries = State(initialValue: weeklySummaries)
         service = SupabaseService()
-        weeklySummaryProvider = EmptyWeeklySummaryProvider()
+        weeklySummaryProvider = StaticWeeklySummaryProvider(summaries: weeklySummaries)
         accountDeletionService = PolishPreviewAccountDeletionService()
         onProfileUpdated = { _ in }
         loadsRemotely = false
@@ -111,7 +113,10 @@ struct AccountView: View {
                     timezone: profile.timezone
                 )
                 WeeklyInsightsView(
-                    summary: weeklySummary,
+                    summaries: weeklySummaries,
+                    totals: dailyTotals,
+                    fallbackTarget: profile.dailyMacroTarget,
+                    targetHistory: targetHistory,
                     isLoading: isLoadingWeeklySummary,
                     errorMessage: weeklySummaryError,
                     onRetry: { Task { await loadWeeklySummary() } }
@@ -687,7 +692,9 @@ struct AccountView: View {
         isLoadingWeeklySummary = true
         weeklySummaryError = nil
         do {
-            weeklySummary = try await weeklySummaryProvider.fetchLatestWeeklySummary()
+            weeklySummaries = try await weeklySummaryProvider.fetchWeeklySummaries(
+                limit: NutritionProgressPolicy.trendWeekCount
+            )
         } catch {
             weeklySummaryError = "Weekly insights couldn’t be loaded."
         }
