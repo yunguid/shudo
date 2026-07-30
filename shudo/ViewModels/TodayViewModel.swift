@@ -7,18 +7,40 @@ import Foundation
 struct EntryCorrectionSubmission: Equatable {
     let text: String?
     let audioData: Data?
+    let imageJPEG: Data?
     let clientRequestId: UUID
+
+    init(
+        text: String?,
+        audioData: Data?,
+        imageJPEG: Data? = nil,
+        clientRequestId: UUID
+    ) {
+        self.text = text
+        self.audioData = audioData
+        self.imageJPEG = imageJPEG
+        self.clientRequestId = clientRequestId
+    }
+
+    var updatesEstimate: Bool {
+        audioData != nil || text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
 }
 
 enum EntryCorrectionPresentation {
     static let processingMessage = "Updating nutrition estimate"
+    static let savingPhotoMessage = "Saving meal photo"
     static let rollbackMessage = "The meal update failed. Your previous estimate was restored."
-    static let failureHeadline = "Update failed — previous estimate kept"
+    static let failureHeadline = "Update failed — meal kept"
 
-    static func processingEntry(from entry: Entry, at date: Date = Date()) -> Entry {
+    static func processingEntry(
+        from entry: Entry,
+        updatesEstimate: Bool = true,
+        at date: Date = Date()
+    ) -> Entry {
         var updated = entry
         updated.status = .analyzing
-        updated.statusMessage = processingMessage
+        updated.statusMessage = updatesEstimate ? processingMessage : savingPhotoMessage
         updated.errorMessage = nil
         updated.analysisPreview = nil
         updated.statusUpdatedAt = date
@@ -609,7 +631,10 @@ final class TodayViewModel: ObservableObject {
         if let index = entries.firstIndex(where: { $0.id == entryId }) {
             guard entries[index].status == .complete else { return false }
             correctionSnapshots[entryId] = entries[index]
-            entries[index] = EntryCorrectionPresentation.processingEntry(from: entries[index])
+            entries[index] = EntryCorrectionPresentation.processingEntry(
+                from: entries[index],
+                updatesEstimate: submission.updatesEstimate
+            )
         }
         failedCorrections[entryId] = nil
         correctionResults[entryId] = nil
@@ -650,6 +675,8 @@ final class TodayViewModel: ObservableObject {
                 id: entryId,
                 text: payload.text,
                 audioData: payload.audioData,
+                imageJPEG: payload.imageJPEG,
+                usesImageForEstimate: payload.updatesEstimate,
                 clientRequestId: payload.clientRequestId
             )
             guard result.status != .failed else {
@@ -1122,6 +1149,7 @@ final class TodayViewModel: ObservableObject {
     nonisolated static func mergedEntriesAfterLoad(
         fetched: [Entry],
         inFlightCorrectionIds: Set<UUID>,
+        memoryOnlyUpdateIds: Set<UUID> = [],
         correctionResults: [UUID: Entry],
         at date: Date = Date()
     ) -> CorrectionLoadMerge {
@@ -1144,6 +1172,7 @@ final class TodayViewModel: ObservableObject {
                 refreshedSnapshots[id] = merged[index]
                 merged[index] = EntryCorrectionPresentation.processingEntry(
                     from: merged[index],
+                    updatesEstimate: !memoryOnlyUpdateIds.contains(id),
                     at: date
                 )
             }
@@ -1159,6 +1188,11 @@ final class TodayViewModel: ObservableObject {
         let merge = Self.mergedEntriesAfterLoad(
             fetched: entries,
             inFlightCorrectionIds: Set(correctionTasks.keys),
+            memoryOnlyUpdateIds: Set(
+                correctionPayloads.compactMap { id, payload in
+                    payload.updatesEstimate ? nil : id
+                }
+            ),
             correctionResults: correctionResults
         )
         entries = merge.entries

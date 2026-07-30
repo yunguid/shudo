@@ -449,11 +449,29 @@ enum EntryCorrectionPolicy {
         canSubmit(text: value, hasAudio: false, isSubmitting: isSubmitting)
     }
 
-    static func canSubmit(text: String, hasAudio: Bool, isSubmitting: Bool = false) -> Bool {
+    static func canSubmit(
+        text: String,
+        hasAudio: Bool,
+        hasImage: Bool = false,
+        isPreparingImage: Bool = false,
+        isSubmitting: Bool = false
+    ) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return !isSubmitting
-            && (hasAudio || !trimmed.isEmpty)
+            && !isPreparingImage
+            && (hasAudio || hasImage || !trimmed.isEmpty)
             && trimmed.count <= maximumCharacters
+    }
+
+    static func usesPhotoForEstimate(text: String, hasAudio: Bool) -> Bool {
+        hasAudio || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func removingPhoto<Element>(at offset: Int, from photos: [Element]) -> [Element] {
+        guard photos.indices.contains(offset) else { return photos }
+        var updated = photos
+        updated.remove(at: offset)
+        return updated
     }
 
     static func audioIsWithinUploadLimit(_ byteCount: Int) -> Bool {

@@ -18,6 +18,8 @@ private final class CorrectionServiceFake: EntryReanalysisServing {
         let entryId: UUID
         let text: String?
         let audioByteCount: Int?
+        let imageByteCount: Int?
+        let usesImageForEstimate: Bool
         let clientRequestId: UUID
     }
 
@@ -41,12 +43,16 @@ private final class CorrectionServiceFake: EntryReanalysisServing {
         id: UUID,
         text: String?,
         audioData: Data?,
+        imageJPEG: Data?,
+        usesImageForEstimate: Bool,
         clientRequestId: UUID
     ) async throws -> APIService.ReanalysisResult {
         corrections.append(RecordedCorrection(
             entryId: id,
             text: text,
             audioByteCount: audioData?.count,
+            imageByteCount: imageJPEG?.count,
+            usesImageForEstimate: usesImageForEstimate,
             clientRequestId: clientRequestId
         ))
         let step = script.isEmpty ? Step.succeed : script.removeFirst()
@@ -255,6 +261,77 @@ struct EntryCorrectionFlowTests {
             #expect(vm.entries.first?.status == .complete)
             #expect(vm.entries.first?.caloriesKcal == 420)
         }
+    }
+
+    @Test func memoryPhotoKeepsNutritionAndRetriesThePreservedPayload() async throws {
+        let meal = makeEntry(summary: "Birthday dinner", calories: 695)
+        let service = CorrectionServiceFake()
+        service.script = [.fail(URLError(.notConnectedToInternet)), .succeed]
+        let refreshed = makeEntry(
+            id: meal.id,
+            summary: meal.summary,
+            calories: meal.caloriesKcal,
+            updatedAt: Date()
+        )
+        let vm = makeViewModel(entries: [meal], service: service) { _ in refreshed }
+        let requestID = UUID()
+        let photo = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        let submission = EntryCorrectionSubmission(
+            text: nil,
+            audioData: nil,
+            imageJPEG: photo,
+            clientRequestId: requestID
+        )
+
+        #expect(!submission.updatesEstimate)
+        #expect(vm.submitCorrection(entryId: meal.id, submission: submission))
+        #expect(vm.entries.first?.statusMessage == EntryCorrectionPresentation.savingPhotoMessage)
+        await vm.activeCorrectionTask(entryId: meal.id)?.value
+        #expect(vm.entries.first?.caloriesKcal == 695)
+        #expect(vm.failedCorrections[meal.id] != nil)
+
+        vm.retryCorrection(entryId: meal.id)
+        await vm.activeCorrectionTask(entryId: meal.id)?.value
+
+        #expect(service.corrections.count == 2)
+        #expect(service.corrections.allSatisfy { $0.clientRequestId == requestID })
+        #expect(service.corrections.allSatisfy { $0.imageByteCount == photo.count })
+        #expect(service.corrections.allSatisfy { !$0.usesImageForEstimate })
+        #expect(vm.entries.first?.caloriesKcal == 695)
+        #expect(vm.entries.first?.status == .complete)
+    }
+
+    @Test func photoAndCorrectionAreRetriedTogetherAsEstimateEvidence() async throws {
+        let meal = makeEntry(summary: "Chicken bowl", calories: 500)
+        let service = CorrectionServiceFake()
+        service.script = [.fail(URLError(.networkConnectionLost)), .succeed]
+        let corrected = makeEntry(
+            id: meal.id,
+            summary: meal.summary,
+            calories: 420,
+            updatedAt: Date()
+        )
+        let vm = makeViewModel(entries: [meal], service: service) { _ in corrected }
+        let requestID = UUID()
+        let submission = EntryCorrectionSubmission(
+            text: "The photo shows half the rice",
+            audioData: Data([0x01, 0x02]),
+            imageJPEG: Data([0xFF, 0xD8, 0xFF, 0xD9]),
+            clientRequestId: requestID
+        )
+
+        #expect(submission.updatesEstimate)
+        #expect(vm.submitCorrection(entryId: meal.id, submission: submission))
+        await vm.activeCorrectionTask(entryId: meal.id)?.value
+        vm.retryCorrection(entryId: meal.id)
+        await vm.activeCorrectionTask(entryId: meal.id)?.value
+
+        #expect(service.corrections.count == 2)
+        #expect(service.corrections.allSatisfy { $0.text == submission.text })
+        #expect(service.corrections.allSatisfy { $0.audioByteCount == 2 })
+        #expect(service.corrections.allSatisfy { $0.imageByteCount == 4 })
+        #expect(service.corrections.allSatisfy { $0.usesImageForEstimate })
+        #expect(vm.entries.first?.caloriesKcal == 420)
     }
 
     @Test func successReplacesTheMealRevealsItAndUpdatesTotals() async throws {

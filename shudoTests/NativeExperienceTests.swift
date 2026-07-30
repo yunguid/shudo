@@ -255,6 +255,18 @@ struct NativeExperienceTests {
         #expect(EntryCorrectionPolicy.canSubmit("The rice was one cup"))
         #expect(EntryCorrectionPolicy.canSubmit(text: "", hasAudio: true))
         #expect(!EntryCorrectionPolicy.canSubmit(text: "", hasAudio: false))
+        #expect(EntryCorrectionPolicy.canSubmit(text: "", hasAudio: false, hasImage: true))
+        #expect(!EntryCorrectionPolicy.canSubmit(
+            text: "",
+            hasAudio: false,
+            hasImage: true,
+            isPreparingImage: true
+        ))
+        #expect(!EntryCorrectionPolicy.usesPhotoForEstimate(text: "", hasAudio: false))
+        #expect(EntryCorrectionPolicy.usesPhotoForEstimate(text: "Half the rice", hasAudio: false))
+        #expect(EntryCorrectionPolicy.usesPhotoForEstimate(text: "", hasAudio: true))
+        #expect(EntryCorrectionPolicy.removingPhoto(at: 1, from: ["first", "second"]) == ["first"])
+        #expect(EntryCorrectionPolicy.removingPhoto(at: 4, from: ["first"]) == ["first"])
         #expect(EntryCorrectionPolicy.audioIsWithinUploadLimit(1))
         #expect(!EntryCorrectionPolicy.audioIsWithinUploadLimit(0))
         #expect(!EntryCorrectionPolicy.audioIsWithinUploadLimit(
@@ -273,6 +285,38 @@ struct NativeExperienceTests {
             name: String(repeating: "Very detailed ingredient ", count: 4),
             amount: "about one and a half restaurant portions"
         ))
+    }
+
+    @Test func entryDetailPhotoGalleryPreservesPrimaryAndAppendedMetadata() throws {
+        let primary = try #require(URL(string: "https://example.test/original.jpg"))
+        let appended = try #require(URL(string: "https://example.test/memory.jpg"))
+        let createdAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let detail = SupabaseService.EntryDetail(
+            createdAt: createdAt,
+            imageURL: primary,
+            additionalPhotos: [
+                SupabaseService.EntryDetailPhoto(
+                    id: UUID(),
+                    url: appended,
+                    purpose: "memory",
+                    createdAt: createdAt.addingTimeInterval(60)
+                )
+            ],
+            title: "Birthday dinner",
+            rawText: nil,
+            transcript: nil,
+            proteinG: 40,
+            carbsG: 80,
+            fatG: 25,
+            caloriesKcal: 705,
+            items: [],
+            analysisNotes: nil,
+            confidence: 0.8
+        )
+
+        #expect(detail.imageURLs == [primary, appended])
+        #expect(detail.additionalPhotos.first?.purpose == "memory")
+        #expect(detail.additionalPhotos.first?.createdAt == createdAt.addingTimeInterval(60))
     }
 
     @Test func detailViewportStaysBoundedAndMacroCardsStackBeforeOverflow() {
@@ -421,6 +465,8 @@ struct NativeExperienceTests {
             entryId: entryID,
             text: "  The bowl also had steak.  ",
             audioData: Data([0x01, 0x02, 0x03]),
+            imageJPEG: nil,
+            usesImageForEstimate: false,
             clientRequestId: requestID,
             jwt: "session-token"
         )
@@ -437,6 +483,33 @@ struct NativeExperienceTests {
         #expect(body.contains("The bowl also had steak."))
         #expect(body.contains("name=\"audio\"; filename=\"correction.m4a\""))
         #expect(body.contains("Content-Type: audio/m4a"))
+    }
+
+    @Test func existingMealPhotoMultipartMakesMemoryIntentExplicit() throws {
+        let entryID = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let requestID = try #require(UUID(uuidString: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"))
+        let service = APIService(
+            supabaseUrl: try #require(URL(string: "https://example.supabase.co")),
+            supabaseAnonKey: "sb_publishable_example",
+            sessionJWTProvider: { "session-token" }
+        )
+
+        let request = try service.makeCorrectionRequest(
+            entryId: entryID,
+            text: nil,
+            audioData: nil,
+            imageJPEG: Data([0xFF, 0xD8, 0xFF, 0xD9]),
+            usesImageForEstimate: false,
+            clientRequestId: requestID,
+            jwt: "session-token"
+        )
+        let body = String(decoding: try #require(request.httpBody), as: UTF8.self)
+
+        #expect(body.contains("name=\"photo_intent\"\r\n\r\nmemory"))
+        #expect(body.contains("name=\"image\"; filename=\"meal-update.jpg\""))
+        #expect(body.contains("Content-Type: image/jpeg"))
+        #expect(!body.contains("name=\"text\""))
+        #expect(!body.contains("name=\"audio\""))
     }
 
     @Test func accountDeletionRequiresExactConfirmationAndBuildsAuthenticatedRequest() throws {

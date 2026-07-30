@@ -1,9 +1,16 @@
 import { HttpError } from "./errors.ts";
 import { isUuid } from "./http.ts";
+import {
+  formFile,
+  IMAGE_TYPES,
+  MAX_IMAGE_BYTES,
+  validateFile,
+} from "./capture_validation.ts";
 
 export const MAX_CORRECTION_CHARACTERS = 4_000;
 export const MAX_CORRECTION_AUDIO_BYTES = 8 * 1024 * 1024;
 export const MAX_CORRECTION_REQUEST_BYTES = MAX_CORRECTION_AUDIO_BYTES +
+  MAX_IMAGE_BYTES +
   64 * 1024;
 export const CORRECTION_PROCESSING_BUDGET_MS = 125_000;
 export const CORRECTION_TRANSCRIPTION_TIMEOUT_MS = 45_000;
@@ -24,7 +31,30 @@ export type EntryCorrectionCapture = {
   clientRequestId: string;
   text: string | null;
   audio: File | null;
+  image: File | null;
+  photoIntent: "memory" | "evidence";
 };
+
+export function correctionEvidencePaths(
+  primaryPath: string | null,
+  appendedPhotos: Array<{ storage_path: string; purpose: string }>,
+  newPhotoPath: string | null,
+): string[] {
+  const memoryPaths = new Set(
+    appendedPhotos
+      .filter((photo) => photo.purpose === "memory")
+      .map((photo) => photo.storage_path),
+  );
+  const paths: string[] = [];
+  // A memory-only attachment can be mirrored into entries.image_path for old
+  // clients. Do not silently turn that compatibility alias into AI evidence.
+  if (primaryPath && !memoryPaths.has(primaryPath)) paths.push(primaryPath);
+  for (const photo of appendedPhotos) {
+    if (photo.purpose === "evidence") paths.push(photo.storage_path);
+  }
+  if (newPhotoPath) paths.push(newPhotoPath);
+  return [...new Set(paths)].slice(-5);
+}
 
 function formString(form: FormData, name: string): string {
   const value = form.get(name);
@@ -79,11 +109,28 @@ export function parseEntryCorrectionForm(
     }
   }
 
-  const text = rawText || null;
-  if (!text && !audio) {
-    throw new HttpError(400, "Record or type what should change");
+  const image = formFile(form, "image");
+  validateFile(image, IMAGE_TYPES, MAX_IMAGE_BYTES, "Image");
+  const rawPhotoIntent = formString(form, "photo_intent").toLowerCase();
+  const photoIntent = rawPhotoIntent === "evidence" ? "evidence" : "memory";
+  if (rawPhotoIntent && !["memory", "evidence"].includes(rawPhotoIntent)) {
+    throw new HttpError(400, "photo_intent must be memory or evidence");
   }
-  return { entryId, clientRequestId, text, audio };
+
+  const text = rawText || null;
+  if (!text && !audio && !image) {
+    throw new HttpError(400, "Record, type, or add a photo");
+  }
+  if (photoIntent === "evidence" && !text && !audio) {
+    throw new HttpError(400, "Describe what the photo should change");
+  }
+  if (image && photoIntent === "memory" && (text || audio)) {
+    throw new HttpError(
+      400,
+      "A correction with a photo must use the photo as evidence",
+    );
+  }
+  return { entryId, clientRequestId, text, audio, image, photoIntent };
 }
 
 export function combineEntryCorrectionText(

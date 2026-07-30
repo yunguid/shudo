@@ -6,6 +6,8 @@ protocol EntryReanalysisServing {
         id: UUID,
         text: String?,
         audioData: Data?,
+        imageJPEG: Data?,
+        usesImageForEstimate: Bool,
         clientRequestId: UUID
     ) async throws -> APIService.ReanalysisResult
 }
@@ -15,9 +17,13 @@ extension EntryReanalysisServing {
         id: UUID,
         text: String?,
         audioData: Data?,
+        imageJPEG: Data?,
+        usesImageForEstimate: Bool,
         clientRequestId: UUID
     ) async throws -> APIService.ReanalysisResult {
-        guard audioData == nil, let text else { throw APIService.APIError.invalidCorrection }
+        guard imageJPEG == nil, audioData == nil, let text else {
+            throw APIService.APIError.invalidCorrection
+        }
         return try await reanalyzeEntry(id: id, context: text)
     }
 }
@@ -137,6 +143,8 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         id: UUID,
         text: String?,
         audioData: Data?,
+        imageJPEG: Data?,
+        usesImageForEstimate: Bool,
         clientRequestId: UUID
     ) async throws -> ReanalysisResult {
         let jwt = try await sessionJWTProvider()
@@ -144,6 +152,8 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
             entryId: id,
             text: text,
             audioData: audioData,
+            imageJPEG: imageJPEG,
+            usesImageForEstimate: usesImageForEstimate,
             clientRequestId: clientRequestId,
             jwt: jwt
         )
@@ -205,15 +215,19 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         entryId: UUID,
         text: String?,
         audioData: Data?,
+        imageJPEG: Data?,
+        usesImageForEstimate: Bool,
         clientRequestId: UUID,
         jwt: String
     ) throws -> URLRequest {
         let normalizedText = text.map(EntryCorrectionPolicy.normalized)
         let hasText = normalizedText?.isEmpty == false
         let hasAudio = audioData?.isEmpty == false
+        let hasImage = imageJPEG?.isEmpty == false
         guard EntryCorrectionPolicy.canSubmit(
             text: normalizedText ?? "",
-            hasAudio: hasAudio
+            hasAudio: hasAudio,
+            hasImage: hasImage
         ) else {
             throw APIError.invalidCorrection
         }
@@ -237,6 +251,8 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
             entryId: entryId,
             text: hasText ? normalizedText : nil,
             audioData: audioData,
+            imageJPEG: imageJPEG,
+            usesImageForEstimate: hasImage && usesImageForEstimate,
             clientRequestId: clientRequestId
         )
         return request
@@ -247,6 +263,8 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         entryId: UUID,
         text: String?,
         audioData: Data?,
+        imageJPEG: Data?,
+        usesImageForEstimate: Bool,
         clientRequestId: UUID
     ) -> Data {
         var data = Data()
@@ -257,6 +275,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         }
         part("entry_id", entryId.uuidString.lowercased())
         part("client_request_id", clientRequestId.uuidString.lowercased())
+        part("photo_intent", usesImageForEstimate ? "evidence" : "memory")
         if let text, !text.isEmpty { part("text", text) }
         if let audioData, !audioData.isEmpty {
             data.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -266,6 +285,16 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
             )
             data.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)
             data.append(audioData)
+            data.append("\r\n".data(using: .utf8)!)
+        }
+        if let imageJPEG, !imageJPEG.isEmpty {
+            data.append("--\(boundary)\r\n".data(using: .utf8)!)
+            data.append(
+                "Content-Disposition: form-data; name=\"image\"; filename=\"meal-update.jpg\"\r\n"
+                    .data(using: .utf8)!
+            )
+            data.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+            data.append(imageJPEG)
             data.append("\r\n".data(using: .utf8)!)
         }
         data.append("--\(boundary)--\r\n".data(using: .utf8)!)

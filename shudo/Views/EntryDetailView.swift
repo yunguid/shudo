@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -17,6 +19,7 @@ enum EntryDetailLayoutPolicy {
 struct EntryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 40
     let entryId: UUID
     /// Receives a locally accepted correction. The owner (the Today screen)
@@ -68,7 +71,7 @@ struct EntryDetailView: View {
                             notes: detail.analysisNotes
                         )
                         VStack(alignment: .leading, spacing: 26) {
-                            photo(detail.imageURL)
+                            photoGallery(detail.imageURLs)
                             titleHeader(detail.title, createdAt: detail.createdAt)
                             macroSummary(detail, research: research)
 
@@ -276,6 +279,43 @@ struct EntryDetailView: View {
             .frame(maxWidth: .infinity)
             .background(Design.Color.elevated)
             .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private func photoGallery(_ urls: [URL]) -> some View {
+        if urls.count <= 1 {
+            photo(urls.first)
+        } else {
+            TabView {
+                ForEach(Array(urls.enumerated()), id: \.offset) { index, url in
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .accessibilityLabel("Meal photo \(index + 1) of \(urls.count)")
+                        case .failure:
+                            photoPlaceholder(systemImage: "photo")
+                                .accessibilityLabel("Meal photo \(index + 1) couldn’t be loaded")
+                        case .empty:
+                            photoPlaceholder(systemImage: nil)
+                                .shimmering()
+                                .accessibilityLabel("Loading meal photo \(index + 1)")
+                        @unknown default:
+                            photoPlaceholder(systemImage: nil)
+                        }
+                    }
+                    .padding(.bottom, 18)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .always))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: urls)
+            .frame(height: 320)
+            .background(Design.Color.elevated)
+            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
+            .accessibilityHint("Swipe left or right to browse meal photos")
         }
     }
 
@@ -584,7 +624,7 @@ struct EntryDetailView: View {
                 )
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Add a voice recording or note to revise the estimate")
+        .accessibilityHint("Add a photo, voice recording, or note to update this meal")
     }
 
     private var loadingView: some View {
@@ -845,6 +885,14 @@ private struct EntryCorrectionSheet: View {
     @State private var hasSubmitted = false
     @State private var errorMessage: String?
     @State private var clientRequestId = UUID()
+    @State private var pickedImages: [PhotosPickerItem] = []
+    @State private var images: [UIImage] = []
+    @State private var isShowingCamera = false
+    @State private var isShowingPhotoPicker = false
+    @State private var isPreparingImage = false
+    @State private var imageLoadGeneration = UUID()
+    @State private var imagePreparationTask: Task<Void, Never>?
+    @State private var uploadEncodeTask: Task<Data?, Never>?
 
     let entryTitle: String
     let onSubmit: (EntryCorrectionSubmission) -> Void
@@ -858,6 +906,8 @@ private struct EntryCorrectionSheet: View {
         EntryCorrectionPolicy.canSubmit(
             text: context,
             hasAudio: hasAudio,
+            hasImage: !images.isEmpty,
+            isPreparingImage: isPreparingImage,
             isSubmitting: hasSubmitted
         )
     }
@@ -880,6 +930,8 @@ private struct EntryCorrectionSheet: View {
                         }
 
                         voiceCorrectionCard
+
+                        photoAttachmentSection
 
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Optional note")
@@ -959,6 +1011,8 @@ private struct EntryCorrectionSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
+                        imagePreparationTask?.cancel()
+                        uploadEncodeTask?.cancel()
                         audio.discardRecording()
                         dismiss()
                     }
@@ -974,7 +1028,12 @@ private struct EntryCorrectionSheet: View {
                 Button {
                     submit()
                 } label: {
-                    Text("Update estimate")
+                    HStack(spacing: 8) {
+                        if hasSubmitted || isPreparingImage {
+                            ProgressView().tint(.white)
+                        }
+                        Text(submitTitle)
+                    }
                         .font(.headline)
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
@@ -997,9 +1056,144 @@ private struct EntryCorrectionSheet: View {
                 .background(.ultraThinMaterial)
             }
         }
+        .fullScreenCover(isPresented: $isShowingCamera) {
+            CameraPicker { selected in
+                prepareCameraImage(selected)
+            }
+            .ignoresSafeArea()
+        }
+        .photosPicker(
+            isPresented: $isShowingPhotoPicker,
+            selection: $pickedImages,
+            maxSelectionCount: max(1, ImageProcessor.maximumPhotoCount - images.count),
+            matching: .images
+        )
+        .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
+        .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
         .onDisappear {
+            // Camera and Photos temporarily cover this sheet. Keep the whole
+            // draft, including a completed recording, across those system UIs.
+            guard !isShowingCamera, !isShowingPhotoPicker, !hasSubmitted else { return }
+            imagePreparationTask?.cancel()
+            uploadEncodeTask?.cancel()
             audio.discardRecording()
         }
+        .interactiveDismissDisabled(hasSubmitted)
+    }
+
+    private var submitTitle: String {
+        if hasSubmitted { return "Sending…" }
+        if isPreparingImage { return "Preparing photos…" }
+        return updatesEstimate ? "Update estimate" : "Save photos"
+    }
+
+    private var updatesEstimate: Bool {
+        EntryCorrectionPolicy.usesPhotoForEstimate(text: context, hasAudio: hasAudio)
+    }
+
+    private var photoAttachmentSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Add photo")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Design.Color.ink)
+                Spacer()
+                if !images.isEmpty {
+                    Text("\(images.count) of \(ImageProcessor.maximumPhotoCount)")
+                        .font(.caption)
+                        .foregroundStyle(Design.Color.muted)
+                        .monospacedDigit()
+                }
+            }
+
+            if !images.isEmpty {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 108, maximum: 180), spacing: 8)],
+                    spacing: 8
+                ) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                        ZStack(alignment: .topTrailing) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 116)
+                                .clipShape(
+                                    RoundedRectangle(
+                                        cornerRadius: Design.Radius.panel,
+                                        style: .continuous
+                                    )
+                                )
+                                .accessibilityHidden(true)
+                            Button {
+                                removePhoto(at: index)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 32, height: 32)
+                                    .background(.black.opacity(0.62), in: Circle())
+                                    .contentShape(Circle().inset(by: -6))
+                            }
+                            .padding(7)
+                            .disabled(hasSubmitted)
+                            .accessibilityLabel("Remove new photo \(index + 1)")
+                        }
+                    }
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { photoButtons }
+                VStack(spacing: 10) { photoButtons }
+            }
+
+            if !images.isEmpty {
+                Label(
+                    updatesEstimate
+                        ? "These photos will help recalculate nutrition."
+                        : "These photos will be saved as meal memories. Nutrition won’t change.",
+                    systemImage: updatesEstimate ? "sparkles" : "heart"
+                )
+                .font(.footnote)
+                .foregroundStyle(Design.Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var photoButtons: some View {
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            correctionPhotoButton("Camera", systemImage: "camera.fill") {
+                requestCamera()
+            }
+        }
+        correctionPhotoButton("Photos", systemImage: "photo.on.rectangle") {
+            settleVoiceCapture()
+            errorMessage = nil
+            isShowingPhotoPicker = true
+        }
+    }
+
+    private func correctionPhotoButton(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+                .frame(maxWidth: .infinity)
+                .frame(height: 46)
+                .background(Design.Color.elevated, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(
+            hasSubmitted || isPreparingImage || images.count >= ImageProcessor.maximumPhotoCount
+        )
     }
 
     private var voiceCorrectionCard: some View {
@@ -1108,6 +1302,121 @@ private struct EntryCorrectionSheet: View {
             : "Start correction recording"
     }
 
+    private func settleVoiceCapture() {
+        if audio.isRecording {
+            audio.stopRecording()
+        } else if audio.isStartingRecording {
+            audio.abortStartingRecording()
+        }
+    }
+
+    private func requestCamera() {
+        settleVoiceCapture()
+        errorMessage = nil
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            isShowingCamera = true
+        case .notDetermined:
+            Task {
+                let granted = await AVCaptureDevice.requestAccess(for: .video)
+                await MainActor.run {
+                    if granted {
+                        isShowingCamera = true
+                    } else {
+                        errorMessage = "Camera access is off. You can allow it in Settings or choose a photo."
+                    }
+                }
+            }
+        case .denied, .restricted:
+            errorMessage = "Camera access is off. You can allow it in Settings or choose a photo."
+        @unknown default:
+            errorMessage = "The camera isn’t available right now. Choose a photo instead."
+        }
+    }
+
+    private func preparePickedImages(_ items: [PhotosPickerItem]) {
+        imagePreparationTask?.cancel()
+        let generation = UUID()
+        imageLoadGeneration = generation
+        guard !items.isEmpty else {
+            imagePreparationTask = nil
+            isPreparingImage = false
+            return
+        }
+
+        isPreparingImage = true
+        errorMessage = nil
+        let availableSlots = max(0, ImageProcessor.maximumPhotoCount - images.count)
+        let selectedItems = Array(items.prefix(availableSlots))
+        imagePreparationTask = Task.detached(priority: .userInitiated) {
+            let loaded = await BoundedConcurrency.map(
+                selectedItems,
+                maximumConcurrentTasks: 2
+            ) { item -> UIImage? in
+                guard !Task.isCancelled,
+                      let data = try? await item.loadTransferable(type: Data.self),
+                      !Task.isCancelled else { return nil }
+                return ImageProcessor.downsample(data: data)
+            }
+            let prepared = loaded.compactMap { $0 }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard imageLoadGeneration == generation else { return }
+                imagePreparationTask = nil
+                isPreparingImage = false
+                pickedImages = []
+                guard !prepared.isEmpty else {
+                    errorMessage = "Those photos couldn’t be loaded. Your update draft is still here."
+                    return
+                }
+                let remainingSlots = max(0, ImageProcessor.maximumPhotoCount - images.count)
+                withAnimation(reduceMotion ? nil : .snappy) {
+                    images.append(contentsOf: prepared.prefix(remainingSlots))
+                }
+                if prepared.count < selectedItems.count {
+                    errorMessage = "Some photos couldn’t be loaded. The others are still attached."
+                }
+            }
+        }
+    }
+
+    private func prepareCameraImage(_ image: UIImage) {
+        guard images.count < ImageProcessor.maximumPhotoCount else { return }
+        isPreparingImage = true
+        errorMessage = nil
+        let generation = imageLoadGeneration
+        Task.detached(priority: .userInitiated) {
+            let prepared = ImageProcessor.resizedForUpload(image)
+            await MainActor.run {
+                guard imageLoadGeneration == generation else { return }
+                isPreparingImage = false
+                guard images.count < ImageProcessor.maximumPhotoCount else { return }
+                withAnimation(reduceMotion ? nil : .snappy) { images.append(prepared) }
+            }
+        }
+    }
+
+    private func prepareUploadEncoding(for updated: [UIImage]) {
+        uploadEncodeTask?.cancel()
+        guard !updated.isEmpty else {
+            uploadEncodeTask = nil
+            return
+        }
+        uploadEncodeTask = Task.detached(priority: .userInitiated) {
+            guard !Task.isCancelled else { return nil }
+            return ImageProcessor.uploadJPEGData(from: updated)
+        }
+    }
+
+    private func removePhoto(at offset: Int) {
+        guard images.indices.contains(offset) else { return }
+        withAnimation(reduceMotion ? nil : .snappy) {
+            images = EntryCorrectionPolicy.removingPhoto(at: offset, from: images)
+        }
+        clientRequestId = UUID()
+        errorMessage = nil
+    }
+
     private func toggleRecording() async {
         guard !audio.isStartingRecording else { return }
         errorMessage = nil
@@ -1125,13 +1434,7 @@ private struct EntryCorrectionSheet: View {
     /// sheet never has to hold the user through the network round-trip.
     private func submit() {
         guard canSubmit else { return }
-        if audio.isRecording {
-            audio.stopRecording()
-        } else if audio.isStartingRecording {
-            // Nothing recorded yet; don't let the warm-up finish into a
-            // recording underneath the submission.
-            audio.abortStartingRecording()
-        }
+        settleVoiceCapture()
         errorMessage = nil
         let normalized = EntryCorrectionPolicy.normalized(context)
         let text = normalized.isEmpty ? nil : normalized
@@ -1141,27 +1444,53 @@ private struct EntryCorrectionSheet: View {
             errorMessage = "That recording is too large. Discard it and record a shorter correction."
             return
         }
-        guard text != nil || audioData != nil else {
-            errorMessage = "Record or type what should change."
+        guard text != nil || audioData != nil || !images.isEmpty else {
+            errorMessage = "Record, type, or add a photo."
             return
         }
         hasSubmitted = true
-        onSubmit(
-            EntryCorrectionSubmission(
-                text: text,
-                audioData: audioData,
-                clientRequestId: clientRequestId
-            )
-        )
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-        UIAccessibility.post(notification: .announcement, argument: "Updating meal")
-        dismiss()
-        onAccepted()
+        let selectedImages = images
+        let encodeTask = uploadEncodeTask
+        Task {
+            var imageJPEG = await encodeTask?.value
+            if !selectedImages.isEmpty && imageJPEG == nil {
+                imageJPEG = await Task.detached(priority: .userInitiated) {
+                    ImageProcessor.uploadJPEGData(from: selectedImages)
+                }.value
+            }
+            guard selectedImages.isEmpty || imageJPEG != nil else {
+                await MainActor.run {
+                    hasSubmitted = false
+                    errorMessage = "Those photos couldn’t be prepared. Remove them or try again. Your draft is still here."
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                }
+                return
+            }
+            await MainActor.run {
+                onSubmit(
+                    EntryCorrectionSubmission(
+                        text: text,
+                        audioData: audioData,
+                        imageJPEG: imageJPEG,
+                        clientRequestId: clientRequestId
+                    )
+                )
+                audio.discardRecording()
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                UIAccessibility.post(
+                    notification: .announcement,
+                    argument: updatesEstimate ? "Updating meal" : "Saving meal photos"
+                )
+                dismiss()
+                onAccepted()
+            }
+        }
     }
 
     private func resetCorrection() {
         audio.discardRecording()
         context = ""
+        images = []
         clientRequestId = UUID()
         errorMessage = nil
         focusedField = nil

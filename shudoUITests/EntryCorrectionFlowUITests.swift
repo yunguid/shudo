@@ -18,7 +18,12 @@ final class EntryCorrectionFlowUITests: XCTestCase {
 
     private func launchPreviewApp() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-shudoPolishPreview", "main"]
+        // Keep the deterministic flow assertions independent from whatever
+        // Dynamic Type size a developer last selected in this simulator.
+        app.launchArguments = [
+            "-shudoPolishPreview", "main",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL",
+        ]
         app.launch()
         return app
     }
@@ -50,6 +55,33 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         let submit = app.buttons["Update estimate"].firstMatch
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         submit.tap()
+    }
+
+    @MainActor
+    func testExistingMealUpdateOffersPhotoLibraryAndCameraWithoutChangingTheDraft() throws {
+        let app = launchPreviewApp()
+        let mealCard = app.staticTexts["Chicken rice bowl"].firstMatch
+        XCTAssertTrue(mealCard.waitForExistence(timeout: 5))
+        mealCard.tap()
+
+        let updateMeal = app.buttons["Update meal"].firstMatch
+        XCTAssertTrue(updateMeal.waitForExistence(timeout: 5))
+        updateMeal.tap()
+
+        XCTAssertTrue(element(labeled: "Add photo", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Photos"].firstMatch.exists)
+        // Simulator camera availability varies. When present it uses the same
+        // action label and capture surface as the new-meal composer.
+        if app.buttons["Camera"].firstMatch.exists {
+            XCTAssertTrue(app.buttons["Camera"].firstMatch.isEnabled)
+        }
+        XCTAssertFalse(app.buttons["Save photos"].firstMatch.isEnabled)
+
+        let note = app.textViews.firstMatch
+        note.tap()
+        note.typeText("The rice was one cup")
+        XCTAssertTrue(app.buttons["Update estimate"].firstMatch.isEnabled)
+        XCTAssertTrue(element(labeled: "Add photo", in: app).exists)
     }
 
     @MainActor

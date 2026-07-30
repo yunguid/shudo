@@ -1092,6 +1092,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
     struct EntryDetail {
         let createdAt: Date
         let imageURL: URL?
+        let additionalPhotos: [EntryDetailPhoto]
         let title: String
         let rawText: String?
         let transcript: String?
@@ -1102,6 +1103,22 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         let items: [EntryDetailItem]
         let analysisNotes: String?
         let confidence: Double?
+
+        var imageURLs: [URL] {
+            var urls: [URL] = []
+            if let imageURL { urls.append(imageURL) }
+            for photo in additionalPhotos where !urls.contains(photo.url) {
+                urls.append(photo.url)
+            }
+            return urls
+        }
+    }
+
+    struct EntryDetailPhoto: Identifiable {
+        let id: UUID
+        let url: URL
+        let purpose: String
+        let createdAt: Date
     }
 
     func fetchEntryDetail(id: UUID) async throws -> EntryDetail? {
@@ -1143,8 +1160,14 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         let resolvedTitle = (title?.isEmpty == false ? title : nil)
             ?? rawText?.components(separatedBy: "\n").first
             ?? "Meal"
+        let primaryPath = obj["image_path"] as? String
         var imageURL: URL? = nil
-        if let path = obj["image_path"] as? String { imageURL = await signImageURL(path: path, jwt: jwt) }
+        if let primaryPath { imageURL = await signImageURL(path: primaryPath, jwt: jwt) }
+        let additionalPhotos = await fetchEntryPhotos(
+            entryId: id,
+            excludingPath: primaryPath,
+            jwt: jwt
+        )
 
         let itemObjects = obj["items"] as? [[String: Any]] ?? []
         let items = itemObjects.compactMap { item -> EntryDetailItem? in
@@ -1162,6 +1185,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         return EntryDetail(
             createdAt: createdAt,
             imageURL: imageURL,
+            additionalPhotos: additionalPhotos,
             title: resolvedTitle,
             rawText: rawText,
             transcript: transcript,
@@ -1173,5 +1197,55 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
             analysisNotes: obj["analysis_notes"] as? String,
             confidence: obj["confidence"].map(Self.toDouble)
         )
+    }
+
+    private func fetchEntryPhotos(
+        entryId: UUID,
+        excludingPath: String?,
+        jwt: String
+    ) async -> [EntryDetailPhoto] {
+        var components = URLComponents(
+            url: supabaseUrl.appendingPathComponent("/rest/v1/entry_photos"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "select", value: "id,storage_path,purpose,created_at"),
+            URLQueryItem(name: "entry_id", value: "eq.\(entryId.uuidString.lowercased())"),
+            URLQueryItem(name: "order", value: "created_at.asc,id.asc"),
+            URLQueryItem(name: "limit", value: "20")
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+
+        let metadata = objects.compactMap { object -> (UUID, String, String, Date)? in
+            guard let idString = object["id"] as? String,
+                  let id = UUID(uuidString: idString),
+                  let path = object["storage_path"] as? String,
+                  path != excludingPath else { return nil }
+            return (
+                id,
+                path,
+                object["purpose"] as? String ?? "memory",
+                Self.parseDate(object["created_at"]) ?? Date()
+            )
+        }
+        let urls = await signedImageURLs(for: metadata.map { Optional($0.1) }, jwt: jwt)
+        return zip(metadata, urls).compactMap { metadata, url in
+            guard let url else { return nil }
+            return EntryDetailPhoto(
+                id: metadata.0,
+                url: url,
+                purpose: metadata.2,
+                createdAt: metadata.3
+            )
+        }
     }
 }

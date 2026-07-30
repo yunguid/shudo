@@ -281,6 +281,7 @@ approved_migration_files=(
   20260722001415_project_ai_budget_timezone.sql
   20260722015329_restrict_beta_signups_to_allowlist.sql
   20260722224247_add_private_profile_photos.sql
+  20260730011301_add_existing_meal_photos.sql
 )
 
 approved_migration_hashes=(
@@ -293,6 +294,7 @@ approved_migration_hashes=(
   ce7c138b6196d9b4a9ce6f93e8017458ef0707c065802ff80877d9ee93ab3be8
   9ca9a33afc91e370a2f1a469b8291fdc637a4ddd79b9f56aeb8e636c628decf2
   8049c69efd841cf00c1fa1588f76281bc98eeaaf063159c24bf27d1a07b6a595
+  6532384219785ab7cdffd3f7d186340043fecbae0a374aa89f63bc1a8cbc8de7
 )
 
 approved_migration_versions=()

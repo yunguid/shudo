@@ -5,6 +5,7 @@ import {
   CORRECTION_PROCESSING_BUDGET_MS,
   CORRECTION_TRANSCRIPTION_TIMEOUT_MS,
   correctionAudioFilename,
+  correctionEvidencePaths,
   MAX_CORRECTION_AUDIO_BYTES,
   MAX_CORRECTION_CHARACTERS,
   MAX_CORRECTION_REQUEST_BYTES,
@@ -49,6 +50,61 @@ Deno.test("correction multipart accepts bounded iPhone audio MIME", () => {
   assertEquals(correctionAudioFilename(parsed.audio!), "correction.m4a");
 });
 
+Deno.test("photo-only meal update defaults to a memory", () => {
+  const form = formWithIdentifiers();
+  form.set(
+    "image",
+    new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], "meal.jpg", {
+      type: "image/jpeg",
+    }),
+  );
+  const parsed = parseEntryCorrectionForm(form);
+
+  assertEquals(parsed.photoIntent, "memory");
+  assertEquals(parsed.image?.size, 4);
+  assertEquals(parsed.text, null);
+  assertEquals(parsed.audio, null);
+});
+
+Deno.test("photo plus correction is explicit nutrition evidence", () => {
+  const form = formWithIdentifiers();
+  form.set("text", "The photo shows half the rice.");
+  form.set("photo_intent", "evidence");
+  form.set(
+    "image",
+    new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], "meal.jpg", {
+      type: "image/jpeg",
+    }),
+  );
+  const parsed = parseEntryCorrectionForm(form);
+
+  assertEquals(parsed.photoIntent, "evidence");
+  assertEquals(parsed.text, "The photo shows half the rice.");
+});
+
+Deno.test("memory-only compatibility image paths never become nutrition evidence", () => {
+  assertEquals(
+    correctionEvidencePaths(
+      "user/entry/updates/memory/photo.jpg",
+      [
+        {
+          storage_path: "user/entry/updates/memory/photo.jpg",
+          purpose: "memory",
+        },
+        {
+          storage_path: "user/entry/updates/evidence/photo.jpg",
+          purpose: "evidence",
+        },
+      ],
+      "user/entry/updates/new/photo.jpg",
+    ),
+    [
+      "user/entry/updates/evidence/photo.jpg",
+      "user/entry/updates/new/photo.jpg",
+    ],
+  );
+});
+
 Deno.test("correction multipart rejects empty, invalid, and oversized inputs", () => {
   assertThrows(() => parseEntryCorrectionForm(formWithIdentifiers()), 400);
 
@@ -78,6 +134,18 @@ Deno.test("correction multipart rejects empty, invalid, and oversized inputs", (
     ),
   );
   assertThrows(() => parseEntryCorrectionForm(oversizedAudio), 413);
+
+  const cancelledPicker = formWithIdentifiers();
+  assertThrows(() => parseEntryCorrectionForm(cancelledPicker), 400);
+
+  const memoryWithCorrection = formWithIdentifiers();
+  memoryWithCorrection.set("text", "Half the rice");
+  memoryWithCorrection.set("photo_intent", "memory");
+  memoryWithCorrection.set(
+    "image",
+    new File([new Uint8Array([1])], "meal.jpg", { type: "image/jpeg" }),
+  );
+  assertThrows(() => parseEntryCorrectionForm(memoryWithCorrection), 400);
 });
 
 Deno.test("correction combines voice first with optional clarifying text", () => {

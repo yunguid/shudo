@@ -13,6 +13,7 @@ import {
   CORRECTION_TRANSCRIPTION_TIMEOUT_MS,
   correctionAudioFilename,
   correctionAudioType,
+  correctionEvidencePaths,
   parseEntryCorrectionForm,
   validateCorrectionContentLength,
 } from "../_shared/entry_correction.ts";
@@ -24,9 +25,16 @@ import {
   json,
   requiredEnv,
   runInBackground,
+  withTimeout,
 } from "../_shared/http.ts";
 import { refreshWeeklySummaryForDay } from "../_shared/weekly_summary.ts";
-import { requireMultipartContentType } from "../_shared/capture_validation.ts";
+import {
+  IMAGE_TYPES,
+  imageExtension,
+  MAX_IMAGE_BYTES,
+  requireMultipartContentType,
+  validateFile,
+} from "../_shared/capture_validation.ts";
 import { modelQuotaHttpError } from "../_shared/quotas.ts";
 import { safetyIdentifier } from "../_shared/safety.ts";
 import {
@@ -87,7 +95,7 @@ async function analyzeCorrection(
   baseDescription: string,
   previousCorrections: string | null,
   latestCorrection: string,
-  imageUrl: string | null,
+  imageUrls: string[],
 ): Promise<{ analysis: ParsedAnalysis; responseId: string | null }> {
   const content: Array<Record<string, unknown>> = [{
     type: "input_text",
@@ -109,7 +117,7 @@ async function analyzeCorrection(
       `Latest correction:\n${latestCorrection}`,
     ].filter(Boolean).join("\n\n"),
   }];
-  if (imageUrl) {
+  for (const imageUrl of imageUrls.slice(0, 5)) {
     content.push({ type: "input_image", image_url: imageUrl, detail: "high" });
   }
 
@@ -173,6 +181,69 @@ async function fetchCorrectionEntry(
   return data as CorrectionEntry;
 }
 
+async function signedEvidenceImageUrls(
+  admin: SupabaseClient,
+  entry: CorrectionEntry,
+  newPhotoPath: string | null,
+): Promise<string[]> {
+  const { data: photos, error } = await admin.from("entry_photos")
+    .select("storage_path,purpose")
+    .eq("entry_id", entry.id)
+    .order("created_at", { ascending: true })
+    .limit(20);
+  if (error) throw error;
+  const paths = correctionEvidencePaths(
+    entry.image_path,
+    (photos ?? []).filter((photo) =>
+      typeof photo.storage_path === "string" &&
+      typeof photo.purpose === "string"
+    ),
+    newPhotoPath,
+  );
+
+  return await Promise.all(
+    paths.map(async (path) => {
+      const { data, error: signedError } = await admin.storage
+        .from("entry-images")
+        .createSignedUrl(path, 300);
+      if (signedError) throw signedError;
+      return data.signedUrl;
+    }),
+  );
+}
+
+async function requirePhotoCapacity(
+  admin: SupabaseClient,
+  entryId: string,
+  userId: string,
+  clientRequestId: string,
+): Promise<void> {
+  const { data: replay, error: replayError } = await admin.from("entry_photos")
+    .select("entry_id")
+    .eq("user_id", userId)
+    .eq("client_request_id", clientRequestId)
+    .maybeSingle();
+  if (replayError) throw replayError;
+  if (replay) {
+    if (replay.entry_id === entryId) return;
+    throw new HttpError(
+      409,
+      "That photo update conflicts with an earlier request.",
+    );
+  }
+  const { count, error } = await admin.from("entry_photos")
+    .select("id", { count: "exact", head: true })
+    .eq("entry_id", entryId)
+    .eq("user_id", userId);
+  if (error) throw error;
+  if ((count ?? 0) >= 20) {
+    throw new HttpError(
+      409,
+      "This meal already has the maximum number of photo attachments.",
+    );
+  }
+}
+
 function reservationError(status: CorrectionReservationStatus): HttpError {
   switch (status) {
     case "not_found":
@@ -228,6 +299,60 @@ Deno.serve(async (req: Request) => {
     entryId = capture.entryId;
     clientRequestId = capture.clientRequestId;
 
+    // A photo-only update is a memory by default. It never reserves model
+    // quota and never changes the completed nutrition estimate.
+    if (capture.image && capture.photoIntent === "memory") {
+      await fetchCorrectionEntry(admin, entryId, userId);
+      await requirePhotoCapacity(admin, entryId, userId, clientRequestId);
+      const photoPath =
+        `${userId}/${entryId}/updates/${clientRequestId}/photo.${
+          imageExtension(capture.image.type.toLowerCase())
+        }`;
+      await withTimeout(
+        admin.storage.from("entry-images").upload(photoPath, capture.image, {
+          contentType: capture.image.type,
+          cacheControl: "3600",
+          upsert: true,
+        }).then(({ error }) => {
+          if (error) throw error;
+        }),
+        30_000,
+        "Photo upload",
+      );
+      const { data: attached, error: attachError } = await admin.rpc(
+        "attach_entry_photo",
+        {
+          p_entry_id: entryId,
+          p_user_id: userId,
+          p_client_request_id: clientRequestId,
+          p_storage_path: photoPath,
+          p_purpose: "memory",
+        },
+      );
+      if (attachError) throw attachError;
+      if (attached !== "complete") {
+        throw new HttpError(
+          attached === "not_found" ? 404 : 409,
+          attached === "busy"
+            ? "Wait for this meal to finish before adding a photo."
+            : attached === "not_found"
+            ? "Meal entry not found"
+            : attached === "capacity"
+            ? "This meal already has the maximum number of photo attachments."
+            : "That photo update conflicts with an earlier request.",
+        );
+      }
+      return json({
+        entry_id: entryId,
+        client_request_id: clientRequestId,
+        status: "complete",
+        nutrition_changed: false,
+      });
+    }
+    if (capture.image) {
+      await requirePhotoCapacity(admin, entryId, userId, clientRequestId);
+    }
+
     const { data: reservation, error: reservationFailure } = await admin.rpc(
       "reserve_entry_correction",
       {
@@ -263,23 +388,49 @@ Deno.serve(async (req: Request) => {
       [entry.input_text, entry.transcript].filter(Boolean).join("\n").trim()
     ).slice(0, MAX_BASE_DESCRIPTION_CHARACTERS);
 
+    const correctionPhotoUpload: Promise<string | null> = capture.image
+      ? (() => {
+        validateFile(capture.image, IMAGE_TYPES, MAX_IMAGE_BYTES, "Image");
+        const path = `${userId}/${entryId}/updates/${clientRequestId}/photo.${
+          imageExtension(capture.image.type.toLowerCase())
+        }`;
+        return withTimeout(
+          admin.storage.from("entry-images").upload(
+            path,
+            capture.image,
+            {
+              contentType: capture.image.type,
+              cacheControl: "3600",
+              upsert: true,
+            },
+          ).then(({ error }) => {
+            if (error) throw error;
+            return path;
+          }),
+          30_000,
+          "Photo upload",
+        );
+      })()
+      : Promise.resolve(null);
+    // Park a rejection while transcription runs so upload and speech work can
+    // overlap without producing an unhandled promise rejection.
+    correctionPhotoUpload.catch(() => undefined);
+
     let transcript: string | null = null;
     if (capture.audio) {
       transcript = await transcribeCorrection(capture.audio);
     }
+    const correctionPhotoPath = await correctionPhotoUpload;
     const correctionText = combineEntryCorrectionText(
       capture.text,
       transcript,
     );
 
-    let signedImageUrl: string | null = null;
-    if (entry.image_path) {
-      const { data: signed, error: signedError } = await admin.storage
-        .from("entry-images")
-        .createSignedUrl(entry.image_path, 300);
-      if (signedError) throw signedError;
-      signedImageUrl = signed.signedUrl;
-    }
+    const signedImageUrls = await signedEvidenceImageUrls(
+      admin,
+      entry,
+      correctionPhotoPath,
+    );
 
     const { analysis, responseId } = await analyzeCorrection(
       userId,
@@ -287,7 +438,7 @@ Deno.serve(async (req: Request) => {
       entry.analysis_context?.trim().slice(0, MAX_ANALYSIS_CONTEXT_LENGTH) ||
         null,
       correctionText,
-      signedImageUrl,
+      signedImageUrls,
     );
 
     const { data: finalized, error: finalizeFailure } = await admin.rpc(
@@ -302,6 +453,8 @@ Deno.serve(async (req: Request) => {
         p_analysis_model: ANALYSIS_MODEL,
         p_transcription_model: capture.audio ? TRANSCRIPTION_MODEL : null,
         p_provider_response_id: responseId,
+        p_photo_path: correctionPhotoPath,
+        p_photo_purpose: correctionPhotoPath ? "evidence" : null,
       },
     );
     if (finalizeFailure) throw finalizeFailure;

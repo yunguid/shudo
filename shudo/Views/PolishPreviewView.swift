@@ -37,6 +37,8 @@ private final class PolishPreviewCorrectionService: EntryReanalysisServing {
         id: UUID,
         text: String?,
         audioData: Data?,
+        imageJPEG: Data?,
+        usesImageForEstimate: Bool,
         clientRequestId: UUID
     ) async throws -> APIService.ReanalysisResult {
         // Long enough for a person (or a UI test polling an animated
@@ -206,6 +208,7 @@ struct PolishPreviewView: View {
     private static let entryDetail = SupabaseService.EntryDetail(
         createdAt: Date().addingTimeInterval(-7_200),
         imageURL: nil,
+        additionalPhotos: [],
         title: "Chipotle chicken burrito bowl",
         rawText: "Chipotle burrito bowl with chicken, white rice, black beans, cheese, and mild salsa. Look up the nutrition online.",
         transcript: "Chipotle bowl with chicken, white rice, black beans, cheese, and mild salsa. Look it up online for the real numbers.",
