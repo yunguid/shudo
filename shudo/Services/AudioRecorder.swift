@@ -4,6 +4,14 @@ import os
 
 @MainActor
 final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRecorderDelegate {
+    enum ControlState: String, Equatable {
+        case idle
+        case starting
+        case recording
+        case ready
+        case error
+    }
+
     nonisolated static let maximumDuration: TimeInterval = 15 * 60
 
     @Published private(set) var isRecording = false
@@ -71,12 +79,37 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         Self.remainingTime(after: elapsedTime)
     }
 
+    var controlState: ControlState {
+        Self.controlState(
+            isStarting: isStartingRecording,
+            isRecording: isRecording,
+            hasRecording: recordedFileURL != nil,
+            hasError: errorMessage != nil
+        )
+    }
+
+    static func controlState(
+        isStarting: Bool,
+        isRecording: Bool,
+        hasRecording: Bool,
+        hasError: Bool
+    ) -> ControlState {
+        if isStarting { return .starting }
+        if isRecording { return .recording }
+        if hasRecording { return .ready }
+        if hasError { return .error }
+        return .idle
+    }
+
     static func remainingTime(after elapsedTime: TimeInterval) -> TimeInterval {
         max(0, maximumDuration - max(0, elapsedTime))
     }
 
     func startRecording() async -> Bool {
-        guard !Task.isCancelled, !isRecording, !isStartingRecording else { return false }
+        guard !Task.isCancelled, !isRecording, !isStartingRecording else {
+            CaptureDiagnostics.record(.recorderStartRejected, state: controlState.rawValue)
+            return false
+        }
         Perf.mark("mic.start.begin")
         errorMessage = nil
         // Discard before flagging the start: discardRecording clears
@@ -84,15 +117,18 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         // already in flight.
         discardRecording()
         isStartingRecording = true
+        CaptureDiagnostics.record(.recorderStartAccepted, state: controlState.rawValue)
         defer { isStartingRecording = false }
 
         let granted = await requestPermission()
         guard !Task.isCancelled, isStartingRecording else { return false }
         guard granted else {
             errorMessage = "Microphone access is required to record a meal."
+            CaptureDiagnostics.record(.microphonePermissionDenied, state: "error")
             return false
         }
         Perf.mark("mic.permission.ok")
+        CaptureDiagnostics.record(.microphonePermissionGranted, state: controlState.rawValue)
 
         let url = Self.makeTempURL()
         do {
@@ -120,6 +156,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
             isRecording = true
             startMetering()
             Perf.mark("mic.record.live")
+            CaptureDiagnostics.record(.recorderStarted, state: "recording")
             return true
         } catch {
             Perf.mark("mic.start.fail")
@@ -128,6 +165,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
             errorMessage = (error as? AudioStartError)?.message
                 ?? "The microphone couldn’t start. Try again."
             try? FileManager.default.removeItem(at: url)
+            CaptureDiagnostics.record(.recorderStartFailed, state: "error")
             return false
         }
     }
@@ -214,6 +252,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
                 var attemptsRemaining = max(1, maximumAttempts)
                 while true {
                     do {
+                        CaptureDiagnostics.record(.recorderAttempt, state: "starting")
                         let recorder = try sessionQueue.sync { try attempt() }
                         if claimResume() {
                             continuation.resume(returning: recorder)
@@ -273,6 +312,9 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     /// picker so a warm-up can't complete into a live recording underneath a
     /// system capture surface, which would then kill it and strand the UI.
     func abortStartingRecording() {
+        if isStartingRecording {
+            CaptureDiagnostics.record(.recorderWarmupAborted, state: controlState.rawValue)
+        }
         isStartingRecording = false
     }
 
@@ -282,6 +324,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
     }
 
     func discardRecording() {
+        let stateBeforeDiscard = controlState
         if isRecording { stopRecording() }
         // Aborts an in-flight start: the warm-up continuation checks this
         // flag and tears its recorder down instead of surfacing it.
@@ -293,6 +336,9 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         elapsedTime = 0
         didReachMaximumDuration = false
         meterLevels = Array(repeating: 0.06, count: 28)
+        if stateBeforeDiscard != .idle {
+            CaptureDiagnostics.record(.recorderDiscarded, state: controlState.rawValue)
+        }
     }
 
     func audioRecorderDidFinishRecording(
@@ -337,6 +383,13 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.handleMediaServicesReset() }
+            },
+            center.addObserver(
+                forName: AVAudioSession.routeChangeNotification,
+                object: session,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleAudioRouteChange() }
             }
         ]
     }
@@ -349,12 +402,18 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               AVAudioSession.InterruptionType(rawValue: rawType) == .began,
               isRecording else { return }
+        CaptureDiagnostics.record(.audioInterrupted, state: controlState.rawValue)
         finishActiveRecording(reachedMaximum: false)
+    }
+
+    private func handleAudioRouteChange() {
+        CaptureDiagnostics.record(.audioRouteChanged, state: controlState.rawValue)
     }
 
     /// After a media-server crash every audio object this class holds is
     /// dead and the file under it is unreliable; drop the take and say so.
     private func handleMediaServicesReset() {
+        CaptureDiagnostics.record(.mediaServicesReset, state: controlState.rawValue)
         // The reset wiped the session's configuration; the next start must
         // re-apply the category.
         Self.sessionQueue.async { Self.sessionCategoryConfigured = false }
@@ -416,6 +475,7 @@ final class AudioRecorder: NSObject, ObservableObject, @preconcurrency AVAudioRe
         stopMetering()
         elapsedTime = reachedMaximum ? Self.maximumDuration : duration
         didReachMaximumDuration = reachedMaximum
+        CaptureDiagnostics.record(.recorderStopped, state: controlState.rawValue)
         Self.deactivateSessionInBackground()
     }
 

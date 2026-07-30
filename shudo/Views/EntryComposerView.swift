@@ -35,17 +35,6 @@ enum EntryComposerPolicy {
         return String(note[..<stringEnd])
     }
 
-    static func shouldDiscardRecording(
-        isSubmitting: Bool,
-        isShowingCamera: Bool,
-        isShowingPhotoPicker: Bool,
-        isShowingBarcodeScanner: Bool
-    ) -> Bool {
-        !isSubmitting
-            && !isShowingCamera
-            && !isShowingPhotoPicker
-            && !isShowingBarcodeScanner
-    }
 }
 
 struct EntryComposerView: View {
@@ -168,8 +157,15 @@ struct EntryComposerView: View {
             .presentationCornerRadius(Design.Radius.sheet)
         }
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
+        .onChange(of: isShowingPhotoPicker) { wasPresented, isPresented in
+            guard wasPresented, !isPresented else { return }
+            CaptureDiagnostics.record(.photoPickerDismissed, state: audio.controlState.rawValue)
+        }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
-        .onAppear { Perf.mark("composer.appear") }
+        .onAppear {
+            Perf.mark("composer.appear")
+            CaptureDiagnostics.record(.composerPresented, state: audio.controlState.rawValue)
+        }
         .task {
             guard autoStartRecording, !didAutoStart else { return }
             didAutoStart = true
@@ -181,25 +177,6 @@ struct EntryComposerView: View {
             guard !audio.isRecording, !audio.isStartingRecording,
                   audio.recordedFileURL == nil, audio.errorMessage == nil else { return }
             _ = await audio.startRecording()
-        }
-        .onDisappear {
-            // A camera, photo picker, or barcode scanner temporarily covers
-            // this view. Preserve a finished voice note across that system
-            // presentation and clean it up only when the composer itself is
-            // actually leaving.
-            guard EntryComposerPolicy.shouldDiscardRecording(
-                isSubmitting: isSubmitting,
-                isShowingCamera: isShowingCamera,
-                isShowingPhotoPicker: isShowingPhotoPicker,
-                isShowingBarcodeScanner: isShowingBarcodeScanner
-            ) else { return }
-            imagePreparationTask?.cancel()
-            imagePreparationTask = nil
-            uploadEncodeTask?.cancel()
-            uploadEncodeTask = nil
-            imageLoadGeneration = UUID()
-            isPreparingImage = false
-            audio.discardRecording()
         }
         .interactiveDismissDisabled(isSubmitting)
     }
@@ -251,6 +228,7 @@ struct EntryComposerView: View {
                 }
 
                 Button {
+                    CaptureDiagnostics.record(.microphoneTapped, state: audio.controlState.rawValue)
                     Task { await toggleRecording() }
                 } label: {
                     ZStack {
@@ -279,6 +257,7 @@ struct EntryComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isSubmitting)
+                .accessibilityIdentifier("Voice recording control")
                 .accessibilityLabel(recordingButtonLabel)
             }
         }
@@ -329,6 +308,10 @@ struct EntryComposerView: View {
 
                 mediaButton(title: "Photos", systemImage: "photo.on.rectangle") {
                     settleVoiceCapture()
+                    CaptureDiagnostics.record(
+                        .photoPickerPresented,
+                        state: audio.controlState.rawValue
+                    )
                     isShowingPhotoPicker = true
                 }
 
@@ -495,12 +478,27 @@ struct EntryComposerView: View {
     private func toggleRecording() async {
         // Ignore taps while the microphone warms up; a queued toggle used to
         // stop the recording the instant it finally started.
-        guard !audio.isStartingRecording else { return }
+        guard !audio.isStartingRecording else {
+            CaptureDiagnostics.record(
+                .microphoneTapRejectedStarting,
+                state: audio.controlState.rawValue
+            )
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            return
+        }
         localError = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if audio.isRecording {
+            CaptureDiagnostics.record(
+                .microphoneTapAcceptedStop,
+                state: audio.controlState.rawValue
+            )
             audio.stopRecording()
         } else {
+            CaptureDiagnostics.record(
+                .microphoneTapAcceptedStart,
+                state: audio.controlState.rawValue
+            )
             _ = await audio.startRecording()
         }
     }
@@ -549,6 +547,7 @@ struct EntryComposerView: View {
                     images.append(contentsOf: preparedImages.prefix(remainingSlots))
                 }
                 Perf.mark("photo.thumbs.visible")
+                CaptureDiagnostics.record(.photosPrepared, state: audio.controlState.rawValue)
                 localError = preparedImages.count < selectedItems.count
                     ? "Some photos couldn’t be loaded."
                     : nil

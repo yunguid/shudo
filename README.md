@@ -286,6 +286,19 @@ privacy/listing details, and a verified physical-iPhone archive.
 
 ## Deployment policy
 
+- For a completed Shudo implementation or fix, run the relevant checks, commit
+  the coherent change, reconcile an advanced `main` safely, and push directly
+  to `origin/main` without force. Do not stop at an uncommitted local fix or
+  ask whether to deliver it after the requested work is verified.
+- Deliver only affected production artifacts. Deploy Supabase/backend inputs
+  only when they changed; for iOS changes, install the verified app in place on
+  Luke's connected iPhone under the existing production bundle identifier so
+  its app container and user data remain intact.
+- Never purchase or enroll, change credentials or security settings, accept
+  agreements, revoke signing assets, force-push, delete the installed app, or
+  reset production/on-device data without an explicit owner decision. If safe
+  delivery remains blocked after reasonable attempts, report the exact blocker
+  and the smallest owner action needed.
 - Production deployment does not require Vercel Git integration; the current
   project is intentionally deployed through the authenticated CLI from
   `shudo-web`. Connecting the monorepo later is optional and should include a

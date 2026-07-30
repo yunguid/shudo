@@ -15,6 +15,67 @@ struct CapturePipelineTests {
         #expect(AudioRecorder.remainingTime(after: 16 * 60) == 0)
     }
 
+    @MainActor
+    @Test func recorderControlStateMakesEveryTapOutcomeObservable() {
+        #expect(AudioRecorder.controlState(
+            isStarting: false,
+            isRecording: false,
+            hasRecording: false,
+            hasError: false
+        ) == .idle)
+        #expect(AudioRecorder.controlState(
+            isStarting: true,
+            isRecording: false,
+            hasRecording: false,
+            hasError: false
+        ) == .starting)
+        #expect(AudioRecorder.controlState(
+            isStarting: false,
+            isRecording: true,
+            hasRecording: true,
+            hasError: false
+        ) == .recording)
+        #expect(AudioRecorder.controlState(
+            isStarting: false,
+            isRecording: false,
+            hasRecording: true,
+            hasError: false
+        ) == .ready)
+        #expect(AudioRecorder.controlState(
+            isStarting: false,
+            isRecording: false,
+            hasRecording: false,
+            hasError: true
+        ) == .error)
+    }
+
+    @Test func buildIdentityIsStableAndRejectsUnexpandedRevisions() throws {
+        let identity = BuildIdentity(infoDictionary: [
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "2",
+            BuildIdentity.revisionInfoKey: "1234567890abcdef"
+        ])
+        #expect(identity.revision == "1234567890ab")
+        #expect(identity.displayText == "Shudo 1.0 (2) · 1234567890ab")
+        #expect(BuildIdentity.normalizedRevision("$(SHUDO_BUILD_REVISION)") == "local")
+        #expect(BuildIdentity.normalizedRevision("  ") == "local")
+    }
+
+    @Test func captureDiagnosticsPersistOnlyStaticStateAndBuildIdentity() throws {
+        CaptureDiagnostics.beginSession()
+        CaptureDiagnostics.record(.photoPickerDismissed, state: "idle")
+        CaptureDiagnostics.record(.microphoneTapAcceptedStart, state: "idle")
+        CaptureDiagnostics.flush()
+
+        let fileURL = try #require(CaptureDiagnostics.fileURL)
+        let trace = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(trace.contains("|app.launched|idle"))
+        #expect(trace.contains("|photo_picker.dismissed|idle"))
+        #expect(trace.contains("|mic.control.accepted_start|idle"))
+        #expect(!trace.contains("meal"))
+        #expect(!trace.contains("photo.jpg"))
+    }
+
     private static func makeIdleRecorder() throws -> (AVAudioRecorder, URL) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("capture-test-\(UUID().uuidString)")
@@ -101,6 +162,19 @@ struct CapturePipelineTests {
         #expect(!audio.isStartingRecording)
         #expect(!audio.isRecording)
         #expect(audio.recordedFileURL == nil)
+    }
+
+    @MainActor
+    @Test func audioRouteChangesDoNotDisableAnIdleRecorder() {
+        let audio = AudioRecorder()
+        NotificationCenter.default.post(
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            userInfo: [
+                AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue
+            ]
+        )
+        #expect(audio.controlState == .idle)
     }
 
     @Test func resumeRequestUsesStableEntryIdAndSessionJWT() throws {
@@ -391,33 +465,6 @@ struct CapturePipelineTests {
         #expect(TodayViewModel.submissionErrorMessage(
             URLError(.notConnectedToInternet)
         ) == "Couldn’t reach the server. Check your connection and try again.")
-    }
-
-    @Test func systemMediaPickerDoesNotDiscardFinishedVoiceNote() {
-        #expect(!EntryComposerPolicy.shouldDiscardRecording(
-            isSubmitting: false,
-            isShowingCamera: true,
-            isShowingPhotoPicker: false,
-            isShowingBarcodeScanner: false
-        ))
-        #expect(!EntryComposerPolicy.shouldDiscardRecording(
-            isSubmitting: false,
-            isShowingCamera: false,
-            isShowingPhotoPicker: true,
-            isShowingBarcodeScanner: false
-        ))
-        #expect(!EntryComposerPolicy.shouldDiscardRecording(
-            isSubmitting: false,
-            isShowingCamera: false,
-            isShowingPhotoPicker: false,
-            isShowingBarcodeScanner: true
-        ))
-        #expect(EntryComposerPolicy.shouldDiscardRecording(
-            isSubmitting: false,
-            isShowingCamera: false,
-            isShowingPhotoPicker: false,
-            isShowingBarcodeScanner: false
-        ))
     }
 
     @MainActor

@@ -168,6 +168,12 @@ struct AccountView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Permanently deletes your meal log and account")
+
+                Text(BuildIdentity.current.displayText)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(Design.Color.muted)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("Build identity")
             }
             .padding(20)
             .padding(.bottom, 20)

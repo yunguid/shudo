@@ -181,7 +181,11 @@ struct TodayView: View {
             }
             .safeAreaInset(edge: .bottom) { captureDock }
         }
-        .sheet(isPresented: $vm.isPresentingComposer) {
+        .sheet(isPresented: $vm.isPresentingComposer, onDismiss: {
+            let recorder = composerAudioHolder.value
+            CaptureDiagnostics.record(.composerDismissed, state: recorder.controlState.rawValue)
+            recorder.discardRecording()
+        }) {
             let capturedDay = vm.currentDay
             EntryComposerView(
                 selectedDay: capturedDay,

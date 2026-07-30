@@ -97,6 +97,7 @@ shudo_build_number="$(build_setting CURRENT_PROJECT_VERSION)"
 shudo_deployment_target="$(build_setting IPHONEOS_DEPLOYMENT_TARGET)"
 shudo_device_family="$(build_setting TARGETED_DEVICE_FAMILY)"
 shudo_team="$(build_setting DEVELOPMENT_TEAM)"
+shudo_build_revision="$(build_setting SHUDO_BUILD_REVISION)"
 
 [[ "$shudo_bundle_id" == "$shudo_expected_bundle_id" ]] || \
   fail "bundle identifier changed from $shudo_expected_bundle_id"
@@ -107,6 +108,7 @@ shudo_team="$(build_setting DEVELOPMENT_TEAM)"
 [[ -n "$shudo_deployment_target" ]] || fail "deployment target is missing"
 [[ "$shudo_device_family" == "1" ]] || fail "Shudo should remain iPhone-only unless iPad is tested"
 [[ -n "$shudo_team" ]] || fail "DEVELOPMENT_TEAM is missing"
+[[ -n "$shudo_build_revision" ]] || fail "SHUDO_BUILD_REVISION is missing"
 
 print "Metadata ready: Shudo $shudo_marketing_version ($shudo_build_number), iOS $shudo_deployment_target+, $shudo_bundle_id"
 
@@ -132,5 +134,7 @@ plutil -lint "$shudo_app/Info.plist" "$shudo_app/PrivacyInfo.xcprivacy"
   "$shudo_marketing_version" ]] || fail "compiled marketing version does not match build settings"
 [[ "$(plutil -extract CFBundleVersion raw "$shudo_app/Info.plist")" == "$shudo_build_number" ]] || \
   fail "compiled build number does not match build settings"
+[[ "$(plutil -extract ShudoBuildRevision raw "$shudo_app/Info.plist")" == \
+  "$shudo_build_revision" ]] || fail "compiled source revision does not match build settings"
 
 print "Shudo unsigned Release build and bundled privacy metadata passed."

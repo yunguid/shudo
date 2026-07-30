@@ -11,6 +11,7 @@ shudo_signing_keychain="${SHUDO_SIGNING_KEYCHAIN:-/Users/luke/Library/Keychains/
 shudo_passphrase_file="${SHUDO_SIGNING_PASSPHRASE_FILE:-/Users/luke/Library/Application Support/ShudoSigning/keychain-passphrase}"
 shudo_expected_bundle_id="luke.shudo"
 shudo_derived_data=""
+shudo_revision="$(git -C "$shudo_repo_root" rev-parse --short=12 HEAD)"
 
 fail() {
   print -u2 "Shudo device install failed: $1"
@@ -77,6 +78,7 @@ xcodebuild \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
   -derivedDataPath "$shudo_derived_data" \
+  SHUDO_BUILD_REVISION="$shudo_revision" \
   -quiet \
   build
 
@@ -87,9 +89,11 @@ shudo_app="$shudo_derived_data/Build/Products/Release-iphoneos/Shudo.app"
 shudo_bundle_id="$(plutil -extract CFBundleIdentifier raw "$shudo_app/Info.plist")"
 shudo_version="$(plutil -extract CFBundleShortVersionString raw "$shudo_app/Info.plist")"
 shudo_build="$(plutil -extract CFBundleVersion raw "$shudo_app/Info.plist")"
+shudo_built_revision="$(plutil -extract ShudoBuildRevision raw "$shudo_app/Info.plist")"
 [[ "$shudo_bundle_id" == "$shudo_expected_bundle_id" ]] || fail "the built bundle identifier changed"
+[[ "$shudo_built_revision" == "$shudo_revision" ]] || fail "the built revision is not the committed source"
 
-print "Installing Shudo $shudo_version ($shudo_build)…"
+print "Installing Shudo $shudo_version ($shudo_build) revision $shudo_revision…"
 xcrun devicectl device install app \
   --device "$shudo_core_device_id" \
   "$shudo_app"
@@ -108,4 +112,24 @@ shudo_installed_version="$(
 [[ "$shudo_installed_version" == "$shudo_version|$shudo_build" ]] || \
   fail "the phone did not report the expected installed version"
 
-print "Installed and launched Shudo $shudo_version ($shudo_build) on Luke's iPhone."
+shudo_expected_identity="$shudo_version|$shudo_build|$shudo_revision"
+shudo_verified_identity=""
+for shudo_identity_attempt in 1 2 3 4 5; do
+  shudo_identity_copy="$shudo_derived_data/shudo-build-identity-$shudo_identity_attempt.txt"
+  if xcrun devicectl device copy from \
+    --device "$shudo_core_device_id" \
+    --domain-type appDataContainer \
+    --domain-identifier "$shudo_bundle_id" \
+    --source "Library/Caches/shudo-capture-diagnostics.txt" \
+    --destination "$shudo_identity_copy" \
+    --quiet 2>/dev/null \
+    && rg -q -F "$shudo_expected_identity|app.launched|idle" "$shudo_identity_copy"; then
+    shudo_verified_identity="$shudo_identity_copy"
+    break
+  fi
+  sleep 1
+done
+[[ -n "$shudo_verified_identity" ]] || \
+  fail "the launched phone app did not report the committed revision"
+
+print "Installed and launched Shudo $shudo_version ($shudo_build) revision $shudo_revision on Luke's iPhone."

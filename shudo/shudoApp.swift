@@ -13,6 +13,7 @@ struct shudoApp: App {
     @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
 
     init() {
+        CaptureDiagnostics.beginSession()
         // Meal photos are served from stable signed URLs; a right-sized URL
         // cache lets repeat visits render them without any network work.
         URLCache.shared = URLCache(
@@ -33,8 +34,16 @@ struct shudoApp: App {
                 AppRouter.shared.handle(url: url)
             }
             .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active {
+                switch newPhase {
+                case .active:
+                    CaptureDiagnostics.record(.appBecameActive, state: "active")
                     Task { await AuthSessionManager.shared.refreshIfNeeded() }
+                case .inactive:
+                    CaptureDiagnostics.record(.appBecameInactive, state: "inactive")
+                case .background:
+                    CaptureDiagnostics.record(.appEnteredBackground, state: "background")
+                @unknown default:
+                    break
                 }
             }
         }
