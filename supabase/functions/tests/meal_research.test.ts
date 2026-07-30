@@ -57,6 +57,10 @@ Deno.test("meal research routing forces explicit lookup while preserving the ord
 Deno.test("spoken lookup phrasing routes to required research", () => {
   // Voice notes say "look it up", not "look up"; both must trigger.
   assertEquals(
+    mealResearchMode("Look up a Chipotle bowl with white rice and steak."),
+    "required",
+  );
+  assertEquals(
     mealResearchMode("Chipotle chicken bowl, look it up for me"),
     "required",
   );
@@ -68,6 +72,21 @@ Deno.test("spoken lookup phrasing routes to required research", () => {
     mealResearchMode("Two tacos from the truck, look them up"),
     "required",
   );
+  assertEquals(
+    mealResearchMode(
+      "Um, white rice in a Chipotle bowl with steak — look this up online.",
+    ),
+    "required",
+  );
+});
+
+Deno.test("brand-first restaurant context favors research without slowing an ordinary meal", () => {
+  assertEquals(
+    mealResearchMode("Chipotle bowl with white rice and steak"),
+    "optional",
+  );
+  assertEquals(mealResearchMode("Chicken rice bowl with broccoli"), "none");
+  assertEquals(mealResearchMode("Oatmeal with banana and cinnamon"), "none");
 });
 
 Deno.test("web research metadata accepts only bounded public HTTP sources", () => {
@@ -125,9 +144,34 @@ Deno.test("empty or failed research is labeled as an estimate and lowers confide
     degraded: false,
     sources: [{ url: "https://restaurant.example/nutrition" }],
   });
-  assertEquals(sanitized.notes?.includes("\\[click here\\]"), true);
+  assertEquals(sanitized.notes?.includes("click here"), true);
   assertEquals(sanitized.notes?.includes("malicious.example"), false);
   assertEquals(sanitized.notes?.includes("Online sources: fake"), false);
+  assertEquals(sanitized.notes?.includes("[link omitted]"), false);
+});
+
+Deno.test("model-authored citation markdown cannot corrupt the trusted source shelf", () => {
+  const cited = analysis();
+  cited.notes =
+    "Official portions were used. ([chipotle.com](https://www.chipotle.com/nutrition)).";
+  const applied = applyMealResearchResult(cited, {
+    requested: true,
+    used: true,
+    degraded: false,
+    sources: [{ url: "https://www.chipotle.com/nutrition" }],
+  });
+
+  assertEquals(
+    applied.notes?.includes("https://www.chipotle.com/nutrition"),
+    true,
+  );
+  assertEquals(applied.notes?.includes("\\[link omitted\\]"), false);
+  assertEquals(
+    applied.notes?.endsWith(
+      "Online sources: [chipotle.com](https://www.chipotle.com/nutrition).",
+    ),
+    true,
+  );
 });
 
 Deno.test("the sources line always fits the notes budget without breaking a link", () => {

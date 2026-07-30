@@ -25,6 +25,11 @@ const RESTAURANT_CONTEXT_PATTERNS = [
   /\b(?:restaurant|menu\s+item|take[ -]?out|drive[ -]?thru|fast[ -]?food)\b/i,
   /\b(?:from|at|ordered\s+from)\s+(?:the\s+)?[\p{Lu}][\p{L}\p{N}&'’.\-]*(?:\s+[\p{Lu}][\p{L}\p{N}&'’.\-]*){0,3}/u,
   /\b[\p{Lu}][\p{L}]+(?:['’]s)\b/u,
+  // Voice transcripts commonly lead with a correctly capitalized brand and
+  // the menu format ("Chipotle bowl") without saying "from" or "restaurant".
+  // Keep the meal nouns bounded so an ordinary capitalized sentence does not
+  // opt every capture into the slower research path.
+  /\b[\p{Lu}][\p{L}\p{N}&'’.\-]*(?:\s+[\p{Lu}][\p{L}\p{N}&'’.\-]*){0,2}\s+(?:bowl|burrito|burger|sandwich|wrap|salad|pizza|tacos?|wings?|sub)\b/u,
 ];
 
 const GROUNDED_LABEL_PATTERN =
@@ -158,8 +163,17 @@ function modelNotesWithoutReservedSources(value: string | null): string | null {
   return notes || null;
 }
 
-function escapeMarkdown(value: string): string {
-  return value.replace(/https?:\/\/\S+/gi, "[link omitted]")
+function sanitizedSourcedProse(value: string): string {
+  // Provider annotations are not part of Shudo's strict schema, but a model
+  // may still echo citation markdown into notes. The server owns the verified
+  // source shelf, so strip model-authored links/URLs before escaping the prose
+  // instead of leaving broken nested markdown beside the trusted source line.
+  return value
+    .replace(/\[([^\]\r\n]{1,200})\]\(https?:\/\/[^\s)]+\)/gi, "$1")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()
     .replace(/[\\`*_[\]<>]/g, "\\$&");
 }
 
@@ -204,7 +218,7 @@ export function applyMealResearchResult(
     ),
   );
   const existing = unicodePrefix(
-    verified ? escapeMarkdown(modelNotes ?? "") : modelNotes ?? "",
+    verified ? sanitizedSourcedProse(modelNotes ?? "") : modelNotes ?? "",
     proseBudget,
   );
   const notes = [existing, disclosure].filter(Boolean).join("\n\n");

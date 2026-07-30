@@ -30,6 +30,10 @@ export const ANALYSIS_TIMEOUT_MS = 65_000;
 export const PROCESSING_OVERHEAD_RESERVE_MS = 25_000;
 export const MEAL_COPY_INSTRUCTION =
   `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Describe only the meal and any clearly labeled estimate assumptions.`;
+export const TRANSCRIPTION_PROMPT =
+  "A personal meal log. Preserve every stated food, brand, preparation, quantity, unit, sauce, drink, and correction accurately. Preserve explicit lookup, search, or online-research intent so it remains available for routing.";
+export const MEAL_COMPONENT_PRESERVATION_INSTRUCTION =
+  "Preserve every food, drink, brand, preparation, and quantity the user explicitly stated. Do not omit a component because it seems implied by a restaurant or menu item; represent each stated component in the item breakdown, even when its nutrition is zero or uncertain.";
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MAX_COMBINED_TEXT_LENGTH = 30_000;
 
@@ -102,7 +106,7 @@ async function transcribe(audio: Blob, path: string): Promise<string> {
   form.append("response_format", "json");
   form.append(
     "prompt",
-    "A personal meal log. Preserve foods, brands, quantities, units, sauces, drinks, and corrections accurately.",
+    TRANSCRIPTION_PROMPT,
   );
   form.append(
     "file",
@@ -134,6 +138,17 @@ export type MealAnalysisDependencies = {
   apiKey?: string;
   safetyIdentifier?: (userId: string) => Promise<string>;
   now?: () => number;
+  observeResearch?: (observation: MealResearchObservation) => void;
+};
+
+export type MealResearchObservation = {
+  phase: "routed" | "failed" | "completed";
+  requestedMode: MealResearchMode;
+  activeMode: MealResearchMode;
+  toolConfigured: boolean;
+  toolCallObserved: boolean;
+  degraded: boolean;
+  sourceCount: number;
 };
 
 /// Copy contract with the iOS client (EntryResearchPresentation in
@@ -188,6 +203,7 @@ function analysisContent(
       "Use realistic portion assumptions when exact amounts are unavailable.",
       "When the description quotes packaged-product nutrition facts (for example from a scanned barcode label), trust those numbers and scale them by the stated quantity instead of re-estimating the product.",
       ...researchInstructions(researchMode, lookupUnavailable),
+      MEAL_COMPONENT_PRESERVATION_INSTRUCTION,
       "Write analysis_preview first as a short, warm, natural-language sentence summarizing the meal and its likely quantities. Never put JSON syntax in that sentence.",
       MEAL_COPY_INSTRUCTION,
       "Keep the title short and useful in a meal history.",
@@ -227,6 +243,29 @@ export async function analyzeMeal(
   const now = dependencies.now ?? Date.now;
   const deadline = now() + ANALYSIS_TIMEOUT_MS;
   const requestedMode = mealResearchMode(combinedText, analysisContext);
+  const observeResearch = dependencies.observeResearch ??
+    ((observation: MealResearchObservation) => {
+      // Deliberately excludes meal text, user/entry identifiers, URLs, and
+      // provider output. These bounded fields prove routing and real tool use
+      // without making operational logs a second meal-history store.
+      console.info("meal_research_observation", observation);
+    });
+  const reportResearch = (observation: MealResearchObservation): void => {
+    try {
+      observeResearch(observation);
+    } catch {
+      // Telemetry is never allowed to change meal-processing behavior.
+    }
+  };
+  reportResearch({
+    phase: "routed",
+    requestedMode,
+    activeMode: requestedMode,
+    toolConfigured: requestedMode !== "none",
+    toolCallObserved: false,
+    degraded: false,
+    sourceCount: 0,
+  });
 
   let searchPhaseVisible = false;
   const publishResearchPhase = async (message: string): Promise<void> => {
@@ -314,6 +353,15 @@ export async function analyzeMeal(
       degraded,
       sources: streamResult.webSearchSources,
     };
+    reportResearch({
+      phase: "completed",
+      requestedMode,
+      activeMode,
+      toolConfigured: searchEnabled,
+      toolCallObserved: research.used,
+      degraded,
+      sourceCount: research.sources.length,
+    });
     return {
       analysis: applyMealResearchResult(
         parseAnalysis(JSON.parse(streamResult.outputText)),
@@ -331,6 +379,15 @@ export async function analyzeMeal(
       throw error;
     }
     if (deadline - now() <= 0) throw error;
+    reportResearch({
+      phase: "failed",
+      requestedMode,
+      activeMode: requestedMode,
+      toolConfigured: true,
+      toolCallObserved: searchPhaseVisible,
+      degraded: true,
+      sourceCount: 0,
+    });
     console.warn("meal_web_search_degraded", { message: String(error) });
     // Tell the user the switch is happening rather than leaving a stale
     // "Searching the web" while the tool-free fallback runs.
@@ -448,7 +505,7 @@ export async function processStoredEntry(
       signedImageUrl = signed.url;
     }
 
-    const { analysis, responseId, research } = await analyzeMeal(
+    const { analysis, responseId } = await analyzeMeal(
       userId,
       combinedText,
       entry.analysis_context?.trim().slice(0, MAX_ANALYSIS_CONTEXT_LENGTH) ||
@@ -500,14 +557,6 @@ export async function processStoredEntry(
         }
       },
     );
-    if (research.requested) {
-      console.info("entry_meal_research_completed", {
-        entryId,
-        used: research.used,
-        degraded: research.degraded,
-        sourceCount: research.sources.length,
-      });
-    }
     await updateEntry(admin, entryId, userId, processingAttempt, {
       status: "complete",
       status_message: "Ready",
