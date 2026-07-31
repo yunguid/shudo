@@ -558,7 +558,7 @@ struct AccountView: View {
 
     private var weightReminderSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("MORNING CHECK-IN")
+            sectionLabel("WEIGH-IN")
             VStack(spacing: 0) {
                 Toggle(
                     isOn: Binding(
@@ -567,7 +567,7 @@ struct AccountView: View {
                     )
                 ) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Daily weight reminder")
+                        Text("Daily weigh-in reminder")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(Design.Color.ink)
                         Text("A private notification on this device")

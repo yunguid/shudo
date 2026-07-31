@@ -17,7 +17,7 @@ enum WeightReminderScheduler {
                 code: 1,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "Notifications are off. Enable them in Settings to use the morning reminder."
+                        "Notifications are off. Enable them in Settings to use the weigh-in reminder."
                 ]
             )
         }
@@ -28,8 +28,8 @@ enum WeightReminderScheduler {
         components.minute = (bounded % 3_600) / 60
 
         let content = UNMutableNotificationContent()
-        content.title = "Morning check-in"
-        content.body = "Log your weight and add an optional mirror or scale photo."
+        content.title = "Weigh-in"
+        content.body = "Say your weight and you’re done."
         content.sound = .default
 
         let request = UNNotificationRequest(

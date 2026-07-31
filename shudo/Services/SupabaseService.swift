@@ -395,31 +395,25 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
 
     // MARK: - Weight check-ins
 
-    enum WeightPhotoKind: String, Sendable {
-        case progress
-        case scale
-    }
-
     static func weightPhotoPath(
         userId: String,
         localDay: String,
-        kind: WeightPhotoKind,
         fileId: UUID = UUID()
     ) throws -> String {
         guard UUID(uuidString: userId) != nil,
             localDay.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
         else {
-            throw ServiceError.parseError(message: "Invalid weight check-in path")
+            throw ServiceError.parseError(message: "Invalid weigh-in photo path")
         }
         return
-            "\(userId.lowercased())/\(localDay)/\(kind.rawValue)-\(fileId.uuidString.lowercased()).jpg"
+            "\(userId.lowercased())/\(localDay)/progress-\(fileId.uuidString.lowercased()).jpg"
     }
 
     static func weightPhotoPathBelongsToUser(_ path: String, userId: String) -> Bool {
         guard UUID(uuidString: userId) != nil else { return false }
         let pattern =
             #"^"# + NSRegularExpression.escapedPattern(for: userId.lowercased())
-            + #"/\d{4}-\d{2}-\d{2}/(progress|scale)-[0-9a-f-]{36}\.jpg$"#
+            + #"/\d{4}-\d{2}-\d{2}/progress-[0-9a-f-]{36}\.jpg$"#
         return path.lowercased().range(of: pattern, options: .regularExpression) != nil
     }
 
@@ -433,7 +427,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         components.queryItems = [
             URLQueryItem(
                 name: "select",
-                value: "id,local_day,weight_kg,progress_photo_path,scale_photo_path,created_at,updated_at"),
+                value: "id,local_day,weight_kg,progress_photo_path,created_at,updated_at"),
             URLQueryItem(name: "user_id", value: "eq.\(userId)"),
             URLQueryItem(name: "order", value: "local_day.desc"),
             URLQueryItem(name: "limit", value: "\(max(1, min(limit, 365)))"),
@@ -446,14 +440,14 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw ServiceError.serverError(
                 statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0,
-                message: "Couldn’t load weight check-ins")
+                message: "Couldn’t load weigh-ins")
         }
         return try Self.parseWeightCheckIns(data)
     }
 
     static func parseWeightCheckIns(_ data: Data) throws -> [WeightCheckIn] {
         guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            throw ServiceError.parseError(message: "Invalid weight check-in response")
+            throw ServiceError.parseError(message: "Invalid weigh-in response")
         }
         return objects.compactMap { object in
             guard let idText = object["id"] as? String,
@@ -470,7 +464,6 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
                 localDay: localDay,
                 weightKG: weight,
                 progressPhotoPath: object["progress_photo_path"] as? String,
-                scalePhotoPath: object["scale_photo_path"] as? String,
                 createdAt: createdAt,
                 updatedAt: updatedAt
             )
@@ -481,7 +474,6 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         localDay: String,
         weightKG: Double,
         progressJPEG: Data?,
-        scaleJPEG: Data?,
         replacing existing: WeightCheckIn?
     ) async throws -> WeightCheckIn {
         guard WeightCheckInPolicy.kilogramsRange.contains(weightKG) else {
@@ -489,19 +481,17 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         }
         let jwt = try await currentJWT()
         let userId = try currentUserId()
-        let uploads: [(WeightPhotoKind, Data?)] = [(.progress, progressJPEG), (.scale, scaleJPEG)]
-        var newPaths: [WeightPhotoKind: String] = [:]
+        var newPath: String?
         do {
-            for (kind, data) in uploads {
-                guard let data else { continue }
-                guard data.count <= Self.maximumWeightPhotoBytes,
-                    Self.profilePhotoDataIsJPEG(data)
+            if let progressJPEG {
+                guard progressJPEG.count <= Self.maximumWeightPhotoBytes,
+                    Self.profilePhotoDataIsJPEG(progressJPEG)
                 else {
-                    throw ServiceError.parseError(message: "Check-in photos must be JPEGs under 4 MB")
+                    throw ServiceError.parseError(message: "Weigh-in photos must be JPEGs under 4 MB")
                 }
-                let path = try Self.weightPhotoPath(userId: userId, localDay: localDay, kind: kind)
-                try await uploadWeightPhoto(data, path: path, jwt: jwt)
-                newPaths[kind] = path
+                let path = try Self.weightPhotoPath(userId: userId, localDay: localDay)
+                try await uploadWeightPhoto(progressJPEG, path: path, jwt: jwt)
+                newPath = path
             }
 
             var components = URLComponents(
@@ -521,11 +511,8 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
                 "local_day": localDay,
                 "weight_kg": weightKG,
             ]
-            if let path = newPaths[.progress] ?? existing?.progressPhotoPath {
+            if let path = newPath ?? existing?.progressPhotoPath {
                 payload["progress_photo_path"] = path
-            }
-            if let path = newPaths[.scale] ?? existing?.scalePhotoPath {
-                payload["scale_photo_path"] = path
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -534,20 +521,17 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
             else {
                 throw ServiceError.serverError(
                     statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0,
-                    message: "Couldn’t save weight check-in")
+                    message: "Couldn’t save weigh-in")
             }
 
             try? await updateCurrentWeight(weightKG, userId: userId, jwt: jwt)
-            if let oldPath = existing?.progressPhotoPath, newPaths[.progress] != nil {
-                try? await deleteWeightPhoto(path: oldPath, userId: userId, jwt: jwt)
-            }
-            if let oldPath = existing?.scalePhotoPath, newPaths[.scale] != nil {
+            if let oldPath = existing?.progressPhotoPath, newPath != nil {
                 try? await deleteWeightPhoto(path: oldPath, userId: userId, jwt: jwt)
             }
             return saved
         } catch {
-            for path in newPaths.values {
-                try? await deleteWeightPhoto(path: path, userId: userId, jwt: jwt)
+            if let newPath {
+                try? await deleteWeightPhoto(path: newPath, userId: userId, jwt: jwt)
             }
             throw error
         }
@@ -561,7 +545,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
         request.setValue("false", forHTTPHeaderField: "x-upsert")
         request.httpBody = data
-        try await performProfilePhotoRequest(request, failureMessage: "Couldn’t upload check-in photo")
+        try await performProfilePhotoRequest(request, failureMessage: "Couldn’t upload weigh-in photo")
     }
 
     private func deleteWeightPhoto(path: String, userId: String, jwt: String) async throws {
@@ -571,7 +555,7 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
         try await performProfilePhotoRequest(
-            request, failureMessage: "Couldn’t remove old check-in photo")
+            request, failureMessage: "Couldn’t remove old weigh-in photo")
     }
 
     private func weightPhotoObjectURL(path: String) -> URL {
@@ -889,19 +873,54 @@ struct SupabaseService: Sendable, WeeklySummaryProviding {
         .sorted { $0.targetDay < $1.targetDay }
     }
 
+    static let weeklySummaryColumns =
+        "week_start,week_end,headline,narrative,repeated_foods,patterns,suggestions"
+    static let weeklySummaryColumnsWithMicronutrients =
+        weeklySummaryColumns + ",micronutrient_report"
+
+    /// PostgREST rejects the WHOLE select with a 400 when any requested
+    /// column is missing, so an app shipped ahead of a migration loses its
+    /// entire insights page over one optional column. A 400 here retries
+    /// once with the base projection — insights load, just without the
+    /// micronutrient report, instead of failing outright.
+    static func weeklySummariesShouldRetryWithBaseColumns(statusCode: Int) -> Bool {
+        statusCode == 400
+    }
+
     func fetchWeeklySummaries(limit: Int) async throws -> [WeeklyInsightSummary] {
         let jwt = try await currentJWT()
         let userId = try currentUserId()
+        do {
+            return try await requestWeeklySummaries(
+                columns: Self.weeklySummaryColumnsWithMicronutrients,
+                limit: limit,
+                userId: userId,
+                jwt: jwt
+            )
+        } catch let ServiceError.serverError(statusCode, _)
+            where Self.weeklySummariesShouldRetryWithBaseColumns(statusCode: statusCode)
+        {
+            return try await requestWeeklySummaries(
+                columns: Self.weeklySummaryColumns,
+                limit: limit,
+                userId: userId,
+                jwt: jwt
+            )
+        }
+    }
+
+    private func requestWeeklySummaries(
+        columns: String,
+        limit: Int,
+        userId: String,
+        jwt: String
+    ) async throws -> [WeeklyInsightSummary] {
         var components = URLComponents(
             url: supabaseUrl.appendingPathComponent("/rest/v1/weekly_summaries"),
             resolvingAgainstBaseURL: false
         )!
         components.queryItems = [
-            URLQueryItem(
-                name: "select",
-                value:
-                    "week_start,week_end,headline,narrative,repeated_foods,patterns,suggestions,micronutrient_report"
-            ),
+            URLQueryItem(name: "select", value: columns),
             URLQueryItem(name: "user_id", value: "eq.\(userId)"),
             URLQueryItem(name: "status", value: "eq.complete"),
             URLQueryItem(name: "order", value: "week_start.desc"),

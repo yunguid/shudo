@@ -201,13 +201,14 @@ function analysisContent(
     text: [
       "Estimate the nutrition for this meal from the description and photo.",
       "Use realistic portion assumptions when exact amounts are unavailable.",
+      "Account for fats that are typically present even when unmentioned — cooking oil or butter, dressings, and sauces — and assume restaurant portions include more added fat than home cooking.",
       "When the description quotes packaged-product nutrition facts (for example from a scanned barcode label), trust those numbers and scale them by the stated quantity instead of re-estimating the product.",
       ...researchInstructions(researchMode, lookupUnavailable),
       MEAL_COMPONENT_PRESERVATION_INSTRUCTION,
       "Write analysis_preview first as a short, warm, natural-language sentence summarizing the meal and its likely quantities. Never put JSON syntax in that sentence.",
       MEAL_COPY_INSTRUCTION,
       "Keep the title short and useful in a meal history.",
-      "Make item totals internally consistent with the meal totals.",
+      "Make item totals internally consistent with the meal totals, and keep calories consistent with the macros: about 4 kcal per gram of protein or carbohydrate, 9 per gram of fat, and 7 per gram of alcohol.",
       `Description and transcript:\n${
         combinedText || "No written description was provided."
       }`,

@@ -1,4 +1,4 @@
--- Daily, user-owned weight check-ins with two optional private photos, plus
+-- Daily, user-owned weigh-ins with an optional private progress photo, plus
 -- the structured micronutrient report produced by the scheduled weekly
 -- analysis harness.
 
@@ -8,7 +8,6 @@ create table public.weight_checkins (
   local_day date not null,
   weight_kg numeric(6,2) not null,
   progress_photo_path text,
-  scale_photo_path text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, local_day),
@@ -24,22 +23,11 @@ create table public.weight_checkins (
       )
       and length(progress_photo_path) <= 160
     )
-  ),
-  constraint weight_checkins_scale_photo_owned_check check (
-    scale_photo_path is null
-    or (
-      split_part(scale_photo_path, '/', 1) = user_id::text
-      and scale_photo_path ~ (
-        '^' || user_id::text
-        || '/[0-9]{4}-[0-9]{2}-[0-9]{2}/scale-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
-      )
-      and length(scale_photo_path) <= 160
-    )
   )
 );
 
 comment on table public.weight_checkins is
-  'One user-owned weight observation per local calendar day with optional private progress and scale photos.';
+  'One user-owned weight observation per local calendar day with an optional private progress photo.';
 
 create index weight_checkins_user_day_desc_idx
   on public.weight_checkins (user_id, local_day desc);
@@ -93,7 +81,7 @@ using (
   and (storage.foldername(name))[1] = (select auth.uid())::text
   and name ~ (
     '^' || (select auth.uid())::text
-    || '/[0-9]{4}-[0-9]{2}-[0-9]{2}/(progress|scale)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
+    || '/[0-9]{4}-[0-9]{2}-[0-9]{2}/progress-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
   )
 );
 
@@ -104,7 +92,7 @@ with check (
   and (storage.foldername(name))[1] = (select auth.uid())::text
   and name ~ (
     '^' || (select auth.uid())::text
-    || '/[0-9]{4}-[0-9]{2}-[0-9]{2}/(progress|scale)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
+    || '/[0-9]{4}-[0-9]{2}-[0-9]{2}/progress-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
   )
 );
 
@@ -115,7 +103,7 @@ using (
   and (storage.foldername(name))[1] = (select auth.uid())::text
   and name ~ (
     '^' || (select auth.uid())::text
-    || '/[0-9]{4}-[0-9]{2}-[0-9]{2}/(progress|scale)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
+    || '/[0-9]{4}-[0-9]{2}-[0-9]{2}/progress-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]jpg$'
   )
 );
 

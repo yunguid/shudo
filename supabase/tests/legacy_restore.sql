@@ -205,6 +205,7 @@ values
 \ir ../migrations/20260722015329_restrict_beta_signups_to_allowlist.sql
 \ir ../migrations/20260722224247_add_private_profile_photos.sql
 \ir ../migrations/20260730011301_add_existing_meal_photos.sql
+\ir ../migrations/20260730041117_weight_checkins_and_micronutrient_reports.sql
 
 do $$
 declare
@@ -474,6 +475,8 @@ $$;
 \ir voice_corrections.sql
 
 \ir profile_photos.sql
+
+\ir weight_checkins.sql
 
 insert into storage.objects (bucket_id, name)
 values

@@ -43,6 +43,8 @@
 	<string>Shudo uses the camera so you can attach a meal photo.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Shudo uses the microphone to record and transcribe your meal description.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Shudo uses speech recognition so you can say your weight during a weigh-in instead of typing it.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -156,9 +156,7 @@ struct TodayView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
                             dayNavigator
-                            if loadsRemotely {
-                                weightCheckInCard
-                            }
+                            weightCheckInCard
                             macroStrip
                             mealList
                         }
@@ -394,54 +392,38 @@ struct TodayView: View {
     }
 
     private var selectedLocalDay: String {
-        SupabaseService().localDayString(
-            for: vm.currentDay,
-            timezone: vm.profile?.timezone ?? profile.timezone
-        )
+        dayFormatters.localDayFormatter.string(from: vm.currentDay)
     }
 
     private var selectedWeightCheckIn: WeightCheckIn? {
         weightCheckIns.first { $0.localDay == selectedLocalDay }
     }
 
-    private var previousWeightCheckIn: WeightCheckIn? {
-        weightCheckIns.first { $0.localDay < selectedLocalDay }
-    }
-
+    /// A deliberately quiet row: just "Weigh-in", aligned with the summary
+    /// card's text, showing the day's weight once logged. The whole row opens
+    /// the voice-first weigh-in sheet.
     private var weightCheckInCard: some View {
         Button {
             isShowingWeightCheckIn = true
         } label: {
-            HStack(spacing: 14) {
-                Image(systemName: selectedWeightCheckIn == nil ? "scalemass" : "checkmark.circle.fill")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(
-                        selectedWeightCheckIn == nil
-                            ? Design.Color.accentSecondary
-                            : Design.Color.success
-                    )
-                    .frame(width: 42, height: 42)
-                    .background(Design.Color.elevated, in: Circle())
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(selectedWeightCheckIn == nil ? "Morning check-in" : weightHeadline)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.ink)
-                    Text(weightDetail)
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.muted)
-                        .lineLimit(2)
-                }
+            HStack(spacing: 8) {
+                Text("Weigh-in")
+                    .font(.headline)
+                    .foregroundStyle(Design.Color.ink)
                 Spacer(minLength: 8)
-                if isLoadingWeightCheckIns {
-                    ProgressView().tint(Design.Color.accentSecondary)
+                if let checkIn = selectedWeightCheckIn {
+                    Text(weightValueText(checkIn))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Design.Color.muted)
+                        .monospacedDigit()
                 } else {
-                    Text(selectedWeightCheckIn == nil ? "Log" : "Edit")
+                    Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.accentSecondary)
+                        .foregroundStyle(Design.Color.subtle)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
             .background(
                 Design.Color.glassFill,
                 in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
@@ -449,32 +431,16 @@ struct TodayView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Logs weight with optional mirror and scale photos")
+        .accessibilityLabel(
+            selectedWeightCheckIn.map { "Weigh-in, \(weightValueText($0)) logged" } ?? "Weigh-in"
+        )
+        .accessibilityHint("Opens the weigh-in sheet to say or type your weight")
     }
 
-    private var weightHeadline: String {
-        guard let checkIn = selectedWeightCheckIn else { return "Morning check-in" }
+    private func weightValueText(_ checkIn: WeightCheckIn) -> String {
         let units = vm.profile?.units ?? profile.units
         let value = WeightCheckInPolicy.displayedValue(kilograms: checkIn.weightKG, units: units)
         return "\(String(format: "%.1f", value)) \(units.lowercased() == "imperial" ? "lb" : "kg")"
-    }
-
-    private var weightDetail: String {
-        guard let checkIn = selectedWeightCheckIn else {
-            return "Log your weight and optionally add mirror or scale photos."
-        }
-        let photoText = checkIn.hasPhotos ? " · photos saved" : ""
-        guard let previous = previousWeightCheckIn else { return "First recorded check-in\(photoText)" }
-        let units = vm.profile?.units ?? profile.units
-        let deltaKG = checkIn.weightKG - previous.weightKG
-        let delta =
-            units.lowercased() == "imperial"
-            ? deltaKG * WeightCheckInPolicy.poundsPerKilogram
-            : deltaKG
-        let suffix = units.lowercased() == "imperial" ? "lb" : "kg"
-        let direction = delta > 0 ? "+" : ""
-        return
-            "\(direction)\(String(format: "%.1f", delta)) \(suffix) since \(previous.localDay)\(photoText)"
     }
 
     @MainActor
@@ -931,6 +897,7 @@ private final class DayFormatterCache {
     private(set) var calendar = Calendar(identifier: .gregorian)
     private(set) var weekdayFormatter = DateFormatter()
     private(set) var dateFormatter = DateFormatter()
+    private(set) var localDayFormatter = DateFormatter()
     private var timezoneIdentifier: String?
 
     func resolved(for timezoneIdentifier: String) -> DayFormatterCache {
@@ -944,6 +911,10 @@ private final class DayFormatterCache {
         dateFormatter.calendar = calendar
         dateFormatter.timeZone = calendar.timeZone
         dateFormatter.dateFormat = "MMM d"
+        localDayFormatter.calendar = calendar
+        localDayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        localDayFormatter.timeZone = calendar.timeZone
+        localDayFormatter.dateFormat = "yyyy-MM-dd"
         return self
     }
 }

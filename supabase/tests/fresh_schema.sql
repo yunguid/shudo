@@ -21,6 +21,7 @@ $$;
 \ir ../migrations/20260730011301_add_existing_meal_photos.sql
 -- The additive migration is intentionally safe to replay.
 \ir ../migrations/20260730011301_add_existing_meal_photos.sql
+\ir ../migrations/20260730041117_weight_checkins_and_micronutrient_reports.sql
 
 insert into auth.users (id, email)
 values
@@ -173,6 +174,8 @@ $$;
 \ir existing_meal_photos.sql
 
 \ir profile_photos.sql
+
+\ir weight_checkins.sql
 
 -- Streamed previews stay bounded and are replaced/terminalized under the same
 -- attempt fence as the durable processor state.

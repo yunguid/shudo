@@ -165,6 +165,13 @@ struct EntryComposerView: View {
         .onAppear {
             Perf.mark("composer.appear")
             CaptureDiagnostics.record(.composerPresented, state: audio.controlState.rawValue)
+            // Build the camera controller after the sheet settles so a later
+            // "Camera" tap presents instantly instead of paying the picker's
+            // multi-second first-build on the tap itself.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                CameraPrewarmer.prewarm()
+            }
         }
         .task {
             guard autoStartRecording, !didAutoStart else { return }
@@ -302,6 +309,7 @@ struct EntryComposerView: View {
             HStack(spacing: 12) {
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
                     mediaButton(title: "Camera", systemImage: "camera.fill") {
+                        Perf.mark("camera.tap")
                         settleVoiceCapture()
                         isShowingCamera = true
                     }

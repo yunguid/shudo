@@ -282,6 +282,7 @@ approved_migration_files=(
   20260722015329_restrict_beta_signups_to_allowlist.sql
   20260722224247_add_private_profile_photos.sql
   20260730011301_add_existing_meal_photos.sql
+  20260730041117_weight_checkins_and_micronutrient_reports.sql
 )
 
 approved_migration_hashes=(
@@ -295,6 +296,7 @@ approved_migration_hashes=(
   9ca9a33afc91e370a2f1a469b8291fdc637a4ddd79b9f56aeb8e636c628decf2
   8049c69efd841cf00c1fa1588f76281bc98eeaaf063159c24bf27d1a07b6a595
   6532384219785ab7cdffd3f7d186340043fecbae0a374aa89f63bc1a8cbc8de7
+  9077a9d3c2f320b2085552f693e18619df60a60110e981a283dac1f08a73eadf
 )
 
 approved_migration_versions=()

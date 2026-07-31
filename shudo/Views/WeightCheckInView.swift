@@ -2,23 +2,20 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+/// Voice-first weigh-in: the sheet starts listening as it appears, the
+/// spoken weight lands in the big readout live, and one bottom button stops
+/// the mic and then saves. Manual editing and an optional mirror photo are
+/// the only other affordances — no instructions, no date, no scale photos.
 struct WeightCheckInView: View {
-    private enum PhotoKind: String, Identifiable {
-        case progress
-        case scale
-        var id: String { rawValue }
-    }
-
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var voice = WeightVoiceCapture()
     @State private var weightText: String
-    @State private var progressPhoto: UIImage?
-    @State private var scalePhoto: UIImage?
-    @State private var progressPickerItem: PhotosPickerItem?
-    @State private var scalePickerItem: PhotosPickerItem?
-    @State private var cameraKind: PhotoKind?
+    @State private var mirrorPhoto: UIImage?
+    @State private var mirrorPickerItem: PhotosPickerItem?
+    @State private var isShowingCamera = false
     @State private var isSaving = false
-    @State private var isReadingScale = false
     @State private var errorMessage: String?
+    @FocusState private var weightFieldFocused: Bool
 
     let localDay: String
     let units: String
@@ -54,193 +51,222 @@ struct WeightCheckInView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    intro
-                    weightField
-                    photoSlot(
-                        title: "Mirror photo",
-                        detail: "Optional progress photo",
-                        systemImage: "person.crop.rectangle",
-                        kind: .progress,
-                        image: progressPhoto,
-                        pickerItem: $progressPickerItem,
-                        alreadySaved: existing?.progressPhotoPath != nil
-                    )
-                    photoSlot(
-                        title: "Scale photo",
-                        detail: "Optional photo of the display",
-                        systemImage: "scalemass",
-                        kind: .scale,
-                        image: scalePhoto,
-                        pickerItem: $scalePickerItem,
-                        alreadySaved: existing?.scalePhotoPath != nil
-                    )
-                    if let errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.circle")
-                            .font(.footnote)
-                            .foregroundStyle(Design.Color.danger)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            VStack(spacing: 0) {
+                Spacer(minLength: 12)
+                weightReadout
+                statusLine
+                    .padding(.top, 14)
+                Spacer(minLength: 12)
+                mirrorPhotoSection
+                if let errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(Design.Color.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 14)
                 }
-                .padding(20)
-                .padding(.bottom, 96)
             }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AppBackground())
-            .navigationTitle(existing == nil ? "Morning check-in" : "Edit check-in")
+            .navigationTitle("Weigh-in")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }.disabled(isSaving)
                 }
             }
-            .safeAreaInset(edge: .bottom) { saveBar }
+            .safeAreaInset(edge: .bottom) { actionBar }
         }
         .preferredColorScheme(.dark)
-        .fullScreenCover(item: $cameraKind) { kind in
+        .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { image in
-                setImage(ImageProcessor.resizedForUpload(image), for: kind)
+                mirrorPhoto = ImageProcessor.resizedForUpload(image)
+                errorMessage = nil
             }
             .ignoresSafeArea()
         }
-        .onChange(of: progressPickerItem) { _, item in loadPickerItem(item, for: .progress) }
-        .onChange(of: scalePickerItem) { _, item in loadPickerItem(item, for: .scale) }
+        .task {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                CameraPrewarmer.prewarm()
+            }
+            // Fresh weigh-ins go straight to voice; editing an existing one
+            // starts quiet (the mic button restarts listening on demand).
+            guard existing == nil else { return }
+            await voice.start()
+        }
+        .onChange(of: voice.transcript) { _, transcript in
+            guard voice.isCapturing,
+                let value = WeightUtterancePolicy.parsedWeight(transcript: transcript, units: units)
+            else { return }
+            weightText = String(format: "%.1f", value)
+        }
+        .onChange(of: weightFieldFocused) { _, focused in
+            if focused { voice.stop() }
+        }
+        .onChange(of: mirrorPickerItem) { _, item in loadMirrorPickerItem(item) }
+        .onDisappear { voice.stop() }
         .interactiveDismissDisabled(isSaving)
     }
 
-    private var intro: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(localDay)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Design.Color.accentSecondary)
-            Text(
-                "Use the same time and conditions when you can. Daily changes are noisy; the trend matters more."
-            )
-            .font(.footnote)
-            .foregroundStyle(Design.Color.muted)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var weightField: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Weight")
-                .font(.headline)
+    private var weightReadout: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            TextField("0.0", text: $weightText)
+                .keyboardType(.decimalPad)
+                .focused($weightFieldFocused)
+                .font(.system(size: 56, weight: .bold, design: .rounded))
                 .foregroundStyle(Design.Color.ink)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                TextField("0.0", text: $weightText)
-                    .keyboardType(.decimalPad)
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .foregroundStyle(Design.Color.ink)
-                    .monospacedDigit()
-                    .onChange(of: weightText) { _, value in
-                        let filtered = value.filter { $0.isNumber || $0 == "." || $0 == "," }
-                        if filtered != value { weightText = filtered }
-                    }
-                Text(unitLabel)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Design.Color.muted)
-            }
-            .padding(18)
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
-            )
-        }
-    }
-
-    private func photoSlot(
-        title: String,
-        detail: String,
-        systemImage: String,
-        kind: PhotoKind,
-        image: UIImage?,
-        pickerItem: Binding<PhotosPickerItem?>,
-        alreadySaved: Bool
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(Design.Color.accentPrimary)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Design.Color.ink)
-                    Text(
-                        alreadySaved && image == nil
-                            ? "Saved — choose another to replace it"
-                            : kind == .scale && isReadingScale ? "Reading the display…" : detail
-                    )
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+                .fixedSize()
+                .onChange(of: weightText) { _, value in
+                    let filtered = value.filter { $0.isNumber || $0 == "." || $0 == "," }
+                    if filtered != value { weightText = filtered }
                 }
-                Spacer()
-                if alreadySaved || image != nil {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Design.Color.success)
-                }
-            }
+            Text(unitLabel)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(Design.Color.muted)
 
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 190)
-                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
-            }
-
-            HStack(spacing: 10) {
+            if !voice.isCapturing {
                 Button {
-                    cameraKind = kind
+                    Task { await voice.start() }
                 } label: {
-                    Label("Camera", systemImage: "camera.fill")
-                        .frame(maxWidth: .infinity).frame(height: 44)
+                    Image(systemName: "mic.fill")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Design.Color.accentSecondary)
+                        .frame(width: 40, height: 40)
+                        .background(Design.Color.elevated, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .background(Design.Color.elevated, in: Capsule())
-
-                PhotosPicker(selection: pickerItem, matching: .images) {
-                    Label("Photos", systemImage: "photo")
-                        .frame(maxWidth: .infinity).frame(height: 44)
-                        .contentShape(Rectangle())
-                }
-                .background(Design.Color.elevated, in: Capsule())
+                .disabled(isSaving)
+                .accessibilityLabel("Say your weight")
             }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Design.Color.ink)
         }
-        .padding(16)
-        .background(
-            Design.Color.glassFill,
-            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-        )
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { weightFieldFocused = true }
+        .accessibilityElement(children: .contain)
     }
 
-    private var saveBar: some View {
+    @ViewBuilder
+    private var statusLine: some View {
+        if voice.isCapturing {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(Design.Color.danger)
+                    .frame(width: 7, height: 7)
+                Text(weightKG == nil ? "Listening — say your weight" : "Heard — tap Stop")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Design.Color.muted)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private var mirrorPhotoSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Mirror photo · optional")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Design.Color.muted)
+
+            if let mirrorPhoto {
+                ZStack(alignment: .topTrailing) {
+                    Image(uiImage: mirrorPhoto)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 170)
+                        .clipShape(
+                            RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
+                        )
+                    Button {
+                        self.mirrorPhoto = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(.black.opacity(0.58), in: Circle())
+                    }
+                    .padding(8)
+                    .accessibilityLabel("Remove mirror photo")
+                }
+            } else {
+                HStack(spacing: 10) {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        Button {
+                            voice.stop()
+                            isShowingCamera = true
+                        } label: {
+                            Label("Camera", systemImage: "camera.fill")
+                                .frame(maxWidth: .infinity).frame(height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .background(Design.Color.elevated, in: Capsule())
+                    }
+
+                    PhotosPicker(selection: $mirrorPickerItem, matching: .images) {
+                        Label("Photos", systemImage: "photo")
+                            .frame(maxWidth: .infinity).frame(height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .background(Design.Color.elevated, in: Capsule())
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.ink)
+                .disabled(isSaving)
+            }
+
+            if existing?.progressPhotoPath != nil, mirrorPhoto == nil {
+                Text("A photo is already saved for this day — adding one replaces it.")
+                    .font(.caption2)
+                    .foregroundStyle(Design.Color.subtle)
+            }
+        }
+    }
+
+    private var actionBar: some View {
         Button {
-            save()
+            if voice.isCapturing {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                voice.stop()
+            } else {
+                save()
+            }
         } label: {
             HStack(spacing: 8) {
-                if isSaving { ProgressView().tint(.white) }
-                Text(isSaving ? "Saving…" : "Save check-in")
+                if isSaving {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: voice.isCapturing ? "stop.fill" : "checkmark")
+                }
+                Text(voice.isCapturing ? "Stop" : isSaving ? "Saving…" : "Save weigh-in")
             }
             .font(.headline)
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 54)
-            .background(
-                weightKG == nil ? Design.Color.subtle : Design.Color.ctaPrimary,
-                in: Capsule()
-            )
+            .background(actionBackground, in: Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(weightKG == nil || isSaving)
+        .disabled(!voice.isCapturing && (weightKG == nil || isSaving))
         .padding(.horizontal, 20)
         .padding(.vertical, 9)
         .background(.ultraThinMaterial)
+        .accessibilityLabel(voice.isCapturing ? "Stop listening" : "Save weigh-in")
     }
 
-    private func loadPickerItem(_ item: PhotosPickerItem?, for kind: PhotoKind) {
+    private var actionBackground: AnyShapeStyle {
+        if voice.isCapturing { return AnyShapeStyle(Design.Color.danger) }
+        return weightKG == nil
+            ? AnyShapeStyle(Design.Color.subtle)
+            : AnyShapeStyle(Design.Color.ctaPrimary)
+    }
+
+    private func loadMirrorPickerItem(_ item: PhotosPickerItem?) {
         guard let item else { return }
+        voice.stop()
         Task {
             guard let data = try? await item.loadTransferable(type: Data.self) else {
                 errorMessage = "That photo couldn’t be loaded."
@@ -253,47 +279,25 @@ struct WeightCheckInView: View {
                 errorMessage = "That photo couldn’t be prepared."
                 return
             }
-            setImage(image, for: kind)
+            mirrorPhoto = image
+            mirrorPickerItem = nil
+            errorMessage = nil
         }
-    }
-
-    private func setImage(_ image: UIImage, for kind: PhotoKind) {
-        switch kind {
-        case .progress: progressPhoto = image
-        case .scale:
-            scalePhoto = image
-            isReadingScale = true
-            Task {
-                let detected = await ScaleWeightReader.recognizedDisplayedWeight(
-                    in: image,
-                    units: units
-                )
-                isReadingScale = false
-                guard let detected else { return }
-                weightText = String(format: "%.1f", detected)
-            }
-        }
-        errorMessage = nil
     }
 
     private func save() {
         guard let weightKG else { return }
+        voice.stop()
         isSaving = true
         errorMessage = nil
-        let progressPhoto = progressPhoto
-        let scalePhoto = scalePhoto
+        let mirrorPhoto = mirrorPhoto
         Task {
             let encoded = await Task.detached(priority: .userInitiated) {
-                (
-                    progressPhoto.flatMap { ImageProcessor.uploadJPEGData(from: [$0]) },
-                    scalePhoto.flatMap { ImageProcessor.uploadJPEGData(from: [$0]) }
-                )
+                mirrorPhoto.flatMap { ImageProcessor.uploadJPEGData(from: [$0]) }
             }.value
-            guard (progressPhoto == nil || encoded.0 != nil),
-                (scalePhoto == nil || encoded.1 != nil)
-            else {
+            guard mirrorPhoto == nil || encoded != nil else {
                 isSaving = false
-                errorMessage = "One of the photos couldn’t be prepared. Choose it again and retry."
+                errorMessage = "The photo couldn’t be prepared. Choose it again and retry."
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
@@ -301,8 +305,7 @@ struct WeightCheckInView: View {
                 let saved = try await service.saveWeightCheckIn(
                     localDay: localDay,
                     weightKG: weightKG,
-                    progressJPEG: encoded.0,
-                    scaleJPEG: encoded.1,
+                    progressJPEG: encoded,
                     replacing: existing
                 )
                 onSaved(saved)

@@ -446,12 +446,11 @@ struct NativeExperienceTests {
         let path = try SupabaseService.weightPhotoPath(
             userId: userID,
             localDay: "2026-07-30",
-            kind: .scale,
             fileId: fileID
         )
         #expect(
             path
-                == "00000000-0000-4000-8000-000000000001/2026-07-30/scale-11111111-2222-4333-8444-555555555555.jpg"
+                == "00000000-0000-4000-8000-000000000001/2026-07-30/progress-11111111-2222-4333-8444-555555555555.jpg"
         )
         #expect(SupabaseService.weightPhotoPathBelongsToUser(path, userId: userID))
         #expect(
@@ -475,9 +474,8 @@ struct NativeExperienceTests {
                 "id": "11111111-2222-4333-8444-555555555555",
                 "local_day": "2026-07-30",
                 "weight_kg": "82.45",
-                "progress_photo_path": NSNull(),
-                "scale_photo_path":
-                    "00000000-0000-4000-8000-000000000001/2026-07-30/scale-11111111-2222-4333-8444-555555555555.jpg",
+                "progress_photo_path":
+                    "00000000-0000-4000-8000-000000000001/2026-07-30/progress-11111111-2222-4333-8444-555555555555.jpg",
                 "created_at": "2026-07-30T12:00:00.000Z",
                 "updated_at": "2026-07-30T12:05:00.000Z",
             ]
@@ -485,25 +483,42 @@ struct NativeExperienceTests {
         let parsed = try SupabaseService.parseWeightCheckIns(data)
         #expect(parsed.count == 1)
         #expect(parsed.first?.weightKG == 82.45)
-        #expect(parsed.first?.hasPhotos == true)
+        #expect(parsed.first?.hasPhoto == true)
     }
 
-    @Test func scalePhotoReadingPrefersUnitLabeledDisplayAndRejectsDates() {
-        let detected = ScaleWeightReader.bestDisplayedWeight(
-            from: [
-                .init(text: "07/30", confidence: 0.99, area: 0.02),
-                .init(text: "182.4 lb", confidence: 0.91, area: 0.08),
-                .init(text: "72", confidence: 0.95, area: 0.01),
-            ],
-            units: "imperial"
-        )
-        #expect(detected == 182.4)
+    @Test func weightUtteranceParsingFindsTheLastPlausibleSpokenNumber() {
+        // Dictation renders numbers as digits; the latest plausible one wins
+        // so self-corrections ("183 — no, 182.6") land on the correction.
+        #expect(WeightUtterancePolicy.parsedWeight(transcript: "182.4", units: "imperial") == 182.4)
         #expect(
-            ScaleWeightReader.bestDisplayedWeight(
-                from: [.init(text: "2026", confidence: 1, area: 0.2)],
-                units: "metric"
-            ) == nil
-        )
+            WeightUtterancePolicy.parsedWeight(
+                transcript: "I think 183 no wait 182.6",
+                units: "imperial"
+            ) == 182.6)
+        // Low-confidence dictation artifacts: spaced decimals and commas.
+        #expect(
+            WeightUtterancePolicy.parsedWeight(transcript: "182 point 4", units: "imperial") == 182.4)
+        #expect(WeightUtterancePolicy.parsedWeight(transcript: "82,6", units: "metric") == 82.6)
+        // A trailing fragment ("182 4") is implausible as a weight on its own,
+        // so the utterance still resolves to the full number before it.
+        #expect(WeightUtterancePolicy.parsedWeight(transcript: "182 4", units: "imperial") == 182)
+        // Nothing plausible: out-of-range values and word-only utterances.
+        #expect(WeightUtterancePolicy.parsedWeight(transcript: "5", units: "imperial") == nil)
+        #expect(WeightUtterancePolicy.parsedWeight(transcript: "1000", units: "metric") == nil)
+        #expect(
+            WeightUtterancePolicy.parsedWeight(transcript: "about the same as yesterday", units: "metric")
+                == nil)
+    }
+
+    @Test func weeklySummariesRetryDropsOnlyTheMicronutrientColumnOnSchemaDrift() {
+        // An app shipped ahead of the migration gets a 400 for the unknown
+        // column; only that status retries with the base projection.
+        #expect(SupabaseService.weeklySummariesShouldRetryWithBaseColumns(statusCode: 400))
+        #expect(!SupabaseService.weeklySummariesShouldRetryWithBaseColumns(statusCode: 401))
+        #expect(!SupabaseService.weeklySummariesShouldRetryWithBaseColumns(statusCode: 500))
+        #expect(
+            SupabaseService.weeklySummaryColumnsWithMicronutrients
+                == SupabaseService.weeklySummaryColumns + ",micronutrient_report")
     }
 
     @Test func reanalysisRequestUsesInjectableSessionAndBoundedContext() throws {
