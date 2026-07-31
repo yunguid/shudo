@@ -49,6 +49,10 @@ final class EntryCorrectionFlowUITests: XCTestCase {
 
         let note = app.textViews.firstMatch
         XCTAssertTrue(note.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !note.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(note.isHittable)
         note.tap()
         note.typeText(text)
 

@@ -1,29 +1,34 @@
 import Foundation
 import Testing
+
 @testable import shudo
 
 struct NativeExperienceTests {
     @Test func profilePhotoInputRejectsOversizedOrDecompressionHeavyImages() {
-        #expect(ProfilePhotoInputPolicy.accepts(
-            byteCount: 2_000_000,
-            pixelWidth: 6_000,
-            pixelHeight: 6_000
-        ))
-        #expect(!ProfilePhotoInputPolicy.accepts(
-            byteCount: 25_000_001,
-            pixelWidth: 512,
-            pixelHeight: 512
-        ))
-        #expect(!ProfilePhotoInputPolicy.accepts(
-            byteCount: 1_000_000,
-            pixelWidth: 10_000,
-            pixelHeight: 10_000
-        ))
-        #expect(!ProfilePhotoInputPolicy.accepts(
-            byteCount: 1_000_000,
-            pixelWidth: .infinity,
-            pixelHeight: 512
-        ))
+        #expect(
+            ProfilePhotoInputPolicy.accepts(
+                byteCount: 2_000_000,
+                pixelWidth: 6_000,
+                pixelHeight: 6_000
+            ))
+        #expect(
+            !ProfilePhotoInputPolicy.accepts(
+                byteCount: 25_000_001,
+                pixelWidth: 512,
+                pixelHeight: 512
+            ))
+        #expect(
+            !ProfilePhotoInputPolicy.accepts(
+                byteCount: 1_000_000,
+                pixelWidth: 10_000,
+                pixelHeight: 10_000
+            ))
+        #expect(
+            !ProfilePhotoInputPolicy.accepts(
+                byteCount: 1_000_000,
+                pixelWidth: .infinity,
+                pixelHeight: 512
+            ))
     }
 
     @Test func weeklySummaryKeepsTwoToThreeUsefulItemsAndSupportsEmptyProviders() async throws {
@@ -41,7 +46,8 @@ struct NativeExperienceTests {
         #expect(summary.headline == "Protein was steady")
         #expect(summary.narrative == "Breakfast carried most of the week.")
         #expect(summary.repeatedFoods == [WeeklyRepeatedFood(name: "Eggs", count: 4)])
-        #expect(summary.patterns == ["Breakfast improved", "Lunch was consistent", "Late meals increased"])
+        #expect(
+            summary.patterns == ["Breakfast improved", "Lunch was consistent", "Late meals increased"])
         #expect(summary.suggestions == ["Prep breakfast", "Add vegetables", "Keep water nearby"])
         #expect(try await EmptyWeeklySummaryProvider().fetchLatestWeeklySummary() == nil)
     }
@@ -133,14 +139,14 @@ struct NativeExperienceTests {
                 fatG: revised.fatG,
                 caloriesKcal: revised.caloriesKcal,
                 entryCount: 3
-            )
+            ),
         ]
         let cells = NutritionProgressPolicy.heatmapCells(
             totals: totals,
             target: revised,
             targetHistory: [
                 DailyMacroTargetSnapshot(targetDay: "2026-01-01", target: original),
-                DailyMacroTargetSnapshot(targetDay: "2026-07-20", target: revised)
+                DailyMacroTargetSnapshot(targetDay: "2026-07-20", target: revised),
             ],
             endingOn: ending,
             timezone: "UTC",
@@ -151,14 +157,15 @@ struct NativeExperienceTests {
         #expect(cells.first?.adherence == 1)
         #expect(cells.last?.localDay == "2026-07-21")
         #expect(cells.last?.adherence == 1)
-        #expect(NutritionProgressPolicy.effectiveTarget(
-            on: "2026-07-19",
-            history: [
-                DailyMacroTargetSnapshot(targetDay: "2026-01-01", target: original),
-                DailyMacroTargetSnapshot(targetDay: "2026-07-20", target: revised)
-            ],
-            fallback: revised
-        ) == original)
+        #expect(
+            NutritionProgressPolicy.effectiveTarget(
+                on: "2026-07-19",
+                history: [
+                    DailyMacroTargetSnapshot(targetDay: "2026-01-01", target: original),
+                    DailyMacroTargetSnapshot(targetDay: "2026-07-20", target: revised),
+                ],
+                fallback: revised
+            ) == original)
     }
 
     @Test func nutrientTrendsBuildTwelveWeeksAndKeepEmptyWeeksVisible() throws {
@@ -228,20 +235,21 @@ struct NativeExperienceTests {
                 fatG: 9_999,
                 caloriesKcal: 9_999,
                 entryCount: 0
-            )
+            ),
         ]
 
-        let week = try #require(NutritionProgressPolicy.nutrientTrendWeeks(
-            totals: totals,
-            target: revised,
-            targetHistory: [
-                DailyMacroTargetSnapshot(targetDay: "2026-01-01", target: original),
-                DailyMacroTargetSnapshot(targetDay: "2026-07-20", target: revised)
-            ],
-            endingOn: ending,
-            timezone: "UTC",
-            weekCount: 1
-        ).first)
+        let week = try #require(
+            NutritionProgressPolicy.nutrientTrendWeeks(
+                totals: totals,
+                target: revised,
+                targetHistory: [
+                    DailyMacroTargetSnapshot(targetDay: "2026-01-01", target: original),
+                    DailyMacroTargetSnapshot(targetDay: "2026-07-20", target: revised),
+                ],
+                endingOn: ending,
+                timezone: "UTC",
+                weekCount: 1
+            ).first)
 
         #expect(week.loggedDayCount == 2)
         #expect(week.average?.caloriesKcal == 1_600)
@@ -269,9 +277,10 @@ struct NativeExperienceTests {
         #expect(EntryCorrectionPolicy.removingPhoto(at: 4, from: ["first"]) == ["first"])
         #expect(EntryCorrectionPolicy.audioIsWithinUploadLimit(1))
         #expect(!EntryCorrectionPolicy.audioIsWithinUploadLimit(0))
-        #expect(!EntryCorrectionPolicy.audioIsWithinUploadLimit(
-            EntryCorrectionPolicy.maximumAudioBytes + 1
-        ))
+        #expect(
+            !EntryCorrectionPolicy.audioIsWithinUploadLimit(
+                EntryCorrectionPolicy.maximumAudioBytes + 1
+            ))
         let oversized = "🍚" + String(repeating: "x", count: 4_100)
         let normalized = EntryCorrectionPolicy.normalized("  \(oversized)  ")
         #expect(normalized.count == EntryCorrectionPolicy.maximumCharacters)
@@ -281,10 +290,11 @@ struct NativeExperienceTests {
     @Test func longDetailCopyGetsAnExpandableTreatment() {
         #expect(!EntryDetailPresentation.offersExpansion(for: "A short note."))
         #expect(EntryDetailPresentation.offersExpansion(for: String(repeating: "detail ", count: 40)))
-        #expect(EntryDetailPresentation.offersItemExpansion(
-            name: String(repeating: "Very detailed ingredient ", count: 4),
-            amount: "about one and a half restaurant portions"
-        ))
+        #expect(
+            EntryDetailPresentation.offersItemExpansion(
+                name: String(repeating: "Very detailed ingredient ", count: 4),
+                amount: "about one and a half restaurant portions"
+            ))
     }
 
     @Test func entryDetailPhotoGalleryPreservesPrimaryAndAppendedMetadata() throws {
@@ -332,55 +342,63 @@ struct NativeExperienceTests {
     @Test func daySwipeRequiresTheCorrectScreenEdgeDirectionAndDistance() {
         let width: CGFloat = 390
 
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 8,
-            translation: CGSize(width: 80, height: 12),
-            predictedEndTranslation: CGSize(width: 96, height: 14),
-            containerWidth: width
-        ) == -1)
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 382,
-            translation: CGSize(width: -80, height: 9),
-            predictedEndTranslation: CGSize(width: -94, height: 10),
-            containerWidth: width
-        ) == 1)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 8,
+                translation: CGSize(width: 80, height: 12),
+                predictedEndTranslation: CGSize(width: 96, height: 14),
+                containerWidth: width
+            ) == -1)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 382,
+                translation: CGSize(width: -80, height: 9),
+                predictedEndTranslation: CGSize(width: -94, height: 10),
+                containerWidth: width
+            ) == 1)
 
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 60,
-            translation: CGSize(width: 110, height: 4),
-            predictedEndTranslation: CGSize(width: 150, height: 5),
-            containerWidth: width
-        ) == nil)
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 8,
-            translation: CGSize(width: -90, height: 4),
-            predictedEndTranslation: CGSize(width: -140, height: 5),
-            containerWidth: width
-        ) == nil)
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 382,
-            translation: CGSize(width: 90, height: 4),
-            predictedEndTranslation: CGSize(width: 140, height: 5),
-            containerWidth: width
-        ) == nil)
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 8,
-            translation: CGSize(width: 45, height: 48),
-            predictedEndTranslation: CGSize(width: 160, height: 150),
-            containerWidth: width
-        ) == nil)
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 8,
-            translation: CGSize(width: 27, height: 1),
-            predictedEndTranslation: CGSize(width: 180, height: 3),
-            containerWidth: width
-        ) == nil)
-        #expect(DayEdgeSwipePolicy.dayDelta(
-            startX: 8,
-            translation: CGSize(width: 40, height: 2),
-            predictedEndTranslation: CGSize(width: 150, height: 3),
-            containerWidth: width
-        ) == -1)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 60,
+                translation: CGSize(width: 110, height: 4),
+                predictedEndTranslation: CGSize(width: 150, height: 5),
+                containerWidth: width
+            ) == nil)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 8,
+                translation: CGSize(width: -90, height: 4),
+                predictedEndTranslation: CGSize(width: -140, height: 5),
+                containerWidth: width
+            ) == nil)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 382,
+                translation: CGSize(width: 90, height: 4),
+                predictedEndTranslation: CGSize(width: 140, height: 5),
+                containerWidth: width
+            ) == nil)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 8,
+                translation: CGSize(width: 45, height: 48),
+                predictedEndTranslation: CGSize(width: 160, height: 150),
+                containerWidth: width
+            ) == nil)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 8,
+                translation: CGSize(width: 27, height: 1),
+                predictedEndTranslation: CGSize(width: 180, height: 3),
+                containerWidth: width
+            ) == nil)
+        #expect(
+            DayEdgeSwipePolicy.dayDelta(
+                startX: 8,
+                translation: CGSize(width: 40, height: 2),
+                predictedEndTranslation: CGSize(width: 150, height: 3),
+                containerWidth: width
+            ) == -1)
     }
 
     @Test func macroDraftRequiresSensibleValuesAndDetectsChanges() {
@@ -403,14 +421,16 @@ struct NativeExperienceTests {
 
         #expect(path == "00000000-0000-4000-8000-000000000001/11111111-2222-4333-8444-555555555555.jpg")
         #expect(SupabaseService.profilePhotoPathBelongsToUser(path, userId: userID))
-        #expect(!SupabaseService.profilePhotoPathBelongsToUser(
-            path,
-            userId: "00000000-0000-4000-8000-000000000002"
-        ))
-        #expect(!SupabaseService.profilePhotoPathBelongsToUser(
-            "\(userID)/../private.jpg",
-            userId: userID
-        ))
+        #expect(
+            !SupabaseService.profilePhotoPathBelongsToUser(
+                path,
+                userId: "00000000-0000-4000-8000-000000000002"
+            ))
+        #expect(
+            !SupabaseService.profilePhotoPathBelongsToUser(
+                "\(userID)/../private.jpg",
+                userId: userID
+            ))
         #expect(throws: SupabaseService.ServiceError.self) {
             try SupabaseService.profilePhotoPath(userId: "not-a-user", fileId: fileID)
         }
@@ -418,6 +438,72 @@ struct NativeExperienceTests {
         #expect(SupabaseService.profilePhotoDataIsJPEG(Data([0xFF, 0xD8, 0x00, 0xFF, 0xD9])))
         #expect(!SupabaseService.profilePhotoDataIsJPEG(Data([0x89, 0x50, 0x4E, 0x47])))
         #expect(!SupabaseService.profilePhotoDataIsJPEG(Data([0xFF, 0xD8, 0x00, 0x00])))
+    }
+
+    @Test func weightCheckInConvertsUnitsAndUsesStrictPrivatePhotoPaths() throws {
+        let userID = "00000000-0000-4000-8000-000000000001"
+        let fileID = try #require(UUID(uuidString: "11111111-2222-4333-8444-555555555555"))
+        let path = try SupabaseService.weightPhotoPath(
+            userId: userID,
+            localDay: "2026-07-30",
+            kind: .scale,
+            fileId: fileID
+        )
+        #expect(
+            path
+                == "00000000-0000-4000-8000-000000000001/2026-07-30/scale-11111111-2222-4333-8444-555555555555.jpg"
+        )
+        #expect(SupabaseService.weightPhotoPathBelongsToUser(path, userId: userID))
+        #expect(
+            !SupabaseService.weightPhotoPathBelongsToUser(
+                path,
+                userId: "00000000-0000-4000-8000-000000000002"
+            ))
+        #expect(
+            !SupabaseService.weightPhotoPathBelongsToUser(
+                "\(userID)/2026-07-30/../private.jpg",
+                userId: userID
+            ))
+        #expect(WeightCheckInPolicy.kilograms(from: 220.462, units: "imperial") == 100)
+        #expect(WeightCheckInPolicy.kilograms(from: 100, units: "metric") == 100)
+        #expect(WeightCheckInPolicy.kilograms(from: 2, units: "metric") == nil)
+    }
+
+    @Test func weightCheckInParserAcceptsPostgRESTNumbers() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            [
+                "id": "11111111-2222-4333-8444-555555555555",
+                "local_day": "2026-07-30",
+                "weight_kg": "82.45",
+                "progress_photo_path": NSNull(),
+                "scale_photo_path":
+                    "00000000-0000-4000-8000-000000000001/2026-07-30/scale-11111111-2222-4333-8444-555555555555.jpg",
+                "created_at": "2026-07-30T12:00:00.000Z",
+                "updated_at": "2026-07-30T12:05:00.000Z",
+            ]
+        ])
+        let parsed = try SupabaseService.parseWeightCheckIns(data)
+        #expect(parsed.count == 1)
+        #expect(parsed.first?.weightKG == 82.45)
+        #expect(parsed.first?.hasPhotos == true)
+    }
+
+    @Test func scalePhotoReadingPrefersUnitLabeledDisplayAndRejectsDates() {
+        let detected = ScaleWeightReader.bestDisplayedWeight(
+            from: [
+                .init(text: "07/30", confidence: 0.99, area: 0.02),
+                .init(text: "182.4 lb", confidence: 0.91, area: 0.08),
+                .init(text: "72", confidence: 0.95, area: 0.01),
+            ],
+            units: "imperial"
+        )
+        #expect(detected == 182.4)
+        #expect(
+            ScaleWeightReader.bestDisplayedWeight(
+                from: [.init(text: "2026", confidence: 1, area: 0.2)],
+                units: "metric"
+            ) == nil
+        )
     }
 
     @Test func reanalysisRequestUsesInjectableSessionAndBoundedContext() throws {
@@ -439,10 +525,11 @@ struct NativeExperienceTests {
 
         #expect(request.url?.path == "/functions/v1/reanalyze_entry")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer session-token")
-        #expect(object == [
-            "entry_id": "11111111-2222-3333-4444-555555555555",
-            "context": "The rice was one cup, not two."
-        ])
+        #expect(
+            object == [
+                "entry_id": "11111111-2222-3333-4444-555555555555",
+                "context": "The rice was one cup, not two.",
+            ])
 
         let result = try APIService.parseReanalysisResponse(
             statusCode: 202,
@@ -477,7 +564,9 @@ struct NativeExperienceTests {
         #expect(request.timeoutInterval == 130)
         #expect(request.value(forHTTPHeaderField: "apikey") == "sb_publishable_example")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer session-token")
-        #expect(request.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("multipart/form-data; boundary=") == true)
+        #expect(
+            request.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("multipart/form-data; boundary=")
+                == true)
         #expect(body.contains("name=\"entry_id\"\r\n\r\n11111111-2222-3333-4444-555555555555"))
         #expect(body.contains("name=\"client_request_id\"\r\n\r\naaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"))
         #expect(body.contains("The bowl also had steak."))
@@ -541,15 +630,37 @@ struct NativeExperienceTests {
     }
 
     @Test func weeklySummaryParserUsesLatestSummaryShapeAndGracefullySupportsEmptyRows() throws {
-        let data = try JSONSerialization.data(withJSONObject: [[
-            "week_start": "2026-07-13",
-            "week_end": "2026-07-19",
-            "headline": "Protein consistency improved",
-            "narrative": "Four logged days were close to the protein target.",
-            "repeated_foods": [["name": "Eggs", "count": 4]],
-            "patterns": ["Breakfast was steadier", "Dinner ran late", "Fiber increased", "Extra"],
-            "suggestions": ["Prep breakfast", "Move dinner earlier"]
-        ]])
+        let data = try JSONSerialization.data(withJSONObject: [
+            [
+                "week_start": "2026-07-13",
+                "week_end": "2026-07-19",
+                "headline": "Protein consistency improved",
+                "narrative": "Four logged days were close to the protein target.",
+                "repeated_foods": [["name": "Eggs", "count": 4]],
+                "patterns": ["Breakfast was steadier", "Dinner ran late", "Fiber increased", "Extra"],
+                "suggestions": ["Prep breakfast", "Move dinner earlier"],
+                "micronutrient_report": [
+                    "coverage": ["days_logged": 4, "meals_logged": 12],
+                    "nutrients": [
+                        [
+                            "id": "vitamin_c",
+                            "name": "Vitamin C",
+                            "category": "vitamin",
+                            "unit": "mg",
+                            "estimated_daily_amount": 72.5,
+                            "reference_daily_amount": 90,
+                            "percent_reference": 81,
+                            "status": "on_track",
+                            "confidence": "medium",
+                            "evidence": ["oranges", "broccoli"],
+                        ]
+                    ],
+                    "highlights": ["Vitamin C looked steady."],
+                    "suggestions": ["Add beans to one lunch."],
+                    "caveat": "Estimates depend on logged foods and portions.",
+                ],
+            ]
+        ])
         let parsed = try SupabaseService.parseWeeklySummary(data)
 
         #expect(parsed?.headline == "Protein consistency improved")
@@ -557,29 +668,34 @@ struct NativeExperienceTests {
         #expect(parsed?.repeatedFoods == [WeeklyRepeatedFood(name: "Eggs", count: 4)])
         #expect(parsed?.patterns == ["Breakfast was steadier", "Dinner ran late", "Fiber increased"])
         #expect(parsed?.suggestions == ["Prep breakfast", "Move dinner earlier"])
+        #expect(parsed?.micronutrientReport?.daysLogged == 4)
+        #expect(parsed?.micronutrientReport?.nutrients.first?.percentReference == 81)
         #expect(try SupabaseService.parseWeeklySummary(Data("[]".utf8)) == nil)
     }
 
     @Test func dailyTotalsParserAcceptsPostgRESTNumericStrings() throws {
-        let data = try JSONSerialization.data(withJSONObject: [[
-            "local_day": "2026-07-21",
-            "protein_g": "150.0",
-            "carbs_g": 250,
-            "fat_g": 70.0,
-            "calories_kcal": "2200.0",
-            "entry_count": 3
-        ]])
-        let parsed = try SupabaseService.parseDailyNutritionTotals(data)
-        #expect(parsed == [
-            DailyNutritionTotal(
-                localDay: "2026-07-21",
-                proteinG: 150,
-                carbsG: 250,
-                fatG: 70,
-                caloriesKcal: 2_200,
-                entryCount: 3
-            )
+        let data = try JSONSerialization.data(withJSONObject: [
+            [
+                "local_day": "2026-07-21",
+                "protein_g": "150.0",
+                "carbs_g": 250,
+                "fat_g": 70.0,
+                "calories_kcal": "2200.0",
+                "entry_count": 3,
+            ]
         ])
+        let parsed = try SupabaseService.parseDailyNutritionTotals(data)
+        #expect(
+            parsed == [
+                DailyNutritionTotal(
+                    localDay: "2026-07-21",
+                    proteinG: 150,
+                    carbsG: 250,
+                    fatG: 70,
+                    caloriesKcal: 2_200,
+                    entryCount: 3
+                )
+            ])
     }
 
     @Test func targetHistoryParserAcceptsPostgRESTNumbersAndOrdersSnapshots() throws {
@@ -589,15 +705,15 @@ struct NativeExperienceTests {
                 "calories_kcal": "2400.0",
                 "protein_g": 150,
                 "carbs_g": "260.0",
-                "fat_g": 75
+                "fat_g": 75,
             ],
             [
                 "target_day": "2026-01-01",
                 "calories_kcal": 2_000,
                 "protein_g": "100.0",
                 "carbs_g": 200,
-                "fat_g": "60.0"
-            ]
+                "fat_g": "60.0",
+            ],
         ])
 
         let parsed = try SupabaseService.parseDailyMacroTargetHistory(data)
@@ -629,10 +745,10 @@ extension NativeExperienceTests {
             ISO8601DateFormatter().date(from: "2026-07-20T12:00:00Z")
         )
 
-        calendar.firstWeekday = 1 // Sunday-first: Monday sits on row 1.
+        calendar.firstWeekday = 1  // Sunday-first: Monday sits on row 1.
         #expect(NutritionProgressPolicy.weekdayRow(for: monday, calendar: calendar) == 1)
 
-        calendar.firstWeekday = 2 // Monday-first: Monday sits on row 0.
+        calendar.firstWeekday = 2  // Monday-first: Monday sits on row 0.
         #expect(NutritionProgressPolicy.weekdayRow(for: monday, calendar: calendar) == 0)
     }
 
@@ -697,15 +813,16 @@ extension NativeExperienceTests {
                 fatG: 999,
                 caloriesKcal: 9_999,
                 entryCount: 1
-            )
+            ),
         ]
 
-        let week = try #require(NutritionProgressPolicy.weeklyBreakdown(
-            for: summary,
-            totals: totals,
-            fallbackTarget: .defaultDaily,
-            targetHistory: []
-        ))
+        let week = try #require(
+            NutritionProgressPolicy.weeklyBreakdown(
+                for: summary,
+                totals: totals,
+                fallbackTarget: .defaultDaily,
+                targetHistory: []
+            ))
 
         #expect(week.loggedDayCount == 2)
         #expect(week.average?.caloriesKcal == 2_200)

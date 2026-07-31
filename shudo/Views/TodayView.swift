@@ -33,14 +33,16 @@ enum DayEdgeSwipePolicy {
         let horizontal = abs(translation.width)
         let vertical = abs(translation.height)
         guard horizontal >= minimumFlickTravel,
-              horizontal >= vertical * horizontalDominance else { return nil }
+            horizontal >= vertical * horizontalDominance
+        else { return nil }
 
-        let directionMatchesEdge = switch edge {
-        case .left:
-            translation.width > 0 && predictedEndTranslation.width > 0
-        case .right:
-            translation.width < 0 && predictedEndTranslation.width < 0
-        }
+        let directionMatchesEdge =
+            switch edge {
+            case .left:
+                translation.width > 0 && predictedEndTranslation.width > 0
+            case .right:
+                translation.width < 0 && predictedEndTranslation.width < 0
+            }
         guard directionMatchesEdge else { return nil }
 
         let passedDistance = horizontal >= minimumTravel
@@ -55,7 +57,8 @@ enum DayEdgeSwipePolicy {
         containerWidth: CGFloat
     ) -> CGFloat {
         guard let edge = originatingEdge(startX: startX, containerWidth: containerWidth),
-              abs(translation.width) > abs(translation.height) * 1.1 else { return 0 }
+            abs(translation.width) > abs(translation.height) * 1.1
+        else { return 0 }
         switch edge {
         case .left where translation.width > 0:
             return min(18, translation.width * 0.12)
@@ -91,6 +94,9 @@ struct TodayView: View {
 
     @State private var isShowingAccount = false
     @State private var isShowingDatePicker = false
+    @State private var isShowingWeightCheckIn = false
+    @State private var weightCheckIns: [WeightCheckIn] = []
+    @State private var isLoadingWeightCheckIns = false
     @State private var composerAutoStartsRecording = false
     @State private var showErrorAlert = false
     @State private var entryPendingDeletion: Entry?
@@ -100,14 +106,15 @@ struct TodayView: View {
         self.profile = profile
         loadsRemotely = true
         previewEntryDetail = nil
-        _vm = StateObject(wrappedValue: TodayViewModel(
-            profile: profile,
-            api: APIService(
-                supabaseUrl: AppConfig.supabaseURL,
-                supabaseAnonKey: AppConfig.supabaseAnonKey,
-                sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
-            )
-        ))
+        _vm = StateObject(
+            wrappedValue: TodayViewModel(
+                profile: profile,
+                api: APIService(
+                    supabaseUrl: AppConfig.supabaseURL,
+                    supabaseAnonKey: AppConfig.supabaseAnonKey,
+                    sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
+                )
+            ))
     }
 
     init(
@@ -149,6 +156,9 @@ struct TodayView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
                             dayNavigator
+                            if loadsRemotely {
+                                weightCheckInCard
+                            }
                             macroStrip
                             mealList
                         }
@@ -170,7 +180,9 @@ struct TodayView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { isShowingAccount = true } label: {
+                    Button {
+                        isShowingAccount = true
+                    } label: {
                         AccountAvatarIcon(
                             userId: vm.profile?.userId ?? profile.userId,
                             avatarPath: vm.profile?.avatarPath
@@ -211,6 +223,19 @@ struct TodayView: View {
                 }
             }
         }
+        .sheet(isPresented: $isShowingWeightCheckIn) {
+            WeightCheckInView(
+                localDay: selectedLocalDay,
+                units: vm.profile?.units ?? profile.units,
+                existing: selectedWeightCheckIn
+            ) { saved in
+                weightCheckIns.removeAll { $0.localDay == saved.localDay }
+                weightCheckIns.append(saved)
+                weightCheckIns.sort { $0.localDay > $1.localDay }
+            }
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(Design.Radius.sheet)
+        }
         .popover(isPresented: $isShowingDatePicker) {
             DatePicker(
                 "Day",
@@ -230,6 +255,10 @@ struct TodayView: View {
             .presentationCompactAdaptation(.sheet)
         }
         .onAppear { handleCaptureRequest(router.captureRequest) }
+        .task {
+            guard loadsRemotely else { return }
+            await loadWeightCheckIns()
+        }
         .onChange(of: router.captureRequest) { _, request in handleCaptureRequest(request) }
         .onChange(of: profile) { _, updated in
             guard loadsRemotely else { return }
@@ -269,7 +298,9 @@ struct TodayView: View {
         HStack(spacing: 14) {
             dayArrow(systemImage: "chevron.left", delta: -1, disabled: false)
 
-            Button { isShowingDatePicker = true } label: {
+            Button {
+                isShowingDatePicker = true
+            } label: {
                 VStack(spacing: 2) {
                     Text(dayTitle)
                         .font(.title2.weight(.bold))
@@ -357,10 +388,105 @@ struct TodayView: View {
             }
         }
         .padding(18)
-        .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
+        .background(
+            Design.Color.glassFill,
+            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
     }
 
-    private func macroMetric(_ label: String, _ value: Double, _ goal: Double, _ color: Color) -> some View {
+    private var selectedLocalDay: String {
+        SupabaseService().localDayString(
+            for: vm.currentDay,
+            timezone: vm.profile?.timezone ?? profile.timezone
+        )
+    }
+
+    private var selectedWeightCheckIn: WeightCheckIn? {
+        weightCheckIns.first { $0.localDay == selectedLocalDay }
+    }
+
+    private var previousWeightCheckIn: WeightCheckIn? {
+        weightCheckIns.first { $0.localDay < selectedLocalDay }
+    }
+
+    private var weightCheckInCard: some View {
+        Button {
+            isShowingWeightCheckIn = true
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: selectedWeightCheckIn == nil ? "scalemass" : "checkmark.circle.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(
+                        selectedWeightCheckIn == nil
+                            ? Design.Color.accentSecondary
+                            : Design.Color.success
+                    )
+                    .frame(width: 42, height: 42)
+                    .background(Design.Color.elevated, in: Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selectedWeightCheckIn == nil ? "Morning check-in" : weightHeadline)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Design.Color.ink)
+                    Text(weightDetail)
+                        .font(.caption)
+                        .foregroundStyle(Design.Color.muted)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                if isLoadingWeightCheckIns {
+                    ProgressView().tint(Design.Color.accentSecondary)
+                } else {
+                    Text(selectedWeightCheckIn == nil ? "Log" : "Edit")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.accentSecondary)
+                }
+            }
+            .padding(16)
+            .background(
+                Design.Color.glassFill,
+                in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Logs weight with optional mirror and scale photos")
+    }
+
+    private var weightHeadline: String {
+        guard let checkIn = selectedWeightCheckIn else { return "Morning check-in" }
+        let units = vm.profile?.units ?? profile.units
+        let value = WeightCheckInPolicy.displayedValue(kilograms: checkIn.weightKG, units: units)
+        return "\(String(format: "%.1f", value)) \(units.lowercased() == "imperial" ? "lb" : "kg")"
+    }
+
+    private var weightDetail: String {
+        guard let checkIn = selectedWeightCheckIn else {
+            return "Log your weight and optionally add mirror or scale photos."
+        }
+        let photoText = checkIn.hasPhotos ? " · photos saved" : ""
+        guard let previous = previousWeightCheckIn else { return "First recorded check-in\(photoText)" }
+        let units = vm.profile?.units ?? profile.units
+        let deltaKG = checkIn.weightKG - previous.weightKG
+        let delta =
+            units.lowercased() == "imperial"
+            ? deltaKG * WeightCheckInPolicy.poundsPerKilogram
+            : deltaKG
+        let suffix = units.lowercased() == "imperial" ? "lb" : "kg"
+        let direction = delta > 0 ? "+" : ""
+        return
+            "\(direction)\(String(format: "%.1f", delta)) \(suffix) since \(previous.localDay)\(photoText)"
+    }
+
+    @MainActor
+    private func loadWeightCheckIns() async {
+        isLoadingWeightCheckIns = true
+        defer { isLoadingWeightCheckIns = false }
+        weightCheckIns = (try? await SupabaseService().fetchWeightCheckIns(limit: 60)) ?? []
+    }
+
+    private func macroMetric(_ label: String, _ value: Double, _ goal: Double, _ color: Color)
+        -> some View
+    {
         VStack(alignment: .leading, spacing: 7) {
             Text(label)
                 .font(.caption)
@@ -435,7 +561,10 @@ struct TodayView: View {
             } else if vm.entries.isEmpty {
                 emptyState
             } else {
-                LazyVStack(spacing: 0) {
+                // The server caps a day at 30 meals, so eagerly materializing this
+                // small list keeps off-screen rows available to VoiceOver and UI
+                // automation even at accessibility text sizes.
+                VStack(spacing: 0) {
                     ForEach(Array(vm.entries.enumerated()), id: \.element.id) { index, entry in
                         HStack(alignment: .center, spacing: 8) {
                             if entry.status == .complete {
@@ -456,9 +585,10 @@ struct TodayView: View {
                                 EntryCard(
                                     entry: entry,
                                     isRetrying: vm.resumingEntryIds.contains(entry.id),
-                                    onRetry: entry.canRetry ? {
-                                        Task { await vm.retryEntry(entry) }
-                                    } : nil
+                                    onRetry: entry.canRetry
+                                        ? {
+                                            Task { await vm.retryEntry(entry) }
+                                        } : nil
                                 )
                             }
 
@@ -469,7 +599,8 @@ struct TodayView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                         if entry.status == .complete,
-                           let failureMessage = vm.failedCorrections[entry.id] {
+                            let failureMessage = vm.failedCorrections[entry.id]
+                        {
                             CorrectionRetryBanner(
                                 message: failureMessage,
                                 onRetry: { vm.retryCorrection(entryId: entry.id) },
@@ -521,7 +652,9 @@ struct TodayView: View {
     }
 
     private func deleteButton(for entry: Entry) -> some View {
-        Button { entryPendingDeletion = entry } label: {
+        Button {
+            entryPendingDeletion = entry
+        } label: {
             Image(systemName: "trash")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Design.Color.muted)
@@ -551,7 +684,9 @@ struct TodayView: View {
 
     private var captureDock: some View {
         HStack(spacing: 12) {
-            Button { openComposer(autoStartRecording: true) } label: {
+            Button {
+                openComposer(autoStartRecording: true)
+            } label: {
                 Image(systemName: "mic.fill")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
@@ -562,7 +697,9 @@ struct TodayView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Quick voice meal")
 
-            Button { openComposer(autoStartRecording: false) } label: {
+            Button {
+                openComposer(autoStartRecording: false)
+            } label: {
                 Label("Log meal", systemImage: "plus")
                     .font(.headline)
                     .foregroundStyle(Design.Color.ink)
@@ -595,21 +732,26 @@ struct TodayView: View {
 
     private func shiftDay(_ delta: Int) {
         guard let candidate = calendar.date(byAdding: .day, value: delta, to: vm.currentDay),
-              calendar.compare(candidate, to: Date(), toGranularity: .day) != .orderedDescending else { return }
+            calendar.compare(candidate, to: Date(), toGranularity: .day) != .orderedDescending
+        else { return }
         Task { await vm.load(day: candidate) }
     }
 
     private var daySwipeIsEnabled: Bool {
-        !vm.isPresentingComposer && !isShowingAccount && !isShowingDatePicker
+        !vm.isPresentingComposer
+            && !isShowingAccount
+            && !isShowingDatePicker
+            && !isShowingWeightCheckIn
     }
 
     private func daySwipeGesture(containerWidth: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 12, coordinateSpace: .local)
             .updating($daySwipePreview) { value, preview, _ in
-                let startsAtRightEdge = DayEdgeSwipePolicy.originatingEdge(
-                    startX: value.startLocation.x,
-                    containerWidth: containerWidth
-                ) == .right
+                let startsAtRightEdge =
+                    DayEdgeSwipePolicy.originatingEdge(
+                        startX: value.startLocation.x,
+                        containerWidth: containerWidth
+                    ) == .right
                 guard !(vm.isPinnedToToday && startsAtRightEdge) else {
                     preview = 0
                     return
@@ -622,13 +764,14 @@ struct TodayView: View {
             }
             .onEnded { value in
                 guard daySwipeIsEnabled,
-                      let delta = DayEdgeSwipePolicy.dayDelta(
+                    let delta = DayEdgeSwipePolicy.dayDelta(
                         startX: value.startLocation.x,
                         translation: value.translation,
                         predictedEndTranslation: value.predictedEndTranslation,
                         containerWidth: containerWidth
-                      ),
-                      !(delta > 0 && vm.isPinnedToToday) else { return }
+                    ),
+                    !(delta > 0 && vm.isPinnedToToday)
+                else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 shiftDay(delta)
             }
@@ -766,7 +909,8 @@ private struct AccountAvatarIcon: View {
             return
         }
         if let cached = ProfilePhotoCache.load(userId: userId, expectedPath: avatarPath),
-           let image = UIImage(data: cached) {
+            let image = UIImage(data: cached)
+        {
             avatar = image
             return
         }

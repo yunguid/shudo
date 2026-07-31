@@ -23,7 +23,7 @@ struct WeeklyInsightsView: View {
         targetHistory: [DailyMacroTargetSnapshot] = [],
         isLoading: Bool,
         errorMessage: String? = nil,
-        onRetry: @escaping () -> Void = { }
+        onRetry: @escaping () -> Void = {}
     ) {
         self.summaries = summaries
         self.totals = totals
@@ -88,10 +88,12 @@ struct WeeklyInsightsView: View {
                     Text("No weekly summary yet")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Design.Color.ink)
-                    Text("Keep logging meals and the latest patterns and practical next steps can appear here.")
-                        .font(.footnote)
-                        .foregroundStyle(Design.Color.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Keep logging meals and the latest patterns and practical next steps can appear here."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -200,6 +202,34 @@ struct WeeklyInsightsView: View {
         if !summary.suggestions.isEmpty {
             insightGroup(title: "Try next", items: summary.suggestions, systemImage: "arrow.right.circle")
         }
+
+        if let report = summary.micronutrientReport {
+            NavigationLink {
+                MicronutrientReportView(report: report, period: periodText(summary))
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "chart.bar.doc.horizontal")
+                        .foregroundStyle(Design.Color.accentSecondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Micronutrient report")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Design.Color.ink)
+                        Text("Vitamins, minerals, fiber, and omega-3")
+                            .font(.caption)
+                            .foregroundStyle(Design.Color.muted)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.subtle)
+                }
+                .padding(12)
+                .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the detailed weekly nutrient analysis")
+        }
     }
 
     /// The verifiable numbers behind the week's story: average intake vs
@@ -239,9 +269,11 @@ struct WeeklyInsightsView: View {
                         color: Design.Color.ringFat
                     )
                 }
-                Text("Daily average across \(week.loggedDayCount) logged day\(week.loggedDayCount == 1 ? "" : "s")")
-                    .font(.caption2)
-                    .foregroundStyle(Design.Color.subtle)
+                Text(
+                    "Daily average across \(week.loggedDayCount) logged day\(week.loggedDayCount == 1 ? "" : "s")"
+                )
+                .font(.caption2)
+                .foregroundStyle(Design.Color.subtle)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(breakdownAccessibilityLabel(week: week, average: average, target: target))

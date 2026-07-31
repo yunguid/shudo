@@ -1,6 +1,6 @@
+import PhotosUI
 import SwiftUI
 import UIKit
-import PhotosUI
 
 enum ProfilePhotoInputPolicy {
     static let maximumSourceBytes = 25_000_000
@@ -9,10 +9,11 @@ enum ProfilePhotoInputPolicy {
 
     static func accepts(byteCount: Int, pixelWidth: CGFloat, pixelHeight: CGFloat) -> Bool {
         guard byteCount > 0, byteCount <= maximumSourceBytes,
-              pixelWidth.isFinite, pixelHeight.isFinite,
-              pixelWidth >= 1, pixelHeight >= 1,
-              pixelWidth <= maximumPixelDimension,
-              pixelHeight <= maximumPixelDimension else { return false }
+            pixelWidth.isFinite, pixelHeight.isFinite,
+            pixelWidth >= 1, pixelHeight >= 1,
+            pixelWidth <= maximumPixelDimension,
+            pixelHeight <= maximumPixelDimension
+        else { return false }
         return pixelWidth * pixelHeight <= maximumPixelCount
     }
 }
@@ -44,6 +45,9 @@ struct AccountView: View {
     @State private var isSavingProfilePhoto = false
     @State private var isShowingRemovePhotoConfirmation = false
     @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
+    @AppStorage("weightReminderEnabled") private var weightReminderEnabled = false
+    @AppStorage("weightReminderSecondsFromMidnight") private var weightReminderSeconds =
+        WeightReminderScheduler.defaultSecondsFromMidnight
 
     private let service: SupabaseService
     private let weeklySummaryProvider: any WeeklySummaryProviding
@@ -62,35 +66,37 @@ struct AccountView: View {
         _targetDraft = State(initialValue: MacroTargetDraft(target: initialProfile.dailyMacroTarget))
         self.service = service
         self.weeklySummaryProvider = weeklySummaryProvider ?? service
-        self.accountDeletionService = accountDeletionService ?? APIService(
-            supabaseUrl: AppConfig.supabaseURL,
-            supabaseAnonKey: AppConfig.supabaseAnonKey,
-            sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
-        )
+        self.accountDeletionService =
+            accountDeletionService
+            ?? APIService(
+                supabaseUrl: AppConfig.supabaseURL,
+                supabaseAnonKey: AppConfig.supabaseAnonKey,
+                sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
+            )
         self.onProfileUpdated = onProfileUpdated
         loadsRemotely = true
     }
 
     #if DEBUG
-    init(
-        previewProfile: Profile,
-        profilePhoto: UIImage,
-        dailyTotals: [DailyNutritionTotal],
-        weeklySummaries: [WeeklyInsightSummary] = []
-    ) {
-        _profile = State(initialValue: previewProfile)
-        _targetDraft = State(initialValue: MacroTargetDraft(target: previewProfile.dailyMacroTarget))
-        _dailyTotals = State(initialValue: dailyTotals)
-        _profilePhoto = State(initialValue: profilePhoto)
-        _isLoading = State(initialValue: false)
-        _isLoadingWeeklySummary = State(initialValue: false)
-        _weeklySummaries = State(initialValue: weeklySummaries)
-        service = SupabaseService()
-        weeklySummaryProvider = StaticWeeklySummaryProvider(summaries: weeklySummaries)
-        accountDeletionService = PolishPreviewAccountDeletionService()
-        onProfileUpdated = { _ in }
-        loadsRemotely = false
-    }
+        init(
+            previewProfile: Profile,
+            profilePhoto: UIImage,
+            dailyTotals: [DailyNutritionTotal],
+            weeklySummaries: [WeeklyInsightSummary] = []
+        ) {
+            _profile = State(initialValue: previewProfile)
+            _targetDraft = State(initialValue: MacroTargetDraft(target: previewProfile.dailyMacroTarget))
+            _dailyTotals = State(initialValue: dailyTotals)
+            _profilePhoto = State(initialValue: profilePhoto)
+            _isLoading = State(initialValue: false)
+            _isLoadingWeeklySummary = State(initialValue: false)
+            _weeklySummaries = State(initialValue: weeklySummaries)
+            service = SupabaseService()
+            weeklySummaryProvider = StaticWeeklySummaryProvider(summaries: weeklySummaries)
+            accountDeletionService = PolishPreviewAccountDeletionService()
+            onProfileUpdated = { _ in }
+            loadsRemotely = false
+        }
     #endif
 
     var body: some View {
@@ -99,6 +105,7 @@ struct AccountView: View {
                 profileHeader
                 themeSelector
                 profileDetails
+                weightReminderSettings
                 targetEditor
                 AdherenceHeatmapView(
                     totals: dailyTotals,
@@ -283,7 +290,9 @@ struct AccountView: View {
                 }
                 Text(email)
                     .font(profile.displayName?.isEmpty == false ? .caption : .headline)
-                    .foregroundStyle(profile.displayName?.isEmpty == false ? Design.Color.muted : Design.Color.ink)
+                    .foregroundStyle(
+                        profile.displayName?.isEmpty == false ? Design.Color.muted : Design.Color.ink
+                    )
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -322,7 +331,7 @@ struct AccountView: View {
                     LinearGradient(
                         colors: [
                             Design.Color.elevated,
-                            Design.Color.accentPrimary.opacity(0.12)
+                            Design.Color.accentPrimary.opacity(0.12),
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -367,7 +376,7 @@ struct AccountView: View {
                             LinearGradient(
                                 colors: [
                                     theme.palette.accentPrimary,
-                                    theme.palette.accentSecondary
+                                    theme.palette.accentSecondary,
                                 ],
                                 startPoint: .leading,
                                 endPoint: .trailing
@@ -520,7 +529,9 @@ struct AccountView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Button { saveTargets() } label: {
+            Button {
+                saveTargets()
+            } label: {
                 HStack(spacing: 8) {
                     if isSavingTargets { ProgressView().tint(.white) }
                     Text(isSavingTargets ? "Saving…" : "Save targets")
@@ -542,6 +553,90 @@ struct AccountView: View {
             }
             .buttonStyle(.plain)
             .disabled(!canSaveTargets)
+        }
+    }
+
+    private var weightReminderSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("MORNING CHECK-IN")
+            VStack(spacing: 0) {
+                Toggle(
+                    isOn: Binding(
+                        get: { weightReminderEnabled },
+                        set: { setWeightReminder(enabled: $0) }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Daily weight reminder")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Design.Color.ink)
+                        Text("A private notification on this device")
+                            .font(.caption)
+                            .foregroundStyle(Design.Color.muted)
+                    }
+                }
+                .tint(Design.Color.accentPrimary)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 60)
+
+                if weightReminderEnabled {
+                    HairlineRule().padding(.leading, 16)
+                    DatePicker(
+                        "Reminder time",
+                        selection: Binding(
+                            get: { reminderDate },
+                            set: { updateReminderTime($0) }
+                        ),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.ink)
+                    .tint(Design.Color.accentPrimary)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 54)
+                }
+            }
+            .background(
+                Design.Color.elevated,
+                in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
+            )
+        }
+    }
+
+    private var reminderDate: Date {
+        Calendar.current.startOfDay(for: Date())
+            .addingTimeInterval(weightReminderSeconds)
+    }
+
+    private func setWeightReminder(enabled: Bool) {
+        weightReminderEnabled = enabled
+        Task {
+            do {
+                try await WeightReminderScheduler.schedule(
+                    enabled: enabled,
+                    secondsFromMidnight: weightReminderSeconds
+                )
+            } catch {
+                await MainActor.run {
+                    weightReminderEnabled = false
+                    self.error = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func updateReminderTime(_ date: Date) {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        weightReminderSeconds = Double((components.hour ?? 8) * 3_600 + (components.minute ?? 0) * 60)
+        Task {
+            do {
+                try await WeightReminderScheduler.schedule(
+                    enabled: weightReminderEnabled,
+                    secondsFromMidnight: weightReminderSeconds
+                )
+            } catch {
+                await MainActor.run { self.error = error.localizedDescription }
+            }
         }
     }
 
@@ -715,8 +810,9 @@ struct AccountView: View {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let email = object["email"] as? String else { throw URLError(.cannotParseResponse) }
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let email = object["email"] as? String
+        else { throw URLError(.cannotParseResponse) }
         return email
     }
 
@@ -728,14 +824,15 @@ struct AccountView: View {
         Task.detached(priority: .userInitiated) {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self),
-                      !data.isEmpty,
-                      data.count <= ProfilePhotoInputPolicy.maximumSourceBytes,
-                      let image = UIImage(data: data),
-                      ProfilePhotoInputPolicy.accepts(
+                    !data.isEmpty,
+                    data.count <= ProfilePhotoInputPolicy.maximumSourceBytes,
+                    let image = UIImage(data: data),
+                    ProfilePhotoInputPolicy.accepts(
                         byteCount: data.count,
                         pixelWidth: image.size.width * image.scale,
                         pixelHeight: image.size.height * image.scale
-                      ) else {
+                    )
+                else {
                     throw SupabaseService.ServiceError.parseError(
                         message: "Choose a valid photo under 25 MB and 50 megapixels"
                     )
@@ -763,9 +860,14 @@ struct AccountView: View {
             do {
                 // JPEG encoding (up to four quality passes) is too heavy for
                 // the main thread right as the crop sheet dismisses.
-                guard let jpegData = await Task.detached(priority: .userInitiated, operation: {
-                    image.profilePhotoJPEG()
-                }).value else {
+                guard
+                    let jpegData = await Task.detached(
+                        priority: .userInitiated,
+                        operation: {
+                            image.profilePhotoJPEG()
+                        }
+                    ).value
+                else {
                     await MainActor.run {
                         isSavingProfilePhoto = false
                         error = "That photo couldn’t be prepared. Try another image."
@@ -827,7 +929,8 @@ struct AccountView: View {
             return
         }
         if let cached = ProfilePhotoCache.load(userId: profile.userId, expectedPath: path),
-           let image = UIImage(data: cached) {
+            let image = UIImage(data: cached)
+        {
             profilePhoto = image
             return
         }
@@ -986,25 +1089,26 @@ private struct ProfilePhotoCropView: View {
         return UIGraphicsImageRenderer(size: CGSize(width: outputSide, height: outputSide)).image { _ in
             UIColor.black.setFill()
             UIRectFill(CGRect(origin: .zero, size: CGSize(width: outputSide, height: outputSide)))
-            image.draw(in: CGRect(
-                x: (outputSide - baseWidth * zoom) / 2 + outputOffset.width,
-                y: (outputSide - baseHeight * zoom) / 2 + outputOffset.height,
-                width: baseWidth * zoom,
-                height: baseHeight * zoom
-            ))
+            image.draw(
+                in: CGRect(
+                    x: (outputSide - baseWidth * zoom) / 2 + outputOffset.width,
+                    y: (outputSide - baseHeight * zoom) / 2 + outputOffset.height,
+                    width: baseWidth * zoom,
+                    height: baseHeight * zoom
+                ))
         }
     }
 }
 
-private extension UIImage {
-    func normalizedForDisplay() -> UIImage {
+extension UIImage {
+    fileprivate func normalizedForDisplay() -> UIImage {
         guard imageOrientation != .up else { return self }
         return UIGraphicsImageRenderer(size: size).image { _ in
             draw(in: CGRect(origin: .zero, size: size))
         }
     }
 
-    func profilePhotoJPEG() -> Data? {
+    fileprivate func profilePhotoJPEG() -> Data? {
         let maxBytes = 2_000_000
         for quality in [0.86, 0.74, 0.62, 0.50] {
             if let data = jpegData(compressionQuality: quality), data.count <= maxBytes {
@@ -1040,10 +1144,12 @@ private struct AccountDeletionSheet: View {
                         Text("Permanently delete your account?")
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(Design.Color.ink)
-                        Text("This permanently removes your meals, photos, profile, and sign-in. It cannot be undone.")
-                            .font(.subheadline)
-                            .foregroundStyle(Design.Color.muted)
-                            .fixedSize(horizontal: false, vertical: true)
+                        Text(
+                            "This permanently removes your meals, photos, profile, and sign-in. It cannot be undone."
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {

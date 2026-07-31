@@ -5,6 +5,28 @@ struct WeeklyRepeatedFood: Equatable, Sendable {
     let count: Int
 }
 
+struct WeeklyMicronutrient: Equatable, Sendable, Identifiable {
+    let id: String
+    let name: String
+    let category: String
+    let unit: String
+    let estimatedDailyAmount: Double
+    let referenceDailyAmount: Double
+    let percentReference: Int
+    let status: String
+    let confidence: String
+    let evidence: [String]
+}
+
+struct WeeklyMicronutrientReport: Equatable, Sendable {
+    let daysLogged: Int
+    let mealsLogged: Int
+    let nutrients: [WeeklyMicronutrient]
+    let highlights: [String]
+    let suggestions: [String]
+    let caveat: String
+}
+
 struct WeeklyInsightSummary: Equatable, Sendable {
     let weekStart: Date
     let weekEnd: Date
@@ -13,6 +35,7 @@ struct WeeklyInsightSummary: Equatable, Sendable {
     let repeatedFoods: [WeeklyRepeatedFood]
     let patterns: [String]
     let suggestions: [String]
+    let micronutrientReport: WeeklyMicronutrientReport?
 
     init(
         weekStart: Date,
@@ -21,7 +44,8 @@ struct WeeklyInsightSummary: Equatable, Sendable {
         narrative: String = "",
         repeatedFoods: [WeeklyRepeatedFood] = [],
         patterns: [String],
-        suggestions: [String]
+        suggestions: [String],
+        micronutrientReport: WeeklyMicronutrientReport? = nil
     ) {
         self.weekStart = weekStart
         self.weekEnd = weekEnd
@@ -34,6 +58,7 @@ struct WeeklyInsightSummary: Equatable, Sendable {
         )
         self.patterns = Self.normalizedItems(patterns)
         self.suggestions = Self.normalizedItems(suggestions)
+        self.micronutrientReport = micronutrientReport
     }
 
     private static func normalizedItems(_ items: [String]) -> [String] {
@@ -147,8 +172,9 @@ struct NutrientTrendWeek: Equatable, Identifiable, Sendable {
 
     func ratio(for metric: NutrientTrendMetric) -> Double? {
         guard loggedDayCount > 0,
-              let average,
-              let averageTarget else { return nil }
+            let average,
+            let averageTarget
+        else { return nil }
         let current = metric.value(in: average)
         let goal = metric.value(in: averageTarget)
         guard current.isFinite, goal.isFinite, goal > 0 else { return nil }
@@ -171,7 +197,7 @@ enum NutritionProgressPolicy {
             (total.caloriesKcal, target.caloriesKcal),
             (total.proteinG, target.proteinG),
             (total.carbsG, target.carbsG),
-            (total.fatG, target.fatG)
+            (total.fatG, target.fatG),
         ].filter { $0.1 > 0 && $0.0.isFinite && $0.1.isFinite }
         guard !pairs.isEmpty else { return nil }
 
@@ -276,11 +302,12 @@ enum NutritionProgressPolicy {
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM-dd"
 
-        let dayCount = (calendar.dateComponents(
-            [.day],
-            from: summary.weekStart,
-            to: summary.weekEnd
-        ).day ?? 6) + 1
+        let dayCount =
+            (calendar.dateComponents(
+                [.day],
+                from: summary.weekStart,
+                to: summary.weekEnd
+            ).day ?? 6) + 1
         guard (1...7).contains(dayCount) else { return nil }
 
         let totalsByDay = totals.reduce(into: [String: DailyNutritionTotal]()) { result, total in
@@ -291,15 +318,18 @@ enum NutritionProgressPolicy {
         var goals = NutrientAccumulator()
         var loggedDayCount = 0
         for dayOffset in 0..<dayCount {
-            guard let date = calendar.date(
-                byAdding: .day,
-                value: dayOffset,
-                to: summary.weekStart
-            ) else { continue }
+            guard
+                let date = calendar.date(
+                    byAdding: .day,
+                    value: dayOffset,
+                    to: summary.weekStart
+                )
+            else { continue }
             let localDay = formatter.string(from: date)
             guard let total = totalsByDay[localDay],
-                  total.entryCount > 0,
-                  actual.canInclude(total) else { continue }
+                total.entryCount > 0,
+                actual.canInclude(total)
+            else { continue }
             let effectiveTarget = effectiveTarget(
                 on: localDay,
                 history: targetHistory,
@@ -347,11 +377,13 @@ enum NutritionProgressPolicy {
         formatter.dateFormat = "yyyy-MM-dd"
 
         return (0..<weekCount).compactMap { weekOffset in
-            guard let weekStart = calendar.date(
-                byAdding: .day,
-                value: weekOffset * 7,
-                to: start
-            ), let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart) else {
+            guard
+                let weekStart = calendar.date(
+                    byAdding: .day,
+                    value: weekOffset * 7,
+                    to: start
+                ), let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart)
+            else {
                 return nil
             }
 
@@ -365,8 +397,9 @@ enum NutritionProgressPolicy {
                 }
                 let localDay = formatter.string(from: date)
                 guard let total = totalsByDay[localDay],
-                      total.entryCount > 0,
-                      actual.canInclude(total) else { continue }
+                    total.entryCount > 0,
+                    actual.canInclude(total)
+                else { continue }
                 let effectiveTarget = effectiveTarget(
                     on: localDay,
                     history: targetHistory,
@@ -560,7 +593,8 @@ enum EntryResearchPresentation {
 
         func remainingProse() -> String? {
             paragraphs.removeLast()
-            let prose = paragraphs
+            let prose =
+                paragraphs
                 .joined(separator: "\n\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return prose.isEmpty ? nil : prose
@@ -626,9 +660,9 @@ enum EntryResearchPresentation {
 
         while let open = remainder.firstIndex(of: "[") {
             guard let close = remainder[open...].firstIndex(of: "]"),
-                  remainder.index(after: close) < remainder.endIndex,
-                  remainder[remainder.index(after: close)] == "(",
-                  let terminator = remainder[close...].firstIndex(of: ")")
+                remainder.index(after: close) < remainder.endIndex,
+                remainder[remainder.index(after: close)] == "(",
+                let terminator = remainder[close...].firstIndex(of: ")")
             else { break }
 
             let host = remainder[remainder.index(after: open)..<close]
@@ -638,9 +672,10 @@ enum EntryResearchPresentation {
             ].trimmingCharacters(in: .whitespacesAndNewlines)
 
             if !host.isEmpty,
-               let url = URL(string: target),
-               url.scheme == "https" || url.scheme == "http",
-               !seen.contains(url) {
+                let url = URL(string: target),
+                url.scheme == "https" || url.scheme == "http",
+                !seen.contains(url)
+            {
                 seen.insert(url)
                 sources.append(Source(host: host, url: url))
             }
@@ -665,9 +700,10 @@ struct MacroTargetDraft: Equatable {
 
     var validatedTarget: MacroTarget? {
         guard let caloriesValue = Self.value(calories), (500...10_000).contains(caloriesValue),
-              let proteinValue = Self.value(protein), (1...500).contains(proteinValue),
-              let carbsValue = Self.value(carbs), (1...1_000).contains(carbsValue),
-              let fatValue = Self.value(fat), (1...300).contains(fatValue) else { return nil }
+            let proteinValue = Self.value(protein), (1...500).contains(proteinValue),
+            let carbsValue = Self.value(carbs), (1...1_000).contains(carbsValue),
+            let fatValue = Self.value(fat), (1...300).contains(fatValue)
+        else { return nil }
         return MacroTarget(
             caloriesKcal: caloriesValue,
             proteinG: proteinValue,
@@ -681,7 +717,8 @@ struct MacroTargetDraft: Equatable {
     }
 
     private static func value(_ text: String) -> Double? {
-        let normalized = text
+        let normalized =
+            text
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: ",", with: "")
         guard let value = Double(normalized), value.isFinite else { return nil }

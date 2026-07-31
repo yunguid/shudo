@@ -1,5 +1,6 @@
 import {
   aggregateWeeklyEntries,
+  micronutrientMealDigest,
   parseWeeklyNarrative,
   priorCompletedWeekStart,
   safePriorCompletedWeekStart,
@@ -8,6 +9,10 @@ import {
   WEEKLY_SUMMARY_SCHEMA,
   weekStartOf,
 } from "../_shared/weekly_summary.ts";
+import {
+  runWeeklyMicronutrientAgents,
+  WEEKLY_MICRONUTRIENT_PHASE_TIMEOUT_MS,
+} from "../_shared/weekly_micronutrient_agents.ts";
 import { assertEquals, assertThrows } from "./assertions.ts";
 
 Deno.test("weekly generation is pinned and chooses the completed local week", () => {
@@ -31,6 +36,46 @@ Deno.test("weekly generation is pinned and chooses the completed local week", ()
     ),
     null,
   );
+});
+
+Deno.test("micronutrient meal digest is bounded and excludes unrelated entry fields", () => {
+  const digest = micronutrientMealDigest([{
+    local_day: "2026-07-13",
+    title: "Salmon bowl",
+    items: [{
+      name: "Salmon",
+      amount: "6 oz",
+      calories_kcal: 350,
+      protein_g: 40,
+      carbs_g: 0,
+      fat_g: 20,
+      confidence: 0.8,
+      private_note: "must not leave the meal row",
+    }],
+    calories_kcal: 600,
+    protein_g: 45,
+    carbs_g: 50,
+    fat_g: 24,
+  }]) as Array<Record<string, unknown>>;
+  assertEquals(digest.length, 1);
+  assertEquals(digest[0].local_day, "2026-07-13");
+  const items = digest[0].items as Array<Record<string, unknown>>;
+  assertEquals(items[0].name, "Salmon");
+  assertEquals("private_note" in items[0], false);
+  assertEquals("confidence" in items[0], false);
+});
+
+Deno.test("micronutrient agents skip model calls when no meals were logged", async () => {
+  const result = await runWeeklyMicronutrientAgents("user", [], 0, 0);
+  assertEquals(result.responseIds, []);
+  assertEquals(result.report.nutrients, []);
+  assertEquals(result.report.coverage, { days_logged: 0, meals_logged: 0 });
+});
+
+Deno.test("micronutrient fleet stays inside the scheduled request budget", () => {
+  // Three specialists run together, followed by one synthesis pass. Leave
+  // headroom inside the Vercel cron route's 100-second downstream timeout.
+  assertEquals(WEEKLY_MICRONUTRIENT_PHASE_TIMEOUT_MS * 2 <= 90_000, true);
 });
 
 Deno.test("weekly copy stays neutral and does not personify Shudo", () => {

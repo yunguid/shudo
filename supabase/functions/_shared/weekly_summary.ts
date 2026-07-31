@@ -6,6 +6,7 @@ import {
 } from "./generated_copy.ts";
 import { requiredEnv } from "./http.ts";
 import { safetyIdentifier } from "./safety.ts";
+import { runWeeklyMicronutrientAgents } from "./weekly_micronutrient_agents.ts";
 
 export const WEEKLY_SUMMARY_MODEL = "gpt-5.6-sol";
 export const WEEKLY_COPY_INSTRUCTION =
@@ -40,6 +41,32 @@ export type WeeklyEntry = {
   carbs_g: number | string;
   fat_g: number | string;
 };
+
+export function micronutrientMealDigest(entries: WeeklyEntry[]): unknown[] {
+  return entries.slice(0, 210).map((entry) => ({
+    local_day: entry.local_day,
+    title: Array.from(entry.title?.trim() ?? "").slice(0, 120).join(""),
+    items: (Array.isArray(entry.items) ? entry.items : []).slice(0, 30)
+      .flatMap((raw) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+        const item = raw as Record<string, unknown>;
+        const name = typeof item.name === "string"
+          ? Array.from(item.name.trim()).slice(0, 100).join("")
+          : "";
+        if (!name) return [];
+        return [{
+          name,
+          amount: typeof item.amount === "string"
+            ? Array.from(item.amount.trim()).slice(0, 80).join("")
+            : "",
+          calories_kcal: numeric(item.calories_kcal as number | string),
+          protein_g: numeric(item.protein_g as number | string),
+          carbs_g: numeric(item.carbs_g as number | string),
+          fat_g: numeric(item.fat_g as number | string),
+        }];
+      }),
+  }));
+}
 
 export type WeeklyTarget = {
   target_day: string;
@@ -449,14 +476,22 @@ export async function generateClaimedSummary(
         (targetsResult.data ?? []) as WeeklyTarget[],
         profile.daily_macro_target ?? {},
       );
-    const narrative = await writeWeeklyNarrative(
-      profile.user_id,
-      weekStart,
-      adherence,
-      repeatedFoods,
-      foodCandidates,
-      dayDigests,
-    );
+    const [narrative, micronutrients] = await Promise.all([
+      writeWeeklyNarrative(
+        profile.user_id,
+        weekStart,
+        adherence,
+        repeatedFoods,
+        foodCandidates,
+        dayDigests,
+      ),
+      runWeeklyMicronutrientAgents(
+        profile.user_id,
+        micronutrientMealDigest((entriesResult.data ?? []) as WeeklyEntry[]),
+        adherence.days_logged,
+        adherence.meals_logged,
+      ),
+    ]);
     const { data: updated, error: updateError } = await admin
       .from("weekly_summaries")
       .update({
@@ -467,6 +502,7 @@ export async function generateClaimedSummary(
         patterns: narrative.patterns,
         adherence,
         suggestions: narrative.suggestions,
+        micronutrient_report: micronutrients.report,
         analysis_model: WEEKLY_SUMMARY_MODEL,
         provider_response_id: narrative.responseId,
         generated_at: new Date().toISOString(),

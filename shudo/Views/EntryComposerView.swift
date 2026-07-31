@@ -256,6 +256,7 @@ struct EntryComposerView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .contentShape(Circle())
                 .disabled(isSubmitting)
                 .accessibilityIdentifier("Voice recording control")
                 .accessibilityLabel(recordingButtonLabel)
