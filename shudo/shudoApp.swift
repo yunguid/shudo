@@ -14,6 +14,7 @@ struct shudoApp: App {
 
     init() {
         CaptureDiagnostics.beginSession()
+        DayNotificationScheduler.migrateLegacyPreference()
         // Meal photos are served from stable signed URLs; a right-sized URL
         // cache lets repeat visits render them without any network work.
         URLCache.shared = URLCache(

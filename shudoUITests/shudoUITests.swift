@@ -81,6 +81,38 @@ final class shudoUITests: XCTestCase {
         XCTAssertEqual(note.value as? String, "Synthetic regression meal")
     }
 
+    /// A single tall portrait photo used to leave the mic button dead: the
+    /// fill-scaled thumbnail keeps its full unclipped height for hit testing
+    /// and its invisible overflow swallowed every tap above the grid. The
+    /// stock library photos are landscape (no vertical overflow), so this
+    /// seeds the worst-case image deterministically via a launch flag.
+    @MainActor
+    func testTallPortraitPhotoDoesNotBlockTheMicButton() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-shudoPolishPreview", "main",
+            "-shudoPolishPreviewTallComposerPhoto",
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 5))
+
+        app.buttons["Log meal"].tap()
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Remove photo 1"].waitForExistence(timeout: 3))
+
+        let recordingControl = app.buttons["Voice recording control"]
+        XCTAssertTrue(recordingControl.waitForExistence(timeout: 3))
+        recordingControl.tap()
+        allowMicrophoneIfRequested(in: app)
+        XCTAssertTrue(
+            waitForRecording(recordingControl, timeout: 15),
+            "Mic tap was swallowed by the photo's unclipped fill overflow"
+        )
+        recordingControl.tap()
+        XCTAssertTrue(app.buttons["Discard voice note"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Remove photo 1"].exists)
+    }
+
     @MainActor
     func testStandaloneQuickVoiceStillAutoStarts() throws {
         let app = launchPreview()
@@ -116,6 +148,53 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(permissionError.waitForExistence(timeout: 5))
         XCTAssertTrue(recordingControl.isEnabled)
         XCTAssertEqual(note.value as? String, "Permission recovery draft")
+    }
+
+    /// The combined notifications toggle must respond to a tap, request
+    /// authorization, and stick. Pins both the control's hittability (fill
+    /// overlays have silently eaten taps before) and the enable flow.
+    @MainActor
+    func testNotificationsToggleEnablesAndPersists() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-shudoPolishPreview", "settings"]
+        app.launch()
+
+        let toggle = app.switches.firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        while !toggle.isHittable {
+            app.swipeUp()
+        }
+        toggle.tap()
+        allowNotificationsIfRequested(in: app, timeout: 8)
+
+        // The system permission alert can race the first flip on loaded CI
+        // clones; one settled retry keeps this from flaking while a genuinely
+        // dead toggle still fails.
+        if !waitForToggleOn(toggle, timeout: 5) {
+            if toggle.isHittable { toggle.tap() }
+            allowNotificationsIfRequested(in: app, timeout: 5)
+            XCTAssertTrue(
+                waitForToggleOn(toggle, timeout: 5),
+                "Notifications toggle did not turn on after a tap"
+            )
+        }
+    }
+
+    @MainActor
+    private func waitForToggleOn(_ toggle: XCUIElement, timeout: TimeInterval) -> Bool {
+        let enabled = NSPredicate(format: "value == '1'")
+        let expectation = XCTNSPredicateExpectation(predicate: enabled, object: toggle)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    @MainActor
+    private func allowNotificationsIfRequested(in app: XCUIApplication, timeout: TimeInterval) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        guard alert.waitForExistence(timeout: timeout) else { return }
+        let allow = alert.buttons["Allow"]
+        if allow.exists { allow.tap() }
+        app.activate()
     }
 
     @MainActor

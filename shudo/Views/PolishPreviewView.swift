@@ -75,7 +75,8 @@ struct PolishPreviewView: View {
             TodayView(
                 profile: Self.profile,
                 previewViewModel: Self.todayViewModel,
-                previewEntryDetail: Self.entryDetail
+                previewEntryDetail: Self.entryDetail,
+                previewComposerSeedImages: Self.composerSeedImages
             )
         case .detail:
             NavigationStack {
@@ -126,6 +127,26 @@ struct PolishPreviewView: View {
             statusMessage: "Ready",
             statusUpdatedAt: Date()
         )
+    }
+
+    /// A single tall portrait photo is the worst case for the fill-overflow
+    /// hit-testing bug (the invisible overflow used to swallow mic taps), so
+    /// the regression harness seeds one on demand instead of relying on the
+    /// simulator photo library's mostly-landscape stock images.
+    private static var composerSeedImages: [UIImage] {
+        guard ProcessInfo.processInfo.arguments.contains(
+            "-shudoPolishPreviewTallComposerPhoto"
+        ) else { return [] }
+        let size = CGSize(width: 400, height: 1200)
+        let image = UIGraphicsImageRenderer(size: size).image { context in
+            UIColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.orange.setFill()
+            for x in stride(from: 0, to: size.width, by: 40) {
+                context.fill(CGRect(x: x, y: 0, width: 4, height: size.height))
+            }
+        }
+        return [image]
     }
 
     private static let profile = Profile(

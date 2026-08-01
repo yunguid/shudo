@@ -870,3 +870,128 @@ extension NativeExperienceTests {
         #expect(all.count == 2)
     }
 }
+
+/// The nudge planner is pure: same context in, same plan out. These pin the
+/// quiet-by-default behavior Luke asked for — checkpoints disappear when the
+/// day is handling itself, and every fired nudge names a number.
+struct DayNudgePolicyTests {
+    private static let timezone = TimeZone(identifier: "America/New_York")!
+
+    private func day(at hour: Int, minute: Int = 0) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.timezone
+        return calendar.date(
+            from: DateComponents(year: 2026, month: 7, day: 31, hour: hour, minute: minute)
+        )!
+    }
+
+    private func context(
+        now: Date,
+        protein: Double,
+        fat: Double = 40,
+        kcal: Double,
+        meals: Int,
+        lastMealAt: Date? = nil
+    ) -> DayNudgeContext {
+        DayNudgeContext(
+            now: now,
+            timezone: Self.timezone,
+            totals: DayTotals(proteinG: protein, carbsG: 100, fatG: fat, caloriesKcal: kcal),
+            target: MacroTarget(caloriesKcal: 2_520, proteinG: 178, carbsG: 286, fatG: 74),
+            loggedMealCount: meals,
+            lastMealAt: lastMealAt
+        )
+    }
+
+    @Test func emptyMorningPlansAllThreeCheckpointsWithConcreteNumbers() {
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(now: day(at: 9), protein: 0, kcal: 0, meals: 0)
+        )
+        #expect(nudges.map(\.id) == ["lunch", "protein", "closeout"])
+        #expect(nudges[0].body.contains("Nothing logged yet"))
+        #expect(nudges[1].body.contains("180g of protein to go"))
+        #expect(nudges[2].body.contains("2520 kcal left"))
+        #expect(nudges.allSatisfy { $0.fireAt > day(at: 9) })
+    }
+
+    @Test func onTrackAfternoonStaysCompletelyQuiet() {
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(
+                now: day(at: 16),
+                protein: 120,
+                kcal: 1_900,
+                meals: 3,
+                lastMealAt: day(at: 15, minute: 30)
+            )
+        )
+        #expect(nudges.isEmpty)
+    }
+
+    @Test func aMealLoggedJustBeforeLunchSilencesTheLunchNudge() {
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(
+                now: day(at: 12, minute: 5),
+                protein: 100,
+                kcal: 800,
+                meals: 1,
+                lastMealAt: day(at: 12)
+            )
+        )
+        #expect(nudges.map(\.id) == ["closeout"])
+        #expect(nudges[0].title == "Room for a real dinner")
+    }
+
+    @Test func overTargetEveningGetsTheDayIsFullVariant() {
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(
+                now: day(at: 19),
+                protein: 150,
+                kcal: 2_700,
+                meals: 4,
+                lastMealAt: day(at: 17)
+            )
+        )
+        #expect(nudges.map(\.id) == ["closeout"])
+        #expect(nudges[0].title == "Day is full")
+        #expect(nudges[0].body.contains("180 kcal past target"))
+    }
+
+    @Test func fatAtTargetWithCaloriesRemainingSuggestsLeanChoices() {
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(
+                now: day(at: 19),
+                protein: 150,
+                fat: 80,
+                kcal: 2_200,
+                meals: 3,
+                lastMealAt: day(at: 17)
+            )
+        )
+        #expect(nudges.map(\.id) == ["closeout"])
+        #expect(nudges[0].title == "Go lean tonight")
+        #expect(nudges[0].body.contains("320 kcal"))
+    }
+
+    @Test func lateEveningSchedulesNothing() {
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(now: day(at: 21, minute: 30), protein: 0, kcal: 0, meals: 0)
+        )
+        #expect(nudges.isEmpty)
+    }
+
+    @Test func legacyWeighInOptInMigratesToTheCombinedToggleExactlyOnce() throws {
+        let defaults = try #require(UserDefaults(suiteName: "day-notifications-migration-tests"))
+        defaults.removePersistentDomain(forName: "day-notifications-migration-tests")
+
+        defaults.set(true, forKey: DayNotificationScheduler.legacyEnabledDefaultsKey)
+        DayNotificationScheduler.migrateLegacyPreference(defaults: defaults)
+        #expect(defaults.bool(forKey: DayNotificationScheduler.enabledDefaultsKey))
+
+        // A later explicit opt-out is never overridden by the legacy key.
+        defaults.set(false, forKey: DayNotificationScheduler.enabledDefaultsKey)
+        DayNotificationScheduler.migrateLegacyPreference(defaults: defaults)
+        #expect(!defaults.bool(forKey: DayNotificationScheduler.enabledDefaultsKey))
+
+        defaults.removePersistentDomain(forName: "day-notifications-migration-tests")
+    }
+}

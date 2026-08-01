@@ -71,12 +71,14 @@ struct EntryComposerView: View {
         timezone: String,
         autoStartRecording: Bool = false,
         audio: AudioRecorder,
+        initialImages: [UIImage] = [],
         onSubmit: @escaping (String?, Data?, Data?, UUID) -> Void
     ) {
         self.selectedDay = selectedDay
         self.timezone = timezone
         self.autoStartRecording = autoStartRecording
         self.audio = audio
+        _images = State(initialValue: initialImages)
         self.onSubmit = onSubmit
         dayText = Self.dayLabelText(selectedDay: selectedDay, timezone: timezone)
     }
@@ -289,6 +291,11 @@ struct EntryComposerView: View {
                                 .frame(maxWidth: .infinity)
                                 .frame(height: images.count == 1 ? 190 : 122)
                                 .clipShape(RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
+                                // clipShape crops drawing but NOT hit testing: a
+                                // portrait photo scaled to fill this wide slot
+                                // stays ~2.5x taller for touch purposes and eats
+                                // taps meant for the mic button above the grid.
+                                .allowsHitTesting(false)
 
                             Button {
                                 removePhoto(at: index)

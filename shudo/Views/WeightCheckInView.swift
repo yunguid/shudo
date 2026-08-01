@@ -180,6 +180,9 @@ struct WeightCheckInView: View {
                         .clipShape(
                             RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
                         )
+                        // The unclipped fill overflow would otherwise cover the
+                        // weight readout and mic button above (see composer grid).
+                        .allowsHitTesting(false)
                     Button {
                         self.mirrorPhoto = nil
                     } label: {

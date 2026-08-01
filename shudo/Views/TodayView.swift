@@ -76,6 +76,9 @@ struct TodayView: View {
     /// Preview/UI-test affordance: a fixture detail used for pushed meal
     /// screens so the full log → detail → correction journey runs offline.
     private let previewEntryDetail: SupabaseService.EntryDetail?
+    /// Preview/UI-test affordance: photos pre-attached to the composer so the
+    /// fill-overflow regression harness can seed a tall portrait image.
+    private let composerSeedImages: [UIImage]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
@@ -100,12 +103,14 @@ struct TodayView: View {
     @State private var composerAutoStartsRecording = false
     @State private var showErrorAlert = false
     @State private var entryPendingDeletion: Entry?
+    @State private var nudgeRescheduleTask: Task<Void, Never>?
     @GestureState private var daySwipePreview: CGFloat = 0
 
     init(profile: Profile) {
         self.profile = profile
         loadsRemotely = true
         previewEntryDetail = nil
+        composerSeedImages = []
         _vm = StateObject(
             wrappedValue: TodayViewModel(
                 profile: profile,
@@ -120,11 +125,13 @@ struct TodayView: View {
     init(
         profile: Profile,
         previewViewModel: TodayViewModel,
-        previewEntryDetail: SupabaseService.EntryDetail? = nil
+        previewEntryDetail: SupabaseService.EntryDetail? = nil,
+        previewComposerSeedImages: [UIImage] = []
     ) {
         self.profile = profile
         loadsRemotely = false
         self.previewEntryDetail = previewEntryDetail
+        composerSeedImages = previewComposerSeedImages
         _vm = StateObject(wrappedValue: previewViewModel)
     }
 
@@ -201,7 +208,8 @@ struct TodayView: View {
                 selectedDay: capturedDay,
                 timezone: vm.profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier,
                 autoStartRecording: composerAutoStartsRecording,
-                audio: composerAudioHolder.value
+                audio: composerAudioHolder.value,
+                initialImages: composerSeedImages
             ) { text, audio, imageJPEG, clientRequestId in
                 vm.acceptEntrySubmission(
                     text: text,
@@ -255,7 +263,14 @@ struct TodayView: View {
         .onAppear { handleCaptureRequest(router.captureRequest) }
         .task {
             guard loadsRemotely else { return }
+            rescheduleDayNudges()
             await loadWeightCheckIns()
+        }
+        .onChange(of: vm.entries) { _, _ in rescheduleDayNudges() }
+        .onChange(of: isShowingAccount) { _, isShowing in
+            // The notifications toggle lives in Settings; returning from it is
+            // the moment a fresh opt-in should produce today's plan.
+            if !isShowing { rescheduleDayNudges() }
         }
         .onChange(of: router.captureRequest) { _, request in handleCaptureRequest(request) }
         .onChange(of: profile) { _, updated in
@@ -264,6 +279,7 @@ struct TodayView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard loadsRemotely, phase == .active else { return }
+            rescheduleDayNudges()
             Task { await vm.reconcileAfterActivation() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
@@ -763,6 +779,37 @@ struct TodayView: View {
         guard let request else { return }
         openComposer(autoStartRecording: request.autoStartRecording)
         router.consume(request)
+    }
+
+    /// Rebuilds today's local nudge plan from whatever is on screen right
+    /// now. Debounced because entry status polling touches `vm.entries`
+    /// every ~650 ms while a meal analyzes.
+    private func rescheduleDayNudges() {
+        guard loadsRemotely, vm.isPinnedToToday else { return }
+        nudgeRescheduleTask?.cancel()
+        let timezone =
+            TimeZone(identifier: vm.profile?.timezone ?? profile.timezone) ?? .autoupdatingCurrent
+        let loggedMeals = vm.entries.filter { $0.status != .failed }
+        let context = DayNudgeContext(
+            now: Date(),
+            timezone: timezone,
+            totals: vm.todayTotals,
+            target: vm.effectiveTarget,
+            loggedMealCount: loggedMeals.count,
+            lastMealAt: loggedMeals.map(\.createdAt).max()
+        )
+        let weighInSeconds =
+            UserDefaults.standard.object(
+                forKey: DayNotificationScheduler.weighInSecondsDefaultsKey
+            ) as? Double ?? DayNotificationScheduler.defaultWeighInSecondsFromMidnight
+        nudgeRescheduleTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            await DayNotificationScheduler.reschedule(
+                context: context,
+                weighInSecondsFromMidnight: weighInSeconds
+            )
+        }
     }
 }
 

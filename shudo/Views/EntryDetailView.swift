@@ -1124,6 +1124,10 @@ private struct EntryCorrectionSheet: View {
                                         style: .continuous
                                     )
                                 )
+                                // Fill overflow stays hit-testable past the clip
+                                // and would block the note field and controls
+                                // around this grid (see composer grid).
+                                .allowsHitTesting(false)
                                 .accessibilityHidden(true)
                             Button {
                                 removePhoto(at: index)

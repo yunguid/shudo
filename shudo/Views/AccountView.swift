@@ -45,9 +45,9 @@ struct AccountView: View {
     @State private var isSavingProfilePhoto = false
     @State private var isShowingRemovePhotoConfirmation = false
     @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
-    @AppStorage("weightReminderEnabled") private var weightReminderEnabled = false
-    @AppStorage("weightReminderSecondsFromMidnight") private var weightReminderSeconds =
-        WeightReminderScheduler.defaultSecondsFromMidnight
+    @AppStorage(DayNotificationScheduler.enabledDefaultsKey) private var notificationsEnabled = false
+    @AppStorage(DayNotificationScheduler.weighInSecondsDefaultsKey) private var weighInSeconds =
+        DayNotificationScheduler.defaultWeighInSecondsFromMidnight
 
     private let service: SupabaseService
     private let weeklySummaryProvider: any WeeklySummaryProviding
@@ -341,6 +341,9 @@ struct AccountView: View {
                 Image(uiImage: profilePhoto)
                     .resizable()
                     .scaledToFill()
+                    // Fill overflow is hit-testable past the clip; keep this
+                    // decorative hero from shadowing the neighboring controls.
+                    .allowsHitTesting(false)
             } else {
                 Image(systemName: "person.crop.circle")
                     .font(.title2)
@@ -558,31 +561,32 @@ struct AccountView: View {
 
     private var weightReminderSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("WEIGH-IN")
+            sectionLabel("NOTIFICATIONS")
             VStack(spacing: 0) {
                 Toggle(
                     isOn: Binding(
-                        get: { weightReminderEnabled },
-                        set: { setWeightReminder(enabled: $0) }
+                        get: { notificationsEnabled },
+                        set: { setNotifications(enabled: $0) }
                     )
                 ) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Daily weigh-in reminder")
+                        Text("Daily nudges")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(Design.Color.ink)
-                        Text("A private notification on this device")
+                        Text("Weigh-in reminder and meal-pacing check-ins, on this device")
                             .font(.caption)
                             .foregroundStyle(Design.Color.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .tint(Design.Color.accentPrimary)
                 .padding(.horizontal, 16)
                 .frame(minHeight: 60)
 
-                if weightReminderEnabled {
+                if notificationsEnabled {
                     HairlineRule().padding(.leading, 16)
                     DatePicker(
-                        "Reminder time",
+                        "Weigh-in time",
                         selection: Binding(
                             get: { reminderDate },
                             set: { updateReminderTime($0) }
@@ -605,20 +609,20 @@ struct AccountView: View {
 
     private var reminderDate: Date {
         Calendar.current.startOfDay(for: Date())
-            .addingTimeInterval(weightReminderSeconds)
+            .addingTimeInterval(weighInSeconds)
     }
 
-    private func setWeightReminder(enabled: Bool) {
-        weightReminderEnabled = enabled
+    private func setNotifications(enabled: Bool) {
+        notificationsEnabled = enabled
         Task {
             do {
-                try await WeightReminderScheduler.schedule(
-                    enabled: enabled,
-                    secondsFromMidnight: weightReminderSeconds
+                try await DayNotificationScheduler.applyEnabled(
+                    enabled,
+                    weighInSecondsFromMidnight: weighInSeconds
                 )
             } catch {
                 await MainActor.run {
-                    weightReminderEnabled = false
+                    notificationsEnabled = false
                     self.error = error.localizedDescription
                 }
             }
@@ -627,12 +631,12 @@ struct AccountView: View {
 
     private func updateReminderTime(_ date: Date) {
         let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        weightReminderSeconds = Double((components.hour ?? 8) * 3_600 + (components.minute ?? 0) * 60)
+        weighInSeconds = Double((components.hour ?? 8) * 3_600 + (components.minute ?? 0) * 60)
         Task {
             do {
-                try await WeightReminderScheduler.schedule(
-                    enabled: weightReminderEnabled,
-                    secondsFromMidnight: weightReminderSeconds
+                try await DayNotificationScheduler.applyEnabled(
+                    notificationsEnabled,
+                    weighInSecondsFromMidnight: weighInSeconds
                 )
             } catch {
                 await MainActor.run { self.error = error.localizedDescription }
