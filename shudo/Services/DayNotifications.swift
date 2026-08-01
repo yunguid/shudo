@@ -102,7 +102,10 @@ enum DayNudgePolicy {
         guard target.caloriesKcal > 0 else { return nil }
         let remaining = target.caloriesKcal - context.totals.caloriesKcal
 
-        if remaining >= target.caloriesKcal * 0.25 {
+        // 400 kcal at 8:30pm is a real dinner-sized gap even when it's under
+        // a quarter of a large target (Luke hit exactly this: ~600 left of
+        // 2,461 and the percentage rule alone would have stayed silent).
+        if remaining >= min(target.caloriesKcal * 0.25, 400) {
             let proteinGap = max(0, target.proteinG - context.totals.proteinG)
             let proteinLine = proteinGap >= 20
                 ? " Lead with protein — \(roundedGrams(proteinGap))g still to go."

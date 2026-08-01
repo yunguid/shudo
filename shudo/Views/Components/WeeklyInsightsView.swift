@@ -43,7 +43,7 @@ struct WeeklyInsightsView: View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Weekly insights")
+                    Text("Week by week")
                         .font(.headline)
                         .foregroundStyle(Design.Color.ink)
                     Text(subtitleText)
@@ -221,7 +221,7 @@ struct WeeklyInsightsView: View {
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.subtle)
+                        .foregroundStyle(Design.Color.muted)
                 }
                 .padding(12)
                 .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.m))
@@ -273,7 +273,7 @@ struct WeeklyInsightsView: View {
                     "Daily average across \(week.loggedDayCount) logged day\(week.loggedDayCount == 1 ? "" : "s")"
                 )
                 .font(.caption2)
-                .foregroundStyle(Design.Color.subtle)
+                .foregroundStyle(Design.Color.muted)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(breakdownAccessibilityLabel(week: week, average: average, target: target))

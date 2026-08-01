@@ -6,6 +6,7 @@ enum PolishPreviewScreen: String {
     case main
     case detail
     case settings
+    case insights
     case heatmap
 
     static var launchValue: Self? {
@@ -90,8 +91,15 @@ struct PolishPreviewView: View {
                 AccountView(
                     previewProfile: Self.profile,
                     profilePhoto: Self.profilePhoto,
-                    dailyTotals: Self.adherenceTotals,
-                    weeklySummaries: Self.weeklySummaries
+                    dailyTotals: Self.adherenceTotals
+                )
+            }
+        case .insights:
+            NavigationStack {
+                WeeklyInsightsScreen(
+                    previewProfile: Self.profile,
+                    summaries: Self.weeklySummaries,
+                    dailyTotals: Self.adherenceTotals
                 )
             }
         case .heatmap:

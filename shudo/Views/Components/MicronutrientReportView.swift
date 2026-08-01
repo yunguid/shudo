@@ -22,7 +22,7 @@ struct MicronutrientReportView: View {
                 }
                 Text(report.caveat)
                     .font(.caption)
-                    .foregroundStyle(Design.Color.subtle)
+                    .foregroundStyle(Design.Color.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 4)
             }
@@ -100,12 +100,12 @@ struct MicronutrientReportView: View {
             if !nutrient.evidence.isEmpty {
                 Text("From: " + nutrient.evidence.joined(separator: ", "))
                     .font(.caption2)
-                    .foregroundStyle(Design.Color.subtle)
+                    .foregroundStyle(Design.Color.muted)
                     .lineLimit(3)
             }
             Text("\(nutrient.confidence.capitalized) confidence")
                 .font(.caption2)
-                .foregroundStyle(Design.Color.subtle)
+                .foregroundStyle(Design.Color.muted)
         }
         .padding(16)
         .accessibilityElement(children: .combine)

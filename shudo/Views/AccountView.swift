@@ -27,10 +27,7 @@ struct AccountView: View {
     @State private var targetDraft: MacroTargetDraft
     @State private var dailyTotals: [DailyNutritionTotal] = []
     @State private var targetHistory: [DailyMacroTargetSnapshot] = []
-    @State private var weeklySummaries: [WeeklyInsightSummary] = []
-    @State private var weeklySummaryError: String?
     @State private var isLoading = true
-    @State private var isLoadingWeeklySummary = true
     @State private var isSavingTargets = false
     @State private var isShowingProfileEditor = false
     @State private var isShowingTargetRecalculation = false
@@ -50,7 +47,6 @@ struct AccountView: View {
         DayNotificationScheduler.defaultWeighInSecondsFromMidnight
 
     private let service: SupabaseService
-    private let weeklySummaryProvider: any WeeklySummaryProviding
     private let accountDeletionService: any AccountDeletionServing
     private let onProfileUpdated: (Profile) -> Void
     private let loadsRemotely: Bool
@@ -58,14 +54,12 @@ struct AccountView: View {
     init(
         initialProfile: Profile,
         service: SupabaseService = SupabaseService(),
-        weeklySummaryProvider: (any WeeklySummaryProviding)? = nil,
         accountDeletionService: (any AccountDeletionServing)? = nil,
         onProfileUpdated: @escaping (Profile) -> Void = { _ in }
     ) {
         _profile = State(initialValue: initialProfile)
         _targetDraft = State(initialValue: MacroTargetDraft(target: initialProfile.dailyMacroTarget))
         self.service = service
-        self.weeklySummaryProvider = weeklySummaryProvider ?? service
         self.accountDeletionService =
             accountDeletionService
             ?? APIService(
@@ -81,18 +75,14 @@ struct AccountView: View {
         init(
             previewProfile: Profile,
             profilePhoto: UIImage,
-            dailyTotals: [DailyNutritionTotal],
-            weeklySummaries: [WeeklyInsightSummary] = []
+            dailyTotals: [DailyNutritionTotal]
         ) {
             _profile = State(initialValue: previewProfile)
             _targetDraft = State(initialValue: MacroTargetDraft(target: previewProfile.dailyMacroTarget))
             _dailyTotals = State(initialValue: dailyTotals)
             _profilePhoto = State(initialValue: profilePhoto)
             _isLoading = State(initialValue: false)
-            _isLoadingWeeklySummary = State(initialValue: false)
-            _weeklySummaries = State(initialValue: weeklySummaries)
             service = SupabaseService()
-            weeklySummaryProvider = StaticWeeklySummaryProvider(summaries: weeklySummaries)
             accountDeletionService = PolishPreviewAccountDeletionService()
             onProfileUpdated = { _ in }
             loadsRemotely = false
@@ -119,16 +109,6 @@ struct AccountView: View {
                     targetHistory: targetHistory,
                     timezone: profile.timezone
                 )
-                WeeklyInsightsView(
-                    summaries: weeklySummaries,
-                    totals: dailyTotals,
-                    fallbackTarget: profile.dailyMacroTarget,
-                    targetHistory: targetHistory,
-                    isLoading: isLoadingWeeklySummary,
-                    errorMessage: weeklySummaryError,
-                    onRetry: { Task { await loadWeeklySummary() } }
-                )
-
                 if isLoading {
                     ProgressView()
                         .tint(Design.Color.accentPrimary)
@@ -436,10 +416,10 @@ struct AccountView: View {
             }
             VStack(spacing: 0) {
                 infoRow(icon: "globe", label: "Timezone", value: profile.timezone)
-                HairlineRule()
+                HairlineRule().padding(.leading, 16)
                 infoRow(icon: "ruler", label: "Units", value: profile.units.capitalized)
                 if let height = profile.heightCM {
-                    HairlineRule()
+                    HairlineRule().padding(.leading, 16)
                     infoRow(
                         icon: "arrow.up.and.down",
                         label: "Height",
@@ -447,7 +427,7 @@ struct AccountView: View {
                     )
                 }
                 if let weight = profile.weightKG {
-                    HairlineRule()
+                    HairlineRule().padding(.leading, 16)
                     infoRow(
                         icon: "scalemass",
                         label: "Weight",
@@ -455,7 +435,7 @@ struct AccountView: View {
                     )
                 }
                 if let targetWeight = profile.targetWeightKG {
-                    HairlineRule()
+                    HairlineRule().padding(.leading, 16)
                     infoRow(
                         icon: "target",
                         label: "Target weight",
@@ -495,7 +475,7 @@ struct AccountView: View {
                     text: $targetDraft.calories,
                     field: .calories
                 )
-                HairlineRule().padding(.leading, 42)
+                HairlineRule().padding(.leading, 16)
                 targetRow(
                     label: "Protein",
                     unit: "g",
@@ -503,7 +483,7 @@ struct AccountView: View {
                     text: $targetDraft.protein,
                     field: .protein
                 )
-                HairlineRule().padding(.leading, 42)
+                HairlineRule().padding(.leading, 16)
                 targetRow(
                     label: "Carbs",
                     unit: "g",
@@ -511,7 +491,7 @@ struct AccountView: View {
                     text: $targetDraft.carbs,
                     field: .carbs
                 )
-                HairlineRule().padding(.leading, 42)
+                HairlineRule().padding(.leading, 16)
                 targetRow(
                     label: "Fat",
                     unit: "g",
@@ -776,34 +756,18 @@ struct AccountView: View {
             async let totalsRequest = service.fetchDailyNutritionTotals(timezone: profile.timezone)
             async let historyRequest = service.fetchDailyMacroTargetHistory()
             async let emailRequest = try? loadEmail()
-            async let weeklyRequest: Void = loadWeeklySummary()
             dailyTotals = try await totalsRequest
             targetHistory = try await historyRequest
             if let loadedEmail = await emailRequest {
                 email = loadedEmail
             }
-            await weeklyRequest
         } catch {
             self.error = error.localizedDescription
             if let loadedEmail = try? await loadEmail() {
                 email = loadedEmail
             }
-            await loadWeeklySummary()
         }
         isLoading = false
-    }
-
-    private func loadWeeklySummary() async {
-        isLoadingWeeklySummary = true
-        weeklySummaryError = nil
-        do {
-            weeklySummaries = try await weeklySummaryProvider.fetchWeeklySummaries(
-                limit: NutritionProgressPolicy.trendWeekCount
-            )
-        } catch {
-            weeklySummaryError = "Weekly insights couldn’t be loaded."
-        }
-        isLoadingWeeklySummary = false
     }
 
     private func loadEmail() async throws -> String {

@@ -56,8 +56,12 @@ enum DayEdgeSwipePolicy {
         translation: CGSize,
         containerWidth: CGFloat
     ) -> CGFloat {
+        // Same thresholds dayDelta accepts: without them, a diagonal drag
+        // that starts near a bezel nudges the whole day sideways and snaps
+        // back — pure jitter for a gesture that was never going to commit.
         guard let edge = originatingEdge(startX: startX, containerWidth: containerWidth),
-            abs(translation.width) > abs(translation.height) * 1.1
+            abs(translation.width) >= minimumFlickTravel,
+            abs(translation.width) >= abs(translation.height) * horizontalDominance
         else { return 0 }
         switch edge {
         case .left where translation.width > 0:
@@ -83,8 +87,6 @@ struct TodayView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
     @ScaledMetric(relativeTo: .largeTitle) private var todayCalorieFontSize: CGFloat = 32
-    // Matches EntryCard's thumbnail metric so the divider inset tracks Dynamic Type.
-    @ScaledMetric(relativeTo: .body) private var entryThumb: CGFloat = 44
     @StateObject private var vm: TodayViewModel
     @ObservedObject private var router = AppRouter.shared
     @State private var formatterCache = DayFormatterCache()
@@ -104,6 +106,9 @@ struct TodayView: View {
     @State private var showErrorAlert = false
     @State private var entryPendingDeletion: Entry?
     @State private var nudgeRescheduleTask: Task<Void, Never>?
+    @State private var weekWindowTotals: [DailyNutritionTotal] = []
+    @State private var weekTargetHistory: [DailyMacroTargetSnapshot] = []
+    @State private var weekWindowRefreshTask: Task<Void, Never>?
     @GestureState private var daySwipePreview: CGFloat = 0
 
     init(profile: Profile) {
@@ -166,6 +171,9 @@ struct TodayView: View {
                             weightCheckInCard
                             macroStrip
                             mealList
+                            if loadsRemotely {
+                                thisWeekCard
+                            }
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 10)
@@ -264,9 +272,16 @@ struct TodayView: View {
         .task {
             guard loadsRemotely else { return }
             rescheduleDayNudges()
+            refreshWeekWindow(afterDelay: false)
             await loadWeightCheckIns()
         }
-        .onChange(of: vm.entries) { _, _ in rescheduleDayNudges() }
+        .onChange(of: vm.entries) { _, _ in
+            rescheduleDayNudges()
+            // Totals move when a meal finishes analyzing; keep the running
+            // week card current without hammering the totals view during the
+            // 650 ms status polls.
+            refreshWeekWindow(afterDelay: true)
+        }
         .onChange(of: isShowingAccount) { _, isShowing in
             // The notifications toggle lives in Settings; returning from it is
             // the moment a fresh opt-in should produce today's plan.
@@ -370,6 +385,11 @@ struct TodayView: View {
                         .font(.system(size: todayCalorieFontSize, weight: .bold))
                         .foregroundStyle(Design.Color.ink)
                         .monospacedDigit()
+                        .contentTransition(.numericText(value: vm.todayTotals.caloriesKcal))
+                        .animation(
+                            reduceMotion ? nil : .easeOut(duration: 0.28),
+                            value: vm.todayTotals.caloriesKcal
+                        )
                     Text("/ \(Int(target.caloriesKcal.rounded())) kcal")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(Design.Color.muted)
@@ -435,7 +455,7 @@ struct TodayView: View {
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.subtle)
+                        .foregroundStyle(Design.Color.muted)
                 }
             }
             .padding(.horizontal, 18)
@@ -451,6 +471,77 @@ struct TodayView: View {
             selectedWeightCheckIn.map { "Weigh-in, \(weightValueText($0)) logged" } ?? "Weigh-in"
         )
         .accessibilityHint("Opens the weigh-in sheet to say or type your weight")
+    }
+
+    private var runningWeekWindow: NutrientTrendWeek? {
+        NutritionProgressPolicy.runningWeekWindow(
+            totals: weekWindowTotals,
+            target: vm.effectiveTarget,
+            targetHistory: weekTargetHistory,
+            timezone: vm.profile?.timezone ?? profile.timezone
+        )
+    }
+
+    /// The rolling week, always current, always one tap from the full
+    /// insights screen — the number Luke shouldn't have to compute at 10:48pm.
+    private var thisWeekCard: some View {
+        NavigationLink {
+            WeeklyInsightsScreen(profile: vm.profile ?? profile)
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("This week")
+                        .font(.headline)
+                        .foregroundStyle(Design.Color.ink)
+                    Text(thisWeekSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(Design.Color.muted)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Design.Color.muted)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(
+                Design.Color.glassFill,
+                in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("This week. \(thisWeekSubtitle)")
+        .accessibilityHint("Opens weekly insights")
+    }
+
+    private var thisWeekSubtitle: String {
+        guard let window = runningWeekWindow,
+            let average = window.average,
+            window.loggedDayCount > 0
+        else { return "Running averages and weekly stories" }
+        return "\(Int(average.caloriesKcal.rounded())) kcal/day avg · "
+            + "\(window.loggedDayCount) of 7 days logged"
+    }
+
+    private func refreshWeekWindow(afterDelay: Bool) {
+        guard loadsRemotely else { return }
+        weekWindowRefreshTask?.cancel()
+        weekWindowRefreshTask = Task {
+            if afterDelay {
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled else { return }
+            }
+            let timezone = vm.profile?.timezone ?? profile.timezone
+            let service = SupabaseService()
+            async let totals = try? service.fetchDailyNutritionTotals(timezone: timezone)
+            async let history = try? service.fetchDailyMacroTargetHistory()
+            let (loadedTotals, loadedHistory) = await (totals, history)
+            guard !Task.isCancelled else { return }
+            if let loadedTotals { weekWindowTotals = loadedTotals }
+            if let loadedHistory { weekTargetHistory = loadedHistory }
+        }
     }
 
     private func weightValueText(_ checkIn: WeightCheckIn) -> String {
@@ -506,6 +597,8 @@ struct TodayView: View {
                             width: geometry.size.width
                                 * NutritionProgressPolicy.progress(current: current, goal: goal)
                         )
+                        // Travel with the rolling number above instead of snapping.
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: current)
                 }
         }
         .frame(height: 4)
@@ -591,11 +684,13 @@ struct TodayView: View {
                             .padding(.bottom, 11)
                         }
 
+                        // Full-bleed like the detail screen's breakdown list:
+                        // per-row insets left a ragged left edge whenever
+                        // photo and photo-less meals alternated.
                         if index < vm.entries.count - 1 {
                             Rectangle()
                                 .fill(Design.Color.rule)
                                 .frame(height: 0.5)
-                                .padding(.leading, entry.imageURL == nil ? 0 : entryThumb + 10)
                         }
                     }
                 }

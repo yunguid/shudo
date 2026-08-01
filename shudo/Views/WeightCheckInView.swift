@@ -75,6 +75,12 @@ struct WeightCheckInView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }.disabled(isSaving)
                 }
+                // The decimal pad has no return key; without this the keypad
+                // is a trap once the field is focused.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { weightFieldFocused = false }
+                }
             }
             .safeAreaInset(edge: .bottom) { actionBar }
         }
@@ -204,6 +210,7 @@ struct WeightCheckInView: View {
                         } label: {
                             Label("Camera", systemImage: "camera.fill")
                                 .frame(maxWidth: .infinity).frame(height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .background(Design.Color.elevated, in: Capsule())
@@ -224,7 +231,7 @@ struct WeightCheckInView: View {
             if existing?.progressPhotoPath != nil, mirrorPhoto == nil {
                 Text("A photo is already saved for this day — adding one replaces it.")
                     .font(.caption2)
-                    .foregroundStyle(Design.Color.subtle)
+                    .foregroundStyle(Design.Color.muted)
             }
         }
     }

@@ -352,6 +352,66 @@ enum NutritionProgressPolicy {
         )
     }
 
+    /// The rolling seven-day window ending on the given day (usually today),
+    /// averaged over logged days only against each day's effective target —
+    /// the "current week so far" number that updates daily, unlike the
+    /// stored Monday-anchored summaries.
+    static func runningWeekWindow(
+        totals: [DailyNutritionTotal],
+        target: MacroTarget,
+        targetHistory: [DailyMacroTargetSnapshot] = [],
+        endingOn endDate: Date = Date(),
+        timezone: String
+    ) -> NutrientTrendWeek? {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        let endStart = calendar.startOfDay(for: endDate)
+        guard let windowStart = calendar.date(byAdding: .day, value: -6, to: endStart) else {
+            return nil
+        }
+        let totalsByDay = totals.reduce(into: [String: DailyNutritionTotal]()) { result, total in
+            result[total.localDay] = total
+        }
+
+        var actual = NutrientAccumulator()
+        var goals = NutrientAccumulator()
+        var loggedDayCount = 0
+        for dayOffset in 0..<7 {
+            guard let date = calendar.date(byAdding: .day, value: dayOffset, to: windowStart)
+            else { continue }
+            let localDay = formatter.string(from: date)
+            guard let total = totalsByDay[localDay],
+                total.entryCount > 0,
+                actual.canInclude(total)
+            else { continue }
+            let effectiveTarget = effectiveTarget(
+                on: localDay,
+                history: targetHistory,
+                fallback: target
+            )
+            guard goals.canInclude(effectiveTarget) else { continue }
+            actual.add(total)
+            goals.add(effectiveTarget)
+            loggedDayCount += 1
+        }
+
+        return NutrientTrendWeek(
+            startDate: windowStart,
+            endDate: endStart,
+            startLocalDay: formatter.string(from: windowStart),
+            endLocalDay: formatter.string(from: endStart),
+            loggedDayCount: loggedDayCount,
+            average: actual.average(dividingBy: loggedDayCount),
+            averageTarget: goals.average(dividingBy: loggedDayCount)
+        )
+    }
+
     static func nutrientTrendWeeks(
         totals: [DailyNutritionTotal],
         target: MacroTarget,

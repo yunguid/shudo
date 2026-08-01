@@ -39,6 +39,7 @@ enum EntryComposerPolicy {
 
 struct EntryComposerView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var audio: AudioRecorder
 
     @State private var note = ""
@@ -339,40 +340,40 @@ struct EntryComposerView: View {
     /// Barcode scanning adds a removable label card; it does not consume a
     /// photo slot, so it stays enabled while photos are full.
     private var scanButton: some View {
-        Button {
+        let enabled =
+            !isSubmitting
+            && scannedPortions.count < EntryComposerPolicy.maximumScannedItems
+        return Button {
             settleVoiceCapture()
             isShowingBarcodeScanner = true
         } label: {
             Label("Scan", systemImage: "barcode.viewfinder")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Design.Color.ink)
+                .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
                 .background(Design.Color.elevated, in: Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(
-            isSubmitting
-                || scannedPortions.count >= EntryComposerPolicy.maximumScannedItems
-        )
+        .disabled(!enabled)
         .accessibilityHint("Scans a packaged food barcode and adds its nutrition label")
     }
 
     private func mediaButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let enabled =
+            !isSubmitting
+            && !isPreparingImage
+            && images.count < ImageProcessor.maximumPhotoCount
+        return Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Design.Color.ink)
+                .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
                 .background(Design.Color.elevated, in: Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(
-            isSubmitting
-                || isPreparingImage
-                || images.count >= ImageProcessor.maximumPhotoCount
-        )
+        .disabled(!enabled)
     }
 
     private var noteField: some View {
@@ -559,7 +560,7 @@ struct EntryComposerView: View {
                     return
                 }
                 let remainingSlots = max(0, ImageProcessor.maximumPhotoCount - images.count)
-                withAnimation(.snappy) {
+                animated {
                     images.append(contentsOf: preparedImages.prefix(remainingSlots))
                 }
                 Perf.mark("photo.thumbs.visible")
@@ -584,7 +585,7 @@ struct EntryComposerView: View {
                 guard imageLoadGeneration == generation else { return }
                 isPreparingImage = false
                 guard images.count < ImageProcessor.maximumPhotoCount else { return }
-                withAnimation(.snappy) { images.append(prepared) }
+                animated { images.append(prepared) }
             }
         }
     }
@@ -613,7 +614,9 @@ struct EntryComposerView: View {
                         isDisabled: isSubmitting,
                         onRemove: { removeScannedPortion(id: portion.id) }
                     )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(
+                        reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top))
+                    )
                 }
             }
         }
@@ -622,22 +625,32 @@ struct EntryComposerView: View {
     private func appendScannedProduct(_ product: ScannedProduct) {
         guard scannedPortions.count < EntryComposerPolicy.maximumScannedItems else { return }
         localError = nil
-        withAnimation(.snappy) {
+        animated {
             scannedPortions.append(ScannedPortion(product: product))
         }
     }
 
     private func removeScannedPortion(id: UUID) {
-        withAnimation(.snappy) {
+        animated {
             scannedPortions.removeAll { $0.id == id }
         }
     }
 
     private func removePhoto(at offset: Int) {
         guard images.indices.contains(offset) else { return }
-        withAnimation(.snappy) {
+        animated {
             let index = images.index(images.startIndex, offsetBy: offset)
             images.remove(at: index)
+        }
+    }
+
+    /// Honors Reduce Motion: state changes land without the spring when the
+    /// user asked the system for less movement.
+    private func animated(_ body: () -> Void) {
+        if reduceMotion {
+            body()
+        } else {
+            withAnimation(.snappy, body)
         }
     }
 

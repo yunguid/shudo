@@ -919,12 +919,29 @@ struct DayNudgePolicyTests {
             context: context(
                 now: day(at: 16),
                 protein: 120,
-                kcal: 1_900,
+                kcal: 2_200,
                 meals: 3,
                 lastMealAt: day(at: 15, minute: 30)
             )
         )
         #expect(nudges.isEmpty)
+    }
+
+    @Test func dinnerSizedGapFiresEvenUnderTheQuarterTargetLine() {
+        // Luke's real evening: ~600 kcal left of a large target is worth a
+        // close-out nudge even though it's under 25% of the target.
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(
+                now: day(at: 19),
+                protein: 150,
+                kcal: 1_920,
+                meals: 3,
+                lastMealAt: day(at: 17)
+            )
+        )
+        #expect(nudges.map(\.id) == ["closeout"])
+        #expect(nudges[0].title == "Room for a real dinner")
+        #expect(nudges[0].body.contains("600 kcal left"))
     }
 
     @Test func aMealLoggedJustBeforeLunchSilencesTheLunchNudge() {
@@ -977,6 +994,39 @@ struct DayNudgePolicyTests {
             context: context(now: day(at: 21, minute: 30), protein: 0, kcal: 0, meals: 0)
         )
         #expect(nudges.isEmpty)
+    }
+
+    @Test func runningWindowAveragesLoggedDaysInTheLastSevenOnly() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let endDate = calendar.date(
+            from: DateComponents(year: 2026, month: 7, day: 31, hour: 12)
+        )!
+        let totals = [
+            DailyNutritionTotal(
+                localDay: "2026-07-31", proteinG: 150, carbsG: 250, fatG: 70,
+                caloriesKcal: 2_200, entryCount: 3),
+            DailyNutritionTotal(
+                localDay: "2026-07-27", proteinG: 100, carbsG: 200, fatG: 60,
+                caloriesKcal: 1_800, entryCount: 2),
+            // Outside the 7-day window ending 07-31; must be ignored.
+            DailyNutritionTotal(
+                localDay: "2026-07-24", proteinG: 999, carbsG: 999, fatG: 999,
+                caloriesKcal: 9_000, entryCount: 4),
+        ]
+        let window = try #require(
+            NutritionProgressPolicy.runningWeekWindow(
+                totals: totals,
+                target: .defaultDaily,
+                endingOn: endDate,
+                timezone: "America/New_York"
+            )
+        )
+        #expect(window.startLocalDay == "2026-07-25")
+        #expect(window.endLocalDay == "2026-07-31")
+        #expect(window.loggedDayCount == 2)
+        #expect(window.average?.caloriesKcal == 2_000)
+        #expect(window.average?.proteinG == 125)
     }
 
     @Test func legacyWeighInOptInMigratesToTheCombinedToggleExactlyOnce() throws {
