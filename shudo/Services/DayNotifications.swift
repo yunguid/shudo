@@ -10,6 +10,11 @@ struct PlannedNudge: Equatable, Sendable {
     let body: String
 }
 
+struct NotificationCopy: Equatable, Sendable {
+    let title: String
+    let body: String
+}
+
 /// Everything the nudge planner may consider, captured at scheduling time.
 /// Content is computed from the freshest state we have — the plan is rebuilt
 /// on every day load, meal change, and foregrounding, so a nudge fired at
@@ -21,15 +26,129 @@ struct DayNudgeContext {
     let target: MacroTarget
     let loggedMealCount: Int
     let lastMealAt: Date?
+    let goalType: NutritionGoalType
+    let targetWeightKG: Double?
+    let units: String
+    let weightCheckIns: [WeightCheckIn]
+    let recentNutrition: [DailyNutritionTotal]
+    let targetHistory: [DailyMacroTargetSnapshot]
+    let micronutrientReport: WeeklyMicronutrientReport?
+    let micronutrientReportWeekEnd: Date?
+}
+
+/// Connects a stable weight trend to intake over the same period. It avoids
+/// interpreting one noisy weigh-in and falls back to a plain reminder until
+/// both weight and meal coverage are useful.
+enum WeightReminderPolicy {
+    static func copy(context: DayNudgeContext) -> NotificationCopy {
+        let fallback = NotificationCopy(title: "Weigh-in", body: "Say your weight and you’re done.")
+        let allWeights = context.weightCheckIns.sorted { $0.localDay < $1.localDay }
+        guard let latestDay = allWeights.last?.localDay else { return fallback }
+        let cutoffDay = day(latestDay, adding: -27) ?? latestDay
+        let ordered = allWeights.filter { $0.localDay >= cutoffDay }
+        guard ordered.count >= 4,
+            let firstDay = ordered.first?.localDay,
+            let lastDay = ordered.last?.localDay,
+            daysBetween(firstDay, lastDay) >= 7
+        else { return fallback }
+
+        let leading = ordered.prefix(min(3, ordered.count / 2))
+        let trailing = ordered.suffix(min(3, ordered.count / 2))
+        let start = leading.map(\.weightKG).reduce(0, +) / Double(leading.count)
+        let end = trailing.map(\.weightKG).reduce(0, +) / Double(trailing.count)
+        let change = end - start
+
+        let matchingNutrition = context.recentNutrition.filter {
+            $0.localDay >= firstDay && $0.localDay <= lastDay && $0.entryCount > 0
+        }
+        guard matchingNutrition.count >= 5 else {
+            return NotificationCopy(
+                title: "Weigh-in",
+                body: "Keep the weight trend useful—say today’s weight and you’re done."
+            )
+        }
+        let calorieDelta = matchingNutrition.reduce(0.0) { result, day in
+            let target = NutritionProgressPolicy.effectiveTarget(
+                on: day.localDay,
+                history: context.targetHistory,
+                fallback: context.target
+            )
+            return result + day.caloriesKcal - target.caloriesKcal
+        } / Double(matchingNutrition.count)
+
+        let weightChange = formattedWeight(abs(change), units: context.units)
+        let direction = change <= -0.15 ? "down" : change >= 0.15 ? "up" : "steady"
+        let alignment: String
+        switch (context.goalType, direction) {
+        case (.lose, "down"), (.gain, "up"), (.maintain, "steady"):
+            alignment = "toward your goal"
+        case (.maintain, _):
+            alignment = "against a maintain goal"
+        default:
+            alignment = "away from your goal"
+        }
+        let trendText = direction == "steady"
+            ? "Your smoothed trend is steady \(alignment)"
+            : "Your smoothed trend is \(direction) \(weightChange) \(alignment)"
+        let intakeText: String
+        if abs(calorieDelta) < 50 {
+            intakeText = "logged intake averaged near target"
+        } else {
+            let relation = calorieDelta < 0 ? "below" : "above"
+            intakeText = "logged intake averaged \(roundedKcal(abs(calorieDelta))) kcal \(relation) target"
+        }
+        let goalText: String
+        if let targetWeight = context.targetWeightKG {
+            goalText = ", \(formattedWeight(abs(end - targetWeight), units: context.units)) from target"
+        } else {
+            goalText = ""
+        }
+        return NotificationCopy(
+            title: "Weigh-in",
+            body: "\(trendText)\(goalText); \(intakeText). Add today’s reading."
+        )
+    }
+
+    private static func daysBetween(_ first: String, _ last: String) -> Int {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let start = formatter.date(from: first), let end = formatter.date(from: last) else {
+            return 0
+        }
+        return Calendar(identifier: .gregorian).dateComponents([.day], from: start, to: end).day ?? 0
+    }
+
+    private static func day(_ localDay: String, adding offset: Int) -> String? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: localDay),
+            let shifted = formatter.calendar.date(byAdding: .day, value: offset, to: date)
+        else { return nil }
+        return formatter.string(from: shifted)
+    }
+
+    private static func formattedWeight(_ kilograms: Double, units: String) -> String {
+        let value = WeightCheckInPolicy.displayedValue(kilograms: kilograms, units: units)
+        return String(format: "%.1f %@", value, units.lowercased() == "imperial" ? "lb" : "kg")
+    }
+
+    private static func roundedKcal(_ value: Double) -> Int {
+        max(0, Int((value / 10).rounded()) * 10)
+    }
 }
 
 /// Decides which of today's remaining checkpoints deserve a notification and
 /// writes their copy. Pure and deterministic: same context, same plan.
 ///
-/// Principles: at most three pacing nudges a day, none outside 08:00–21:00,
-/// every nudge names a number and a concrete food direction, and a checkpoint
-/// is dropped entirely when the user is already on track for it — silence is
-/// the default, not the exception.
+/// At each checkpoint the policy chooses the most relevant action supported
+/// by current macros, goal direction, and recent high-confidence micronutrient
+/// history. Silence wins when the day is already handling itself.
 enum DayNudgePolicy {
     static let lunchCheckpointMinutes = 12 * 60 + 45
     static let proteinCheckpointMinutes = 15 * 60 + 30
@@ -54,8 +173,8 @@ enum DayNudgePolicy {
                 nudges.append(PlannedNudge(
                     id: "lunch",
                     fireAt: lunchAt,
-                    title: "First log of the day",
-                    body: "Nothing logged yet — say breakfast and lunch in one quick voice note."
+                    title: "Make today measurable",
+                    body: "Nothing is logged yet—say breakfast and lunch in one quick voice note."
                 ))
             } else if let lastMealAt = context.lastMealAt,
                 lunchAt.timeIntervalSince(lastMealAt) > 3 * 60 * 60
@@ -63,8 +182,8 @@ enum DayNudgePolicy {
                 nudges.append(PlannedNudge(
                     id: "lunch",
                     fireAt: lunchAt,
-                    title: "Midday check",
-                    body: "Lunch logged while it’s fresh is the accurate one — 20 seconds by voice."
+                    title: "Keep the trend accurate",
+                    body: "Lunch logged while it’s fresh makes the weight-and-intake trend more useful."
                 ))
             }
         }
@@ -76,14 +195,7 @@ enum DayNudgePolicy {
             context.totals.proteinG < proteinTarget * 0.45,
             !mealLoggedRecently(context, before: proteinAt)
         {
-            let gap = max(0, proteinTarget - context.totals.proteinG)
-            nudges.append(PlannedNudge(
-                id: "protein",
-                fireAt: proteinAt,
-                title: "Protein check-in",
-                body: "About \(roundedGrams(gap))g of protein to go — grilled chicken, salmon, "
-                    + "or skyr covers a lot of it without much of your calorie room."
-            ))
+            nudges.append(middayNutritionNudge(context, fireAt: proteinAt))
         }
 
         let closeoutAt = checkpoint(closeoutCheckpointMinutes)
@@ -92,6 +204,33 @@ enum DayNudgePolicy {
         }
 
         return nudges
+    }
+
+    private static func middayNutritionNudge(
+        _ context: DayNudgeContext,
+        fireAt: Date
+    ) -> PlannedNudge {
+        let gap = max(0, context.target.proteinG - context.totals.proteinG)
+        if let nutrient = priorityMicronutrient(context),
+            let food = foodDirection(for: nutrient.id)
+        {
+            return PlannedNudge(
+                id: "nutrition",
+                fireAt: fireAt,
+                title: "Close two gaps",
+                body: "About \(roundedGrams(gap))g protein remains. Recent logs ran low in "
+                    + "\(nutrient.name.lowercased()); \(food) helps with both."
+            )
+        }
+        let proteinFood = context.goalType == .gain
+            ? "chicken with rice, salmon, or Greek yogurt with granola"
+            : "grilled chicken, salmon, or skyr"
+        return PlannedNudge(
+            id: "nutrition",
+            fireAt: fireAt,
+            title: "Protein is the next lever",
+            body: "About \(roundedGrams(gap))g protein remains—\(proteinFood) can close it."
+        )
     }
 
     private static func closeoutNudge(
@@ -107,13 +246,45 @@ enum DayNudgePolicy {
         // 2,461 and the percentage rule alone would have stayed silent).
         if remaining >= min(target.caloriesKcal * 0.25, 400) {
             let proteinGap = max(0, target.proteinG - context.totals.proteinG)
+            if let nutrient = priorityMicronutrient(context),
+                let food = foodDirection(for: nutrient.id)
+            {
+                return PlannedNudge(
+                    id: "closeout",
+                    fireAt: fireAt,
+                    title: "Use the room well",
+                    body: "About \(roundedKcal(remaining)) kcal remains. Recent logs ran low in "
+                        + "\(nutrient.name.lowercased()); \(food) is a useful direction."
+                )
+            }
+            let carbGap = max(0, target.carbsG - context.totals.carbsG)
+            let fatGap = max(0, target.fatG - context.totals.fatG)
+            if proteinGap < 20, carbGap >= 30 {
+                return PlannedNudge(
+                    id: "closeout",
+                    fireAt: fireAt,
+                    title: "Carbs are the open lane",
+                    body: "About \(roundedKcal(remaining)) kcal and \(roundedGrams(carbGap))g carbs remain—"
+                        + "rice, potatoes, oats, or fruit fit the day."
+                )
+            }
+            if proteinGap < 20, carbGap < 30, fatGap >= 10, context.goalType == .gain {
+                return PlannedNudge(
+                    id: "closeout",
+                    fireAt: fireAt,
+                    title: "Add energy efficiently",
+                    body: "Protein and carbs are close. Nuts, avocado, or olive oil can use "
+                        + "the remaining \(roundedKcal(remaining)) kcal."
+                )
+            }
             let proteinLine = proteinGap >= 20
-                ? " Lead with protein — \(roundedGrams(proteinGap))g still to go."
+                ? " Lead with \(roundedGrams(proteinGap))g of remaining protein."
                 : ""
+            let title = context.goalType == .gain ? "Stay on pace to gain" : "Room for a real meal"
             return PlannedNudge(
                 id: "closeout",
                 fireAt: fireAt,
-                title: "Room for a real dinner",
+                title: title,
                 body: "About \(roundedKcal(remaining)) kcal left today.\(proteinLine)"
             )
         }
@@ -122,9 +293,11 @@ enum DayNudgePolicy {
             return PlannedNudge(
                 id: "closeout",
                 fireAt: fireAt,
-                title: "Day is full",
+                title: context.goalType == .gain ? "Target reached" : "Day is full",
                 body: "You’re about \(roundedKcal(-remaining)) kcal past target — "
-                    + "closing the kitchen now keeps the week easy."
+                    + (context.goalType == .gain
+                        ? "no extra catch-up meal is needed."
+                        : "closing the kitchen now supports your weekly pace.")
             )
         }
 
@@ -142,6 +315,38 @@ enum DayNudgePolicy {
 
         // Close to target with meals logged: the day handled itself.
         return nil
+    }
+
+    private static func priorityMicronutrient(
+        _ context: DayNudgeContext
+    ) -> WeeklyMicronutrient? {
+        guard let report = context.micronutrientReport,
+            report.daysLogged >= 4,
+            let reportEnd = context.micronutrientReportWeekEnd,
+            context.now.timeIntervalSince(reportEnd) >= 0,
+            context.now.timeIntervalSince(reportEnd) <= 21 * 24 * 60 * 60
+        else { return nil }
+        return report.nutrients
+            .filter { $0.status == "low" && $0.confidence != "low" }
+            .sorted { $0.percentReference < $1.percentReference }
+            .first { foodDirection(for: $0.id) != nil }
+    }
+
+    private static func foodDirection(for nutrientID: String) -> String? {
+        switch nutrientID {
+        case "fiber": return "beans, lentils, berries, or vegetables"
+        case "iron": return "lean beef, lentils, or spinach with peppers"
+        case "calcium": return "Greek yogurt, skyr, or calcium-set tofu"
+        case "potassium": return "potatoes, beans, yogurt, or bananas"
+        case "magnesium": return "pumpkin seeds, beans, or leafy greens"
+        case "vitamin_c": return "peppers, citrus, or berries"
+        case "vitamin_d": return "salmon, eggs, or fortified yogurt"
+        case "vitamin_b12": return "salmon, lean beef, eggs, or fortified foods"
+        case "folate": return "lentils, beans, or leafy greens"
+        case "omega_3": return "salmon, sardines, chia, or walnuts"
+        case "zinc": return "lean beef, shellfish, or pumpkin seeds"
+        default: return nil
+        }
     }
 
     private static func mealLoggedRecently(_ context: DayNudgeContext, before fireAt: Date) -> Bool {
@@ -202,7 +407,11 @@ enum DayNotificationScheduler {
                 ]
             )
         }
-        await scheduleWeighInReminder(center, secondsFromMidnight: weighInSecondsFromMidnight)
+        await scheduleWeighInReminder(
+            center,
+            secondsFromMidnight: weighInSecondsFromMidnight,
+            copy: NotificationCopy(title: "Weigh-in", body: "Say your weight and you’re done.")
+        )
     }
 
     /// Rebuilds today's plan from live data. Cheap and idempotent — call it
@@ -220,7 +429,11 @@ enum DayNotificationScheduler {
         else { return }
 
         await removePendingNudges(center)
-        await scheduleWeighInReminder(center, secondsFromMidnight: weighInSecondsFromMidnight)
+        await scheduleWeighInReminder(
+            center,
+            secondsFromMidnight: weighInSecondsFromMidnight,
+            copy: WeightReminderPolicy.copy(context: context)
+        )
 
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = context.timezone
@@ -244,7 +457,8 @@ enum DayNotificationScheduler {
 
     private static func scheduleWeighInReminder(
         _ center: UNUserNotificationCenter,
-        secondsFromMidnight: Double
+        secondsFromMidnight: Double,
+        copy: NotificationCopy
     ) async {
         let bounded = max(0, min(86_399, Int(secondsFromMidnight.rounded())))
         var components = DateComponents()
@@ -252,8 +466,8 @@ enum DayNotificationScheduler {
         components.minute = (bounded % 3_600) / 60
 
         let content = UNMutableNotificationContent()
-        content.title = "Weigh-in"
-        content.body = "Say your weight and you’re done."
+        content.title = copy.title
+        content.body = copy.body
         content.sound = .default
 
         let request = UNNotificationRequest(

@@ -108,6 +108,7 @@ struct TodayView: View {
     @State private var nudgeRescheduleTask: Task<Void, Never>?
     @State private var weekWindowTotals: [DailyNutritionTotal] = []
     @State private var weekTargetHistory: [DailyMacroTargetSnapshot] = []
+    @State private var latestWeeklySummary: WeeklyInsightSummary?
     @State private var weekWindowRefreshTask: Task<Void, Never>?
     @GestureState private var daySwipePreview: CGFloat = 0
 
@@ -537,10 +538,13 @@ struct TodayView: View {
             let service = SupabaseService()
             async let totals = try? service.fetchDailyNutritionTotals(timezone: timezone)
             async let history = try? service.fetchDailyMacroTargetHistory()
-            let (loadedTotals, loadedHistory) = await (totals, history)
+            async let summary = try? service.fetchLatestWeeklySummary()
+            let (loadedTotals, loadedHistory, loadedSummary) = await (totals, history, summary)
             guard !Task.isCancelled else { return }
             if let loadedTotals { weekWindowTotals = loadedTotals }
             if let loadedHistory { weekTargetHistory = loadedHistory }
+            if let loadedSummary { latestWeeklySummary = loadedSummary }
+            rescheduleDayNudges()
         }
     }
 
@@ -555,6 +559,7 @@ struct TodayView: View {
         isLoadingWeightCheckIns = true
         defer { isLoadingWeightCheckIns = false }
         weightCheckIns = (try? await SupabaseService().fetchWeightCheckIns(limit: 60)) ?? []
+        rescheduleDayNudges()
     }
 
     private func macroMetric(_ label: String, _ value: Double, _ goal: Double, _ color: Color)
@@ -891,7 +896,15 @@ struct TodayView: View {
             totals: vm.todayTotals,
             target: vm.effectiveTarget,
             loggedMealCount: loggedMeals.count,
-            lastMealAt: loggedMeals.map(\.createdAt).max()
+            lastMealAt: loggedMeals.map(\.createdAt).max(),
+            goalType: vm.profile?.goalType ?? profile.goalType,
+            targetWeightKG: vm.profile?.targetWeightKG ?? profile.targetWeightKG,
+            units: vm.profile?.units ?? profile.units,
+            weightCheckIns: weightCheckIns,
+            recentNutrition: weekWindowTotals,
+            targetHistory: weekTargetHistory,
+            micronutrientReport: latestWeeklySummary?.micronutrientReport,
+            micronutrientReportWeekEnd: latestWeeklySummary?.weekEnd
         )
         let weighInSeconds =
             UserDefaults.standard.object(

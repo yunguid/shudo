@@ -891,7 +891,13 @@ struct DayNudgePolicyTests {
         fat: Double = 40,
         kcal: Double,
         meals: Int,
-        lastMealAt: Date? = nil
+        lastMealAt: Date? = nil,
+        goalType: NutritionGoalType = .lose,
+        targetWeightKG: Double? = nil,
+        weightCheckIns: [WeightCheckIn] = [],
+        recentNutrition: [DailyNutritionTotal] = [],
+        micronutrientReport: WeeklyMicronutrientReport? = nil,
+        micronutrientReportWeekEnd: Date? = nil
     ) -> DayNudgeContext {
         DayNudgeContext(
             now: now,
@@ -899,7 +905,15 @@ struct DayNudgePolicyTests {
             totals: DayTotals(proteinG: protein, carbsG: 100, fatG: fat, caloriesKcal: kcal),
             target: MacroTarget(caloriesKcal: 2_520, proteinG: 178, carbsG: 286, fatG: 74),
             loggedMealCount: meals,
-            lastMealAt: lastMealAt
+            lastMealAt: lastMealAt,
+            goalType: goalType,
+            targetWeightKG: targetWeightKG,
+            units: "imperial",
+            weightCheckIns: weightCheckIns,
+            recentNutrition: recentNutrition,
+            targetHistory: [],
+            micronutrientReport: micronutrientReport,
+            micronutrientReportWeekEnd: micronutrientReportWeekEnd
         )
     }
 
@@ -907,11 +921,73 @@ struct DayNudgePolicyTests {
         let nudges = DayNudgePolicy.plannedNudges(
             context: context(now: day(at: 9), protein: 0, kcal: 0, meals: 0)
         )
-        #expect(nudges.map(\.id) == ["lunch", "protein", "closeout"])
-        #expect(nudges[0].body.contains("Nothing logged yet"))
-        #expect(nudges[1].body.contains("180g of protein to go"))
+        #expect(nudges.map(\.id) == ["lunch", "nutrition", "closeout"])
+        #expect(nudges[0].body.contains("Nothing is logged yet"))
+        #expect(nudges[1].body.contains("180g protein remains"))
         #expect(nudges[2].body.contains("2520 kcal left"))
         #expect(nudges.allSatisfy { $0.fireAt > day(at: 9) })
+    }
+
+    @Test func weightReminderConnectsSmoothedTrendToMatchingCalorieIntake() {
+        let weights = [
+            WeightCheckIn(
+                id: UUID(), localDay: "2026-07-01", weightKG: 90.2,
+                progressPhotoPath: nil, createdAt: day(at: 8), updatedAt: day(at: 8)),
+            WeightCheckIn(
+                id: UUID(), localDay: "2026-07-04", weightKG: 90.0,
+                progressPhotoPath: nil, createdAt: day(at: 8), updatedAt: day(at: 8)),
+            WeightCheckIn(
+                id: UUID(), localDay: "2026-07-12", weightKG: 89.0,
+                progressPhotoPath: nil, createdAt: day(at: 8), updatedAt: day(at: 8)),
+            WeightCheckIn(
+                id: UUID(), localDay: "2026-07-15", weightKG: 88.8,
+                progressPhotoPath: nil, createdAt: day(at: 8), updatedAt: day(at: 8)),
+        ]
+        let nutrition = (1...7).map { dayNumber in
+            DailyNutritionTotal(
+                localDay: String(format: "2026-07-%02d", dayNumber),
+                proteinG: 160, carbsG: 240, fatG: 65, caloriesKcal: 2_300, entryCount: 3
+            )
+        }
+        let copy = WeightReminderPolicy.copy(
+            context: context(
+                now: day(at: 9), protein: 0, kcal: 0, meals: 0,
+                targetWeightKG: 82,
+                weightCheckIns: weights,
+                recentNutrition: nutrition
+            )
+        )
+
+        #expect(copy.body.contains("smoothed trend is down 2.6 lb toward your goal"))
+        #expect(copy.body.contains("220 kcal below target"))
+        #expect(copy.body.contains("from target"))
+    }
+
+    @Test func lowMicronutrientCanShapeTheProteinNudgeWhenCoverageIsUseful() {
+        let report = WeeklyMicronutrientReport(
+            daysLogged: 6,
+            mealsLogged: 16,
+            nutrients: [
+                WeeklyMicronutrient(
+                    id: "iron", name: "Iron", category: "mineral", unit: "mg",
+                    estimatedDailyAmount: 8, referenceDailyAmount: 18,
+                    percentReference: 44, status: "low", confidence: "high", evidence: []
+                )
+            ],
+            highlights: [], suggestions: [], caveat: "Estimated from logged foods."
+        )
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(
+                now: day(at: 9), protein: 20, kcal: 500, meals: 1,
+                micronutrientReport: report,
+                micronutrientReportWeekEnd: day(at: 0)
+            )
+        )
+
+        let nutrition = nudges.first { $0.id == "nutrition" }
+        #expect(nutrition?.title == "Close two gaps")
+        #expect(nutrition?.body.contains("Recent logs ran low in iron") == true)
+        #expect(nutrition?.body.contains("lean beef, lentils, or spinach with peppers") == true)
     }
 
     @Test func onTrackAfternoonStaysCompletelyQuiet() {
@@ -940,7 +1016,7 @@ struct DayNudgePolicyTests {
             )
         )
         #expect(nudges.map(\.id) == ["closeout"])
-        #expect(nudges[0].title == "Room for a real dinner")
+        #expect(nudges[0].title == "Room for a real meal")
         #expect(nudges[0].body.contains("600 kcal left"))
     }
 
@@ -955,7 +1031,7 @@ struct DayNudgePolicyTests {
             )
         )
         #expect(nudges.map(\.id) == ["closeout"])
-        #expect(nudges[0].title == "Room for a real dinner")
+        #expect(nudges[0].title == "Room for a real meal")
     }
 
     @Test func overTargetEveningGetsTheDayIsFullVariant() {
@@ -987,6 +1063,23 @@ struct DayNudgePolicyTests {
         #expect(nudges.map(\.id) == ["closeout"])
         #expect(nudges[0].title == "Go lean tonight")
         #expect(nudges[0].body.contains("320 kcal"))
+    }
+
+    @Test func remainingCarbsShapeDinnerWhenProteinIsAlreadyCovered() {
+        let nudges = DayNudgePolicy.plannedNudges(
+            context: context(
+                now: day(at: 19),
+                protein: 175,
+                fat: 55,
+                kcal: 1_900,
+                meals: 3,
+                lastMealAt: day(at: 17)
+            )
+        )
+
+        #expect(nudges.map(\.id) == ["closeout"])
+        #expect(nudges[0].title == "Carbs are the open lane")
+        #expect(nudges[0].body.contains("rice, potatoes, oats, or fruit"))
     }
 
     @Test func lateEveningSchedulesNothing() {
