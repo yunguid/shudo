@@ -4,6 +4,7 @@ import {
   authCallbackErrorReason,
   initialMagicLinkErrorMessage,
   magicLinkRequestErrorMessage,
+  passwordSignInErrorMessage,
 } from '@/lib/auth-errors'
 
 describe('magic-link errors', () => {
@@ -22,6 +23,25 @@ describe('magic-link errors', () => {
     assert.equal(
       magicLinkRequestErrorMessage({ status: 400, message: 'User not found' }),
       'Sign-in link unavailable. Check the address and try again.',
+    )
+  })
+
+  it('maps password sign-in failures without leaking account existence', () => {
+    assert.equal(
+      passwordSignInErrorMessage({ status: 400, code: 'invalid_credentials' }),
+      'Incorrect email or password.',
+    )
+    assert.equal(
+      passwordSignInErrorMessage(new Error('Invalid login credentials')),
+      'Incorrect email or password.',
+    )
+    assert.equal(
+      passwordSignInErrorMessage({ status: 429 }),
+      'Too many attempts. Wait a minute, then try again.',
+    )
+    assert.equal(
+      passwordSignInErrorMessage(new Error('fetch failed')),
+      'Sign-in unavailable. Try again in a moment.',
     )
   })
 

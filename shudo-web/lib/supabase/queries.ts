@@ -6,7 +6,9 @@ import type { DailyTargetSnapshot } from '@/lib/targets'
 import type {
   Database,
   DayTotals,
+  EntryDetail,
   EntryListItem,
+  EntryPhotoRow,
   Json,
   MacroTarget,
   ProfileSettings,
@@ -195,24 +197,77 @@ export async function fetchDayTotalsInRange(
   return totalsByLocalDay(data ?? [])
 }
 
-export async function fetchAllEntries(
+/** Local day of the first completed entry, or null for an empty account. */
+export async function fetchEarliestEntryDay(
   supabase: ShudoSupabaseClient,
   userId: string,
-  options: { limit: number; offset: number },
-): Promise<{ entries: EntryListItem[]; total: number }> {
-  const { data, count, error } = await supabase
+): Promise<string | null> {
+  const { data, error } = await supabase
     .from('entries')
-    .select(ENTRY_COLUMNS, { count: 'exact' })
+    .select('local_day')
     .eq('user_id', userId)
     .eq('status', 'complete')
-    .order('occurred_at', { ascending: false })
-    .order('id', { ascending: false })
-    .range(options.offset, options.offset + options.limit - 1)
+    .order('local_day', { ascending: true })
+    .limit(1)
+    .maybeSingle()
 
   if (error) throw queryError('Unable to load entry history', error)
-
-  return { entries: data ?? [], total: count ?? 0 }
+  return data?.local_day ?? null
 }
+
+export async function fetchEntryCount(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('status', 'complete')
+
+  if (error) throw queryError('Unable to count entries', error)
+  return count ?? 0
+}
+
+const ENTRY_DETAIL_COLUMNS = `${ENTRY_COLUMNS},transcript,confidence,items,analysis_notes`
+
+export async function fetchEntryDetail(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+  entryId: string,
+): Promise<EntryDetail | null> {
+  const { data, error } = await supabase
+    .from('entries')
+    .select(ENTRY_DETAIL_COLUMNS)
+    .eq('user_id', userId)
+    .eq('status', 'complete')
+    .eq('id', entryId)
+    .maybeSingle()
+
+  if (error) {
+    // 22P02: the path segment was not a UUID — treat as not-found, not a crash.
+    if (error.code === '22P02') return null
+    throw queryError('Unable to load meal', error)
+  }
+  return data
+}
+
+export async function fetchEntryPhotos(
+  supabase: ShudoSupabaseClient,
+  userId: string,
+  entryId: string,
+): Promise<EntryPhotoRow[]> {
+  const { data, error } = await supabase
+    .from('entry_photos')
+    .select('id,user_id,entry_id,storage_path,purpose,created_at')
+    .eq('user_id', userId)
+    .eq('entry_id', entryId)
+    .order('created_at', { ascending: true })
+
+  if (error) throw queryError('Unable to load meal photos', error)
+  return data ?? []
+}
+
 
 export function summarizeEntry(entry: EntryListItem): string {
   const title = entry.title?.trim().replace(/\s+/g, ' ')

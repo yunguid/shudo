@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Camera, MoveRight } from 'lucide-react'
+import { MoveRight } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import { DayNavigator } from '@/components/day-navigator'
 import { getCurrentUser } from '@/lib/auth'
@@ -10,6 +10,7 @@ import {
   summarizeEntry,
 } from '@/lib/supabase/queries'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createSignedImageUrls } from '@/lib/supabase/storage'
 import { effectiveMacroTarget } from '@/lib/targets'
 import {
   clampPercent,
@@ -41,6 +42,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     fetchDashboardWindow(supabase, user.id, selectedDay),
     fetchDailyTargetHistory(supabase, user.id, selectedDay, windowStart),
   ])
+
+  const photoUrls = await createSignedImageUrls(
+    supabase,
+    entries.map((entry) => entry.image_path),
+  )
 
   const target = effectiveMacroTarget(targetHistory, selectedDay, profile.dailyMacroTarget)
   const calorieProgress = clampPercent((totals.total_calories / target.calories_kcal) * 100)
@@ -105,27 +111,36 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
           {entries.length ? (
             <div className="overflow-hidden rounded-[1.75rem] bg-surface/60">
-              {entries.map((entry) => (
-                <article className="flex items-center gap-4 px-5 py-4 transition hover:bg-surface-strong/70" key={entry.id}>
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-surface-strong text-muted">
-                    {entry.image_path ? (
-                      <Camera aria-hidden="true" className="h-4 w-4" />
-                    ) : (
-                      <span className="h-2 w-2 rounded-full bg-accent/80" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-ink">{summarizeEntry(entry)}</p>
-                    <time className="mt-1 block text-xs text-subtle" dateTime={resolveEntryTimestamp(entry.occurred_at, entry.created_at)}>
-                      {formatEntryTime(resolveEntryTimestamp(entry.occurred_at, entry.created_at), profile.timezone)}
-                    </time>
-                  </div>
-                  <div className="shrink-0 text-right font-mono">
-                    <p className="text-sm text-ink">{Math.round(entry.calories_kcal ?? 0)}</p>
-                    <p className="mt-1 text-[11px] text-protein">{Math.round(entry.protein_g ?? 0)}g protein</p>
-                  </div>
-                </article>
-              ))}
+              {entries.map((entry) => {
+                const photoUrl = entry.image_path ? photoUrls.get(entry.image_path) : undefined
+                return (
+                  <Link
+                    className="flex items-center gap-4 px-5 py-4 transition hover:bg-surface-strong/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                    href={`/meals/${entry.id}`}
+                    key={entry.id}
+                  >
+                    {photoUrl ? (
+                      <img
+                        alt=""
+                        className="h-12 w-12 shrink-0 rounded-2xl bg-surface-strong object-cover"
+                        decoding="async"
+                        loading="lazy"
+                        src={photoUrl}
+                      />
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-ink">{summarizeEntry(entry)}</p>
+                      <time className="mt-1 block text-xs text-subtle" dateTime={resolveEntryTimestamp(entry.occurred_at, entry.created_at)}>
+                        {formatEntryTime(resolveEntryTimestamp(entry.occurred_at, entry.created_at), profile.timezone)}
+                      </time>
+                    </div>
+                    <div className="shrink-0 text-right font-mono">
+                      <p className="text-sm text-ink">{Math.round(entry.calories_kcal ?? 0)}</p>
+                      <p className="mt-1 text-[11px] text-protein">{Math.round(entry.protein_g ?? 0)}g protein</p>
+                    </div>
+                  </Link>
+                )
+              })}
             </div>
           ) : (
             <div className="rounded-[1.75rem] bg-surface/50 px-6 py-14 text-center">

@@ -2,9 +2,53 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   parseRecoveryFragment,
+  requestPasswordRecovery,
   updateRecoveryPassword,
   urlWithoutFragment,
 } from '../auth-recovery'
+
+describe('requestPasswordRecovery', () => {
+  it('posts to the implicit-flow recover endpoint so links work in any browser', async () => {
+    let requestedUrl = ''
+    let requestInit: RequestInit | undefined
+
+    const didSend = await requestPasswordRecovery({
+      projectUrl: 'https://project.supabase.co',
+      publicKey: 'publishable-key',
+      email: 'user@example.com',
+      redirectTo: 'https://shudo.yng.sh/reset-password',
+      fetcher: async (input, init) => {
+        requestedUrl = input.toString()
+        requestInit = init
+        return new Response(null, { status: 200 })
+      },
+    })
+
+    assert.equal(didSend, true)
+    const url = new URL(requestedUrl)
+    assert.equal(url.pathname, '/auth/v1/recover')
+    assert.equal(url.searchParams.get('redirect_to'), 'https://shudo.yng.sh/reset-password')
+    assert.equal(requestInit?.method, 'POST')
+    assert.deepEqual(JSON.parse(String(requestInit?.body)), { email: 'user@example.com' })
+    const headers = requestInit?.headers as Record<string, string>
+    assert.equal(headers.apikey, 'publishable-key')
+    // No code_challenge: a PKCE recovery link only opens in the requesting browser.
+    assert.equal(url.searchParams.has('code_challenge'), false)
+    assert.equal('code_challenge' in JSON.parse(String(requestInit?.body)), false)
+  })
+
+  it('reports failure instead of throwing when the endpoint rejects', async () => {
+    const didSend = await requestPasswordRecovery({
+      projectUrl: 'https://project.supabase.co',
+      publicKey: 'publishable-key',
+      email: 'user@example.com',
+      redirectTo: 'https://shudo.yng.sh/reset-password',
+      fetcher: async () => new Response(null, { status: 429 }),
+    })
+
+    assert.equal(didSend, false)
+  })
+})
 
 describe('parseRecoveryFragment', () => {
   it('accepts only a recovery fragment with an access token', () => {

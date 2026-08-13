@@ -26,6 +26,31 @@ export function magicLinkRequestErrorMessage(error: unknown): string {
   return 'Sign-in link unavailable. Check the address and try again.'
 }
 
+export function passwordSignInErrorMessage(error: unknown): string {
+  const candidate = authErrorLike(error)
+  const status = typeof candidate.status === 'number' ? candidate.status : null
+  const code = typeof candidate.code === 'string' ? candidate.code.toLowerCase() : ''
+  const message = typeof candidate.message === 'string' ? candidate.message.toLowerCase() : ''
+
+  if (
+    status === 429 ||
+    code.includes('rate_limit') ||
+    message.includes('rate limit') ||
+    message.includes('too many requests')
+  ) {
+    return 'Too many attempts. Wait a minute, then try again.'
+  }
+
+  if (
+    code.includes('invalid_credentials') ||
+    message.includes('invalid login credentials')
+  ) {
+    return 'Incorrect email or password.'
+  }
+
+  return 'Sign-in unavailable. Try again in a moment.'
+}
+
 export function authCallbackErrorReason(error: unknown): 'browser' | 'expired' {
   const candidate = authErrorLike(error)
   const code = typeof candidate.code === 'string' ? candidate.code.toLowerCase() : ''

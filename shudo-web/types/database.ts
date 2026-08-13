@@ -30,11 +30,24 @@ export type EntryRow = {
   status: EntryStatus
   title: string | null
   raw_text: string | null
+  transcript: string | null
   protein_g: number
   carbs_g: number
   fat_g: number
   calories_kcal: number
+  confidence: number | null
+  items: Json
+  analysis_notes: string | null
   image_path: string | null
+}
+
+export type EntryPhotoRow = {
+  id: string
+  user_id: string
+  entry_id: string
+  storage_path: string
+  purpose: 'memory' | 'evidence'
+  created_at: string
 }
 
 export type ProfileRow = {
@@ -76,6 +89,12 @@ export interface Database {
         Update: Partial<DailyTargetRow>
         Relationships: []
       }
+      entry_photos: {
+        Row: EntryPhotoRow
+        Insert: Partial<EntryPhotoRow> & Pick<EntryPhotoRow, 'user_id' | 'entry_id' | 'storage_path'>
+        Update: Partial<EntryPhotoRow>
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: Record<string, never>
@@ -98,6 +117,36 @@ export type EntryListItem = Pick<
   | 'calories_kcal'
   | 'image_path'
 >
+
+export type EntryDetail = Pick<
+  EntryRow,
+  | 'id'
+  | 'occurred_at'
+  | 'created_at'
+  | 'local_day'
+  | 'title'
+  | 'raw_text'
+  | 'transcript'
+  | 'protein_g'
+  | 'carbs_g'
+  | 'fat_g'
+  | 'calories_kcal'
+  | 'confidence'
+  | 'items'
+  | 'analysis_notes'
+  | 'image_path'
+>
+
+/** One analyzed food item inside entries.items (shape enforced by process_entry). */
+export interface AnalysisItem {
+  name: string
+  amount: string
+  protein_g: number
+  carbs_g: number
+  fat_g: number
+  calories_kcal: number
+  confidence: number
+}
 
 export interface ProfileSettings {
   timezone: string

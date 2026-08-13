@@ -1,21 +1,34 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Camera, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import { getCurrentUser } from '@/lib/auth'
 import {
-  fetchAllEntries,
+  buildMonthGrid,
+  formatMonthLabel,
+  macroCalorieSplit,
+  monthEnd,
+  monthOf,
+  monthStart,
+  monthsBetween,
+  shiftMonth,
+} from '@/lib/calendar'
+import {
   fetchDayTotalsInRange,
+  fetchEarliestEntryDay,
+  fetchEntryCount,
   fetchProfileSettings,
-  summarizeEntry,
 } from '@/lib/supabase/queries'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { formatDayLabel, formatEntryTime, resolveEntryTimestamp } from '@/lib/utils'
-import type { EntryListItem } from '@/types/database'
+import { formatDayLabel, formatLocalDay } from '@/lib/utils'
+import type { DayTotals } from '@/types/database'
 
 export const metadata: Metadata = {
   title: 'History',
 }
+
+const MONTHS_PER_PAGE = 3
+const WEEKDAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 
 interface MealsPageProps {
   searchParams: Promise<{ page?: string | string[] }>
@@ -27,14 +40,59 @@ function parsePage(value: string | string[] | undefined): number {
   return Number.isSafeInteger(page) && page > 0 ? page : 1
 }
 
-function groupEntries(entries: EntryListItem[]): Map<string, EntryListItem[]> {
-  const groups = new Map<string, EntryListItem[]>()
-  for (const entry of entries) {
-    const dayEntries = groups.get(entry.local_day) ?? []
-    dayEntries.push(entry)
-    groups.set(entry.local_day, dayEntries)
+function DayCell({
+  day,
+  todayDay,
+  totals,
+}: {
+  day: string | null
+  todayDay: string
+  totals: DayTotals | undefined
+}) {
+  if (day === null) {
+    return <span aria-hidden="true" className="aspect-square" />
   }
-  return groups
+
+  const dayNumber = Number.parseInt(day.slice(8), 10)
+  const isToday = day === todayDay
+  const todayRing = isToday ? 'ring-1 ring-accent/70' : ''
+
+  if (day > todayDay || !totals || totals.entry_count === 0) {
+    return (
+      <span
+        className={`flex aspect-square items-start justify-end rounded-xl bg-surface/30 p-1.5 font-mono text-[10px] ${
+          day > todayDay ? 'text-subtle/40' : 'text-subtle'
+        } ${todayRing}`}
+      >
+        {dayNumber}
+      </span>
+    )
+  }
+
+  const split = macroCalorieSplit(totals.total_protein, totals.total_carbs, totals.total_fat)
+  const calories = Math.round(totals.total_calories)
+
+  return (
+    <Link
+      aria-label={`${formatDayLabel(day, true)}: ${calories.toLocaleString()} calories, ${Math.round(totals.total_protein)} grams protein, ${totals.entry_count} ${totals.entry_count === 1 ? 'meal' : 'meals'}`}
+      className={`group flex aspect-square flex-col justify-between rounded-xl bg-surface-strong/70 p-1.5 shadow-[inset_0_0_14px_rgba(220,152,64,0.05)] transition hover:bg-surface-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:p-2 ${todayRing}`}
+      href={`/?day=${day}`}
+    >
+      <span className="self-end font-mono text-[10px] text-muted">{dayNumber}</span>
+      <span className="space-y-1">
+        <span className="block truncate font-mono text-[11px] font-medium tracking-tight text-ink sm:text-xs">
+          {calories.toLocaleString()}
+        </span>
+        {split ? (
+          <span aria-hidden="true" className="flex h-1 overflow-hidden rounded-full">
+            <span className="bg-protein" style={{ width: `${split.proteinShare}%` }} />
+            <span className="bg-carbs" style={{ width: `${split.carbsShare}%` }} />
+            <span className="bg-fat" style={{ width: `${split.fatShare}%` }} />
+          </span>
+        ) : null}
+      </span>
+    </Link>
+  )
 }
 
 export default async function MealsPage({ searchParams }: MealsPageProps) {
@@ -43,90 +101,76 @@ export default async function MealsPage({ searchParams }: MealsPageProps) {
 
   const { page: pageValue } = await searchParams
   const page = parsePage(pageValue)
-  const limit = 30
   const supabase = await createServerSupabaseClient()
-  const [profile, { entries, total }] = await Promise.all([
+  const [profile, earliestDay, total] = await Promise.all([
     fetchProfileSettings(supabase, user.id),
-    fetchAllEntries(supabase, user.id, { limit, offset: (page - 1) * limit }),
+    fetchEarliestEntryDay(supabase, user.id),
+    fetchEntryCount(supabase, user.id),
   ])
-  const totalPages = Math.max(1, Math.ceil(total / limit))
-  if (total > 0 && page > totalPages) redirect(`/meals?page=${totalPages}`)
 
-  const groupedEntries = groupEntries(entries)
-  // Entries are ordered newest-first, so the page's day range is
-  // [last entry's day, first entry's day]. True day totals keep a day that
-  // straddles a pagination boundary from showing a partial sum.
-  const dayTotals = entries.length
+  const todayDay = formatLocalDay(new Date(), profile.timezone)
+  const currentMonth = monthOf(todayDay)
+  const earliestMonth = earliestDay ? monthOf(earliestDay) : currentMonth
+  const totalPages = Math.max(1, Math.ceil(monthsBetween(earliestMonth, currentMonth) / MONTHS_PER_PAGE))
+  if (page > totalPages) redirect(`/meals?page=${totalPages}`)
+
+  const newestMonth = shiftMonth(currentMonth, -(page - 1) * MONTHS_PER_PAGE)
+  const monthCount = Math.min(MONTHS_PER_PAGE, monthsBetween(earliestMonth, newestMonth))
+  const months = Array.from({ length: monthCount }, (_, index) => shiftMonth(newestMonth, -index))
+
+  const dayTotals = months.length
     ? await fetchDayTotalsInRange(
       supabase,
       user.id,
-      entries[entries.length - 1].local_day,
-      entries[0].local_day,
+      monthStart(months[months.length - 1]),
+      monthEnd(months[0]),
     )
-    : new Map()
+    : new Map<string, DayTotals>()
 
   return (
     <div className="space-y-7">
       <header className="flex items-end justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent">Archive</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">Meal history</h1>
-          <p className="mt-2 text-sm text-muted">{total.toLocaleString()} completed entries · {profile.timezone}</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">History</h1>
+          <p className="mt-2 text-sm text-muted">
+            {total.toLocaleString()} completed {total === 1 ? 'meal' : 'meals'} · {profile.timezone}
+          </p>
         </div>
       </header>
 
-      {entries.length ? (
-        <div className="space-y-5">
-          {Array.from(groupedEntries.entries()).map(([day, dayEntries]) => {
-            const totals = dayTotals.get(day)
-            const calories = totals?.total_calories ??
-              dayEntries.reduce((sum, entry) => sum + (entry.calories_kcal ?? 0), 0)
-            const protein = totals?.total_protein ??
-              dayEntries.reduce((sum, entry) => sum + (entry.protein_g ?? 0), 0)
-
-            return (
-              <section aria-labelledby={`day-${day}`} className="overflow-hidden rounded-[1.75rem] bg-surface/60" key={day}>
-                <div className="flex items-center justify-between gap-4 bg-surface px-5 py-4">
-                  <div>
-                    <h2 className="text-sm font-medium text-ink" id={`day-${day}`}>
-                      {formatDayLabel(day, true)}
-                    </h2>
-                    <p className="mt-1 font-mono text-[11px] text-subtle">
-                      {Math.round(calories).toLocaleString()} kcal · {Math.round(protein)}g protein
-                    </p>
-                  </div>
-                  <Link
-                    className="flex min-h-11 items-center rounded-xl px-3 py-2 text-xs font-medium text-accent hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    href={`/?day=${day}`}
-                  >
-                    Open day
-                  </Link>
-                </div>
-
-                {dayEntries.map((entry) => (
-                  <article className="flex items-center gap-4 px-5 py-4 transition hover:bg-surface-strong/70" key={entry.id}>
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-strong text-muted">
-                      {entry.image_path ? (
-                        <Camera aria-hidden="true" className="h-4 w-4" />
-                      ) : (
-                        <span className="h-1.5 w-1.5 rounded-full bg-accent/70" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-ink">{summarizeEntry(entry)}</p>
-                      <time className="mt-1 block text-xs text-subtle" dateTime={resolveEntryTimestamp(entry.occurred_at, entry.created_at)}>
-                        {formatEntryTime(resolveEntryTimestamp(entry.occurred_at, entry.created_at), profile.timezone)}
-                      </time>
-                    </div>
-                    <div className="shrink-0 text-right font-mono text-xs">
-                      <p className="text-ink">{Math.round(entry.calories_kcal ?? 0)} kcal</p>
-                      <p className="mt-1 text-protein">{Math.round(entry.protein_g ?? 0)}g</p>
-                    </div>
-                  </article>
+      {total > 0 ? (
+        <div className="grid gap-6 sm:grid-cols-2">
+          {months.map((month) => (
+            <section
+              aria-labelledby={`month-${month}`}
+              className="rounded-[1.75rem] bg-surface/60 p-4 sm:p-5"
+              key={month}
+            >
+              <h2 className="px-1 text-sm font-medium text-ink" id={`month-${month}`}>
+                {formatMonthLabel(month)}
+              </h2>
+              <div aria-hidden="true" className="mt-4 grid grid-cols-7 gap-1.5 px-0.5 text-center font-mono text-[10px] uppercase text-subtle">
+                {WEEKDAY_LETTERS.map((letter, index) => (
+                  <span key={`${month}-${letter}-${index}`}>{letter}</span>
                 ))}
-              </section>
-            )
-          })}
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {buildMonthGrid(month).map((week, weekIndex) => (
+                  <div className="grid grid-cols-7 gap-1.5" key={`${month}-w${weekIndex}`}>
+                    {week.map((day, dayIndex) => (
+                      <DayCell
+                        day={day}
+                        key={day ?? `${month}-w${weekIndex}-${dayIndex}`}
+                        todayDay={todayDay}
+                        totals={day ? dayTotals.get(day) : undefined}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       ) : (
         <div className="rounded-[1.75rem] bg-surface/50 px-6 py-20 text-center">
@@ -135,6 +179,19 @@ export default async function MealsPage({ searchParams }: MealsPageProps) {
         </div>
       )}
 
+      <div aria-hidden="true" className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-subtle">
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-4 rounded-full bg-protein" /> Protein
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-4 rounded-full bg-carbs" /> Carbs
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-4 rounded-full bg-fat" /> Fat
+        </span>
+        <span className="ml-auto">Share of each day&apos;s calories</span>
+      </div>
+
       {totalPages > 1 ? (
         <nav aria-label="History pages" className="flex items-center justify-between pt-2">
           {page > 1 ? (
@@ -142,7 +199,7 @@ export default async function MealsPage({ searchParams }: MealsPageProps) {
               className="flex min-h-11 items-center gap-1 rounded-xl px-3 py-2 text-sm text-muted hover:bg-surface hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               href={`/meals?page=${page - 1}`}
             >
-              <ChevronLeft aria-hidden="true" className="h-4 w-4" /> Previous
+              <ChevronLeft aria-hidden="true" className="h-4 w-4" /> Newer
             </Link>
           ) : (
             <span />
@@ -153,7 +210,7 @@ export default async function MealsPage({ searchParams }: MealsPageProps) {
               className="flex min-h-11 items-center gap-1 rounded-xl px-3 py-2 text-sm text-muted hover:bg-surface hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               href={`/meals?page=${page + 1}`}
             >
-              Next <ChevronRight aria-hidden="true" className="h-4 w-4" />
+              Older <ChevronRight aria-hidden="true" className="h-4 w-4" />
             </Link>
           ) : (
             <span />

@@ -22,6 +22,48 @@ export function urlWithoutFragment(pathname: string, search: string): string {
   return `${pathname}${search}`
 }
 
+interface RequestPasswordRecoveryOptions {
+  projectUrl: string
+  publicKey: string
+  email: string
+  redirectTo: string
+  fetcher?: Fetcher
+}
+
+/**
+ * Raw REST call instead of the PKCE browser client: without a code
+ * challenge, the recovery email carries hash tokens that work in whatever
+ * browser opens the link — same contract the iOS recovery flow relies on.
+ */
+export async function requestPasswordRecovery({
+  projectUrl,
+  publicKey,
+  email,
+  redirectTo,
+  fetcher = fetch,
+}: RequestPasswordRecoveryOptions): Promise<boolean> {
+  try {
+    const endpoint = new URL('/auth/v1/recover', `${projectUrl.replace(/\/$/, '')}/`)
+    endpoint.searchParams.set('redirect_to', redirectTo)
+    const response = await fetcher(endpoint, {
+      method: 'POST',
+      headers: {
+        apikey: publicKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email }),
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+    })
+
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 interface UpdateRecoveryPasswordOptions {
   projectUrl: string
   publicKey: string

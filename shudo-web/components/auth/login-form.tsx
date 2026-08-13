@@ -1,12 +1,15 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { ArrowRight, LoaderCircle, Mail } from 'lucide-react'
+import { ArrowRight, LoaderCircle, LockKeyhole, Mail } from 'lucide-react'
 import { buildOAuthCallbackUrl, type ShudoOAuthProvider } from '@/lib/auth-oauth'
 import {
   initialMagicLinkErrorMessage,
   magicLinkRequestErrorMessage,
+  passwordSignInErrorMessage,
 } from '@/lib/auth-errors'
+import { requestPasswordRecovery } from '@/lib/auth-recovery'
+import { getSupabasePublicConfig } from '@/lib/supabase/config'
 import { getBrowserClient } from '@/lib/supabase/client'
 
 interface LoginFormProps {
@@ -15,7 +18,7 @@ interface LoginFormProps {
   initialProviders: ShudoOAuthProvider[]
 }
 
-type PendingMethod = 'email' | ShudoOAuthProvider | null
+type PendingMethod = 'password' | 'link' | 'recovery' | ShudoOAuthProvider | null
 
 const PROVIDER_LABELS: Record<ShudoOAuthProvider, string> = {
   google: 'Google',
@@ -28,6 +31,7 @@ export function LoginForm({
   initialProviders,
 }: LoginFormProps) {
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [pendingMethod, setPendingMethod] = useState<PendingMethod>(null)
   const enabledProviders = initialProviders
   const [message, setMessage] = useState(
@@ -37,16 +41,54 @@ export function LoginForm({
 
   const isBusy = pendingMethod !== null
 
+  function trimmedEmail(): string | null {
+    const value = email.trim()
+    if (!value) {
+      setMessage('Enter your email address first.')
+      setIsSuccess(false)
+      return null
+    }
+    return value
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setPendingMethod('email')
+    const address = trimmedEmail()
+    if (!address || !password) return
+
+    setPendingMethod('password')
+    setMessage('')
+    setIsSuccess(false)
+
+    try {
+      const supabase = getBrowserClient()
+      const { error } = await supabase.auth.signInWithPassword({
+        email: address,
+        password,
+      })
+
+      if (error) throw error
+
+      // Full navigation so the server sees the fresh auth cookies.
+      window.location.assign('/')
+    } catch (error) {
+      setMessage(passwordSignInErrorMessage(error))
+      setPendingMethod(null)
+    }
+  }
+
+  async function handleMagicLink() {
+    const address = trimmedEmail()
+    if (!address) return
+
+    setPendingMethod('link')
     setMessage('')
     setIsSuccess(false)
 
     try {
       const supabase = getBrowserClient()
       const { error } = await supabase.auth.signInWithOtp({
-        email,
+        email: address,
         options: {
           emailRedirectTo: `${window.location.origin}/auth/callback`,
           shouldCreateUser: false,
@@ -55,7 +97,7 @@ export function LoginForm({
 
       if (error) throw error
 
-      setMessage('Sign-in link sent. Check your email.')
+      setMessage('Sign-in link sent. Open it in this browser.')
       setIsSuccess(true)
     } catch (error) {
       setMessage(magicLinkRequestErrorMessage(error))
@@ -85,6 +127,31 @@ export function LoginForm({
     }
   }
 
+  async function handleForgotPassword() {
+    const address = trimmedEmail()
+    if (!address) return
+
+    setPendingMethod('recovery')
+    setMessage('')
+    setIsSuccess(false)
+
+    const { url, key } = getSupabasePublicConfig()
+    const didSend = await requestPasswordRecovery({
+      projectUrl: url,
+      publicKey: key,
+      email: address,
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+
+    if (didSend) {
+      setMessage('Password reset email sent. The link works in any browser.')
+      setIsSuccess(true)
+    } else {
+      setMessage('Reset email unavailable. Wait a minute, then try again.')
+    }
+    setPendingMethod(null)
+  }
+
   return (
     <section
       aria-labelledby="login-heading"
@@ -98,7 +165,7 @@ export function LoginForm({
             Sign in
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted">
-            Use the email or provider connected to your Shudo account.
+            Use the email and password from your Shudo account.
           </p>
 
           {enabledProviders.length > 0 ? (
@@ -150,7 +217,6 @@ export function LoginForm({
                     autoComplete="email"
                     autoCapitalize="none"
                     className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-subtle"
-                    enterKeyHint="send"
                     inputMode="email"
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="you@example.com"
@@ -158,6 +224,24 @@ export function LoginForm({
                     spellCheck={false}
                     type="email"
                     value={email}
+                  />
+                </span>
+              </label>
+
+              <label className="block">
+                <span className="sr-only">Password</span>
+                <span className="flex items-center gap-3 rounded-2xl bg-surface-strong px-4 py-3.5 focus-within:ring-2 focus-within:ring-accent/70">
+                  <LockKeyhole aria-hidden="true" className="h-4 w-4 text-muted" />
+                  <input
+                    aria-describedby={message ? 'login-status' : undefined}
+                    autoComplete="current-password"
+                    className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-subtle"
+                    enterKeyHint="go"
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="Password"
+                    required
+                    type="password"
+                    value={password}
                   />
                 </span>
               </label>
@@ -180,13 +264,32 @@ export function LoginForm({
                 disabled={isBusy}
                 type="submit"
               >
-                {pendingMethod === 'email' ? (
+                {pendingMethod === 'password' ? (
                   <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
                 ) : (
                   <ArrowRight aria-hidden="true" className="h-4 w-4" />
                 )}
-                {pendingMethod === 'email' ? 'Sending link' : 'Send sign-in link'}
+                {pendingMethod === 'password' ? 'Signing in' : 'Sign in'}
               </button>
+
+              <div className="flex items-center justify-between gap-3 px-1 pt-1">
+                <button
+                  className="min-h-11 rounded-xl px-2 text-xs font-medium text-muted transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-55"
+                  disabled={isBusy}
+                  onClick={handleForgotPassword}
+                  type="button"
+                >
+                  {pendingMethod === 'recovery' ? 'Sending reset email…' : 'Forgot password?'}
+                </button>
+                <button
+                  className="min-h-11 rounded-xl px-2 text-xs font-medium text-accent transition hover:text-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-55"
+                  disabled={isBusy}
+                  onClick={handleMagicLink}
+                  type="button"
+                >
+                  {pendingMethod === 'link' ? 'Sending link…' : 'Email me a sign-in link'}
+                </button>
+              </div>
             </form>
             <p className="mt-5 text-center text-xs leading-5 text-subtle">
               New to Shudo? Create your account in the iPhone app, then finish the quick voice setup there.
