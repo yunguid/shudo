@@ -36,7 +36,7 @@ describe('patched brace expansion compatibility', () => {
       version: string
     }
 
-    assert.equal(compatibilityPackage.version, '5.0.8-shudo.1')
-    assert.equal(patchedPackage.version, '5.0.8')
+    assert.equal(compatibilityPackage.version, '5.0.12-shudo.1')
+    assert.equal(patchedPackage.version, '5.0.12')
   })
 })

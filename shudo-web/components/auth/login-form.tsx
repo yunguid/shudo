@@ -69,7 +69,8 @@ export function LoginForm({
 
       if (error) throw error
 
-      // Full navigation so the server sees the fresh auth cookies.
+      // Full navigation so the server sees the fresh auth cookies and discards cached anonymous routes.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       window.location.assign('/')
     } catch (error) {
       setMessage(passwordSignInErrorMessage(error))
