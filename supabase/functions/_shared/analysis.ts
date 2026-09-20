@@ -180,7 +180,11 @@ function finiteNonnegative(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     throw new Error(`Invalid analysis value: ${label}`);
   }
-  return Math.round(value * 10) / 10;
+  const rounded = Math.round(value * 10) / 10;
+  if (!Number.isFinite(rounded)) {
+    throw new Error(`Invalid analysis value: ${label}`);
+  }
+  return rounded;
 }
 
 function unitInterval(value: unknown, label: string): number {
@@ -264,7 +268,7 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
     ? null
     : assertNeutralGeneratedCopy(normalizedNotes, "analysis notes");
   const totalValues = totals as Record<string, unknown>;
-  return {
+  const parsed = {
     analysis_preview: analysisPreview,
     title,
     items: object.items.map(parseItem),
@@ -280,4 +284,20 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
     confidence: unitInterval(object.confidence, "confidence"),
     notes,
   };
+  // Items are the single arithmetic source of truth. Validate the supplied
+  // total fields above, but never persist contradictory model arithmetic.
+  for (
+    const nutrient of [
+      "protein_g",
+      "carbs_g",
+      "fat_g",
+      "calories_kcal",
+    ] as const
+  ) {
+    parsed.totals[nutrient] = finiteNonnegative(
+      parsed.items.reduce((sum, item) => sum + item[nutrient], 0),
+      nutrient,
+    );
+  }
+  return parsed;
 }

@@ -403,6 +403,7 @@ export async function runWeeklyMicronutrientAgents(
     "Return every requested nutrient exactly once, using the exact requested id and unit scale.",
     "If logs are incomplete or quantities are vague, give the best conservative estimate and lower confidence.",
     "Evidence must name foods from the supplied digest; never invent a food.",
+    "No external lookup tool is available. Do not claim to have verified a label or consulted a database. Macros alone cannot prove micronutrient content; use low confidence when fortification, recipe, or food type is uncertain.",
     `Logged days: ${daysLogged}; logged meals: ${mealsLogged}.`,
     `Meal digest: ${digest}`,
   ].join("\n");

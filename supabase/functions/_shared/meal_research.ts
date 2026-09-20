@@ -33,7 +33,7 @@ const RESTAURANT_CONTEXT_PATTERNS = [
 ];
 
 const GROUNDED_LABEL_PATTERN =
-  /\b(?:scanned\s+nutrition\s+label|nutrition\s+label\s+per\s+serving)\b/i;
+  /\b(?:barcode\s+database\s+nutrition|scanned\s+nutrition\s+label|nutrition\s+label\s+per\s+serving)\b/i;
 
 /**
  * Routes only likely restaurant/current-information captures to web search.
@@ -85,6 +85,7 @@ export function responseWebSearchMetadata(
     }
     const item = candidate as Record<string, unknown>;
     if (item.type !== "web_search_call") continue;
+    if (item.status === "failed" || item.status === "incomplete") continue;
     used = true;
     const action = item.action && typeof item.action === "object" &&
         !Array.isArray(item.action)
@@ -159,7 +160,7 @@ function sourceLinks(sources: WebSearchSource[]): string {
 }
 
 function modelNotesWithoutReservedSources(value: string | null): string | null {
-  const notes = value?.split(/\n\s*Online sources:/i, 1)[0].trim() ?? "";
+  const notes = value?.split(/(?:^|\n)\s*Online sources:/i, 1)[0].trim() ?? "";
   return notes || null;
 }
 
@@ -194,6 +195,7 @@ export function applyMealResearchResult(
     return sanitizedAnalysis;
   }
 
+  // Source URLs prove consultation, not an exact food or portion match.
   const verified = research.used && !research.degraded &&
     research.sources.length > 0;
   let disclosure: string;
@@ -203,9 +205,10 @@ export function applyMealResearchResult(
     disclosure = RESEARCH_EMPTY_DISCLOSURE;
   } else {
     const links = sourceLinks(research.sources);
-    disclosure = links
-      ? `${RESEARCH_SOURCES_PREFIX}${links}.`
-      : RESEARCH_VERIFIED_LINKLESS_DISCLOSURE;
+    disclosure = "Source matches and portions may differ from your meal.\n\n" +
+      (links
+        ? `${RESEARCH_SOURCES_PREFIX}${links}.`
+        : RESEARCH_VERIFIED_LINKLESS_DISCLOSURE);
   }
   // The disclosure is the point of the research feature, so it gets the notes
   // budget first and the model's prose is trimmed to whatever remains. Links

@@ -521,3 +521,26 @@ Deno.test("the degraded fallback announces the switch away from online lookup", 
   ]);
   assertEquals(result.research.degraded, true);
 });
+
+Deno.test("required lookup without an observed tool call is disclosed as unavailable", async () => {
+  const fetchMock = (() =>
+    Promise.resolve(
+      completedStream({ responseId: "resp_no_lookup" }),
+    )) as typeof fetch;
+  const result = await analyzeMeal(
+    "synthetic-user",
+    "Look up chicken nutrition",
+    null,
+    null,
+    async () => {},
+    async () => {},
+    testDependencies(fetchMock),
+  );
+  assertEquals(result.research.used, false);
+  assertEquals(result.research.degraded, true);
+  assertEquals(result.analysis.confidence, 0.5);
+  assertEquals(
+    result.analysis.notes?.includes("Online lookup was unavailable"),
+    true,
+  );
+});

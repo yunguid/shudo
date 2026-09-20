@@ -69,9 +69,9 @@ Deno.test("analysis parser validates and normalizes the complete payload", () =>
     }],
     totals: {
       protein_g: 52,
-      carbs_g: 45,
-      fat_g: 10,
-      calories_kcal: 493,
+      carbs_g: 0,
+      fat_g: 6.3,
+      calories_kcal: 280.1,
     },
     confidence: 0.9,
     notes: "Portion estimated from the photo.",
@@ -232,4 +232,30 @@ Deno.test("meal analysis rejects personified copy in every prose field", () => {
     undefined,
     "personified product copy",
   );
+});
+
+Deno.test("totals come from components, preserving label calories rather than 4/4/9", () => {
+  const input = validAnalysis();
+  input.items = [{
+    name: "Labelled protein bar",
+    amount: "2 bars",
+    protein_g: 40,
+    carbs_g: 46,
+    fat_g: 14,
+    calories_kcal: 400,
+    confidence: 0.9,
+  }];
+  const parsed = parseAnalysis(input);
+  assertEquals(parsed.totals, {
+    protein_g: 40,
+    carbs_g: 46,
+    fat_g: 14,
+    calories_kcal: 400,
+  });
+});
+
+Deno.test("rounding overflow cannot produce infinite nutrients", () => {
+  const input = validAnalysis();
+  (input.totals as Record<string, unknown>).protein_g = 1e308;
+  assertThrows(() => parseAnalysis(input), undefined, "protein_g");
 });

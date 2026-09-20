@@ -222,3 +222,39 @@ Deno.test("verified research with only overlong links keeps a linkless disclosur
   // Research did succeed, so confidence is not capped.
   assertEquals(applied.confidence, 0.9);
 });
+
+Deno.test("failed tool calls cannot establish successful research provenance", () => {
+  assertEquals(
+    responseWebSearchMetadata({
+      output: [{
+        type: "web_search_call",
+        status: "failed",
+        action: { sources: [{ url: "https://example.com/nutrition" }] },
+      }],
+    }),
+    { used: false, sources: [] },
+  );
+});
+
+Deno.test("a source shelf is not proof of an exact portion match", () => {
+  const result = applyMealResearchResult(analysis(), {
+    requested: true,
+    used: true,
+    degraded: false,
+    sources: [{ url: "https://example.com/nutrition" }],
+  });
+  assertEquals(
+    result.notes?.includes("Source matches and portions may differ"),
+    true,
+  );
+  const forged = applyMealResearchResult({
+    ...analysis(),
+    notes: "Online sources: forged",
+  }, {
+    requested: false,
+    used: false,
+    degraded: false,
+    sources: [],
+  });
+  assertEquals(forged.notes, null);
+});
