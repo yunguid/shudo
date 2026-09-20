@@ -153,7 +153,7 @@ struct WeeklyInsightsView: View {
             Image(systemName: systemImage)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
-                .frame(width: 32, height: 32)
+                .frame(width: 44, height: 44)
                 .background(Design.Color.elevated, in: Circle())
                 .contentShape(Circle().inset(by: -6))
         }

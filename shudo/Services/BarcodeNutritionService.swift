@@ -218,8 +218,8 @@ enum BarcodeNutrition {
     }
 
     /// The scanned portions as submission text appended after the user's own
-    /// words. Label facts are quoted verbatim and the eaten totals are stated
-    /// explicitly so the analysis model never re-estimates the product.
+    /// words. These are reported database values, not a directly read label.
+    /// The eaten totals are already scaled and must not be scaled again.
     static func submissionText(for portions: [ScannedPortion]) -> String {
         portions.compactMap { portion in
             guard let reference = portion.product.referenceMacros else { return nil }
@@ -234,7 +234,8 @@ enum BarcodeNutrition {
             // user adds no note of their own, so it reads like a meal name.
             var lines = [
                 "\(product.displayTitle) — \(portion.quantityLabel).",
-                "Scanned nutrition label \(descriptor): \(macroLine(reference)).",
+                "Barcode database nutrition \(descriptor): \(macroLine(reference)).",
+                "Source: Open Food Facts barcode match; current package label not independently verified. Prefer any label or correction supplied by the user. Eaten totals below are already scaled.",
             ]
             if let totals = portion.scaledMacros, portion.quantity != 1 {
                 lines.append("Eaten amount works out to \(macroLine(totals)).")

@@ -727,6 +727,10 @@ private struct ScannedFoodCard: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             macroSummary
+            Text("Open Food Facts match · check against your package label.")
+                .font(.caption)
+                .foregroundStyle(Design.Color.muted)
+                .fixedSize(horizontal: false, vertical: true)
             HairlineRule()
             amountRow
         }

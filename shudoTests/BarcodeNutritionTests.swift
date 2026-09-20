@@ -154,7 +154,7 @@ struct BarcodeNutritionTests {
         // First line reads like a meal title for the optimistic row.
         #expect(text.hasPrefix("Honey Nut Cheerios (General Mills) — 2 servings."))
         #expect(text.contains(
-            "Scanned nutrition label per serving (3/4 cup (28 g)): 110 kcal, 2 g protein, 22 g carbs, 1.5 g fat."
+            "Barcode database nutrition per serving (3/4 cup (28 g)): 110 kcal, 2 g protein, 22 g carbs, 1.5 g fat."
         ))
         #expect(text.contains("Eaten amount works out to 220 kcal, 4 g protein, 44 g carbs, 3 g fat."))
 

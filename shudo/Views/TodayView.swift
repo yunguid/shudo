@@ -903,8 +903,7 @@ struct TodayView: View {
             weightCheckIns: weightCheckIns,
             recentNutrition: weekWindowTotals,
             targetHistory: weekTargetHistory,
-            micronutrientReport: latestWeeklySummary?.micronutrientReport,
-            micronutrientReportWeekEnd: latestWeeklySummary?.weekEnd
+            displayName: vm.profile?.displayName ?? profile.displayName
         )
         let weighInSeconds =
             UserDefaults.standard.object(

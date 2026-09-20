@@ -17,8 +17,8 @@ struct NotificationCopy: Equatable, Sendable {
 
 /// Everything the nudge planner may consider, captured at scheduling time.
 /// Content is computed from the freshest state we have — the plan is rebuilt
-/// on every day load, meal change, and foregrounding, so a nudge fired at
-/// 15:30 reflects the last thing the user logged, not the morning.
+/// on every day load, meal change, and foregrounding. Local notifications
+/// cannot fetch at delivery time, so their copy explicitly describes a snapshot.
 struct DayNudgeContext {
     let now: Date
     let timezone: TimeZone
@@ -32,8 +32,7 @@ struct DayNudgeContext {
     let weightCheckIns: [WeightCheckIn]
     let recentNutrition: [DailyNutritionTotal]
     let targetHistory: [DailyMacroTargetSnapshot]
-    let micronutrientReport: WeeklyMicronutrientReport?
-    let micronutrientReportWeekEnd: Date?
+    var displayName: String? = nil
 }
 
 /// Connects a stable weight trend to intake over the same period. It avoids
@@ -146,9 +145,8 @@ enum WeightReminderPolicy {
 /// Decides which of today's remaining checkpoints deserve a notification and
 /// writes their copy. Pure and deterministic: same context, same plan.
 ///
-/// At each checkpoint the policy chooses the most relevant action supported
-/// by current macros, goal direction, and recent high-confidence micronutrient
-/// history. Silence wins when the day is already handling itself.
+/// Copy describes the last logged snapshot, not assumed complete intake.
+/// Silence wins for empty-day nutrition gaps and recently logged meals.
 enum DayNudgePolicy {
     static let lunchCheckpointMinutes = 12 * 60 + 45
     static let proteinCheckpointMinutes = 15 * 60 + 30
@@ -162,7 +160,7 @@ enum DayNudgePolicy {
         calendar.timeZone = context.timezone
         let dayStart = calendar.startOfDay(for: context.now)
         func checkpoint(_ minutes: Int) -> Date {
-            dayStart.addingTimeInterval(TimeInterval(minutes * 60))
+            calendar.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: dayStart)!
         }
 
         var nudges: [PlannedNudge] = []
@@ -173,8 +171,8 @@ enum DayNudgePolicy {
                 nudges.append(PlannedNudge(
                     id: "lunch",
                     fireAt: lunchAt,
-                    title: "Make today measurable",
-                    body: "Nothing is logged yet—say breakfast and lunch in one quick voice note."
+                    title: "Meal check-in",
+                    body: "No meals were logged at your last update. Add anything you’ve eaten when convenient."
                 ))
             } else if let lastMealAt = context.lastMealAt,
                 lunchAt.timeIntervalSince(lastMealAt) > 3 * 60 * 60
@@ -192,6 +190,7 @@ enum DayNudgePolicy {
         let proteinTarget = context.target.proteinG
         if proteinAt > context.now,
             proteinTarget > 0,
+            context.loggedMealCount > 0,
             context.totals.proteinG < proteinTarget * 0.45,
             !mealLoggedRecently(context, before: proteinAt)
         {
@@ -199,37 +198,27 @@ enum DayNudgePolicy {
         }
 
         let closeoutAt = checkpoint(closeoutCheckpointMinutes)
-        if closeoutAt > context.now, let closeout = closeoutNudge(context, fireAt: closeoutAt) {
+        if closeoutAt > context.now, !mealLoggedRecently(context, before: closeoutAt), let closeout = closeoutNudge(context, fireAt: closeoutAt) {
             nudges.append(closeout)
         }
 
-        return nudges
+        return Array(nudges.suffix(2))
     }
 
     private static func middayNutritionNudge(
         _ context: DayNudgeContext,
         fireAt: Date
     ) -> PlannedNudge {
-        let gap = max(0, context.target.proteinG - context.totals.proteinG)
-        if let nutrient = priorityMicronutrient(context),
-            let food = foodDirection(for: nutrient.id)
-        {
-            return PlannedNudge(
-                id: "nutrition",
-                fireAt: fireAt,
-                title: "Close two gaps",
-                body: "About \(roundedGrams(gap))g protein remains. Recent logs ran low in "
-                    + "\(nutrient.name.lowercased()); \(food) helps with both."
-            )
-        }
-        let proteinFood = context.goalType == .gain
-            ? "chicken with rice, salmon, or Greek yogurt with granola"
-            : "grilled chicken, salmon, or skyr"
+        let logged = max(0, Int(context.totals.proteinG.rounded()))
+        let target = max(0, Int(context.target.proteinG.rounded()))
+        let gap = max(0, target - logged)
+        let name = context.displayName?.split(whereSeparator: { $0.isWhitespace }).first.map(String.init)
+        let greeting = name.map { "\($0), " } ?? ""
         return PlannedNudge(
             id: "nutrition",
             fireAt: fireAt,
-            title: "Protein is the next lever",
-            body: "About \(roundedGrams(gap))g protein remains—\(proteinFood) can close it."
+            title: "Protein check-in",
+            body: "\(greeting)your last update had \(logged)g protein logged; \(gap)g more would reach your \(target)g target. Add any unlogged meals first."
         )
     }
 
@@ -238,115 +227,20 @@ enum DayNudgePolicy {
         fireAt: Date
     ) -> PlannedNudge? {
         let target = context.target
-        guard target.caloriesKcal > 0 else { return nil }
+        guard target.caloriesKcal > 0, context.loggedMealCount > 0 else { return nil }
         let remaining = target.caloriesKcal - context.totals.caloriesKcal
 
-        // 400 kcal at 8:30pm is a real dinner-sized gap even when it's under
-        // a quarter of a large target (Luke hit exactly this: ~600 left of
-        // 2,461 and the percentage rule alone would have stayed silent).
+        // A log is not proof of complete intake. Offer a log check, never
+        // instructions to eat or stop eating based on an assumed deficit.
         if remaining >= min(target.caloriesKcal * 0.25, 400) {
-            let proteinGap = max(0, target.proteinG - context.totals.proteinG)
-            if let nutrient = priorityMicronutrient(context),
-                let food = foodDirection(for: nutrient.id)
-            {
-                return PlannedNudge(
-                    id: "closeout",
-                    fireAt: fireAt,
-                    title: "Use the room well",
-                    body: "About \(roundedKcal(remaining)) kcal remains. Recent logs ran low in "
-                        + "\(nutrient.name.lowercased()); \(food) is a useful direction."
-                )
-            }
-            let carbGap = max(0, target.carbsG - context.totals.carbsG)
-            let fatGap = max(0, target.fatG - context.totals.fatG)
-            if proteinGap < 20, carbGap >= 30 {
-                return PlannedNudge(
-                    id: "closeout",
-                    fireAt: fireAt,
-                    title: "Carbs are the open lane",
-                    body: "About \(roundedKcal(remaining)) kcal and \(roundedGrams(carbGap))g carbs remain—"
-                        + "rice, potatoes, oats, or fruit fit the day."
-                )
-            }
-            if proteinGap < 20, carbGap < 30, fatGap >= 10, context.goalType == .gain {
-                return PlannedNudge(
-                    id: "closeout",
-                    fireAt: fireAt,
-                    title: "Add energy efficiently",
-                    body: "Protein and carbs are close. Nuts, avocado, or olive oil can use "
-                        + "the remaining \(roundedKcal(remaining)) kcal."
-                )
-            }
-            let proteinLine = proteinGap >= 20
-                ? " Lead with \(roundedGrams(proteinGap))g of remaining protein."
-                : ""
-            let title = context.goalType == .gain ? "Stay on pace to gain" : "Room for a real meal"
             return PlannedNudge(
                 id: "closeout",
                 fireAt: fireAt,
-                title: title,
-                body: "About \(roundedKcal(remaining)) kcal left today.\(proteinLine)"
+                title: "Evening check-in",
+                body: "Your last update had \(roundedKcal(context.totals.caloriesKcal)) kcal logged, about \(roundedKcal(remaining)) below your target. Anything still to log?"
             )
         }
-
-        if remaining < -target.caloriesKcal * 0.05 {
-            return PlannedNudge(
-                id: "closeout",
-                fireAt: fireAt,
-                title: context.goalType == .gain ? "Target reached" : "Day is full",
-                body: "You’re about \(roundedKcal(-remaining)) kcal past target — "
-                    + (context.goalType == .gain
-                        ? "no extra catch-up meal is needed."
-                        : "closing the kitchen now supports your weekly pace.")
-            )
-        }
-
-        if target.fatG > 0, context.totals.fatG > target.fatG,
-            context.totals.caloriesKcal < target.caloriesKcal
-        {
-            return PlannedNudge(
-                id: "closeout",
-                fireAt: fireAt,
-                title: "Go lean tonight",
-                body: "Fat reached its target early — white fish, shrimp, or egg whites "
-                    + "fill the remaining \(roundedKcal(remaining)) kcal without adding more."
-            )
-        }
-
-        // Close to target with meals logged: the day handled itself.
         return nil
-    }
-
-    private static func priorityMicronutrient(
-        _ context: DayNudgeContext
-    ) -> WeeklyMicronutrient? {
-        guard let report = context.micronutrientReport,
-            report.daysLogged >= 4,
-            let reportEnd = context.micronutrientReportWeekEnd,
-            context.now.timeIntervalSince(reportEnd) >= 0,
-            context.now.timeIntervalSince(reportEnd) <= 21 * 24 * 60 * 60
-        else { return nil }
-        return report.nutrients
-            .filter { $0.status == "low" && $0.confidence != "low" }
-            .sorted { $0.percentReference < $1.percentReference }
-            .first { foodDirection(for: $0.id) != nil }
-    }
-
-    private static func foodDirection(for nutrientID: String) -> String? {
-        switch nutrientID {
-        case "fiber": return "beans, lentils, berries, or vegetables"
-        case "iron": return "lean beef, lentils, or spinach with peppers"
-        case "calcium": return "Greek yogurt, skyr, or calcium-set tofu"
-        case "potassium": return "potatoes, beans, yogurt, or bananas"
-        case "magnesium": return "pumpkin seeds, beans, or leafy greens"
-        case "vitamin_c": return "peppers, citrus, or berries"
-        case "vitamin_d": return "salmon, eggs, or fortified yogurt"
-        case "vitamin_b12": return "salmon, lean beef, eggs, or fortified foods"
-        case "folate": return "lentils, beans, or leafy greens"
-        case "omega_3": return "salmon, sardines, chia, or walnuts"
-        case "zinc": return "lean beef, shellfish, or pumpkin seeds"
-        default: return nil
-        }
     }
 
     private static func mealLoggedRecently(_ context: DayNudgeContext, before fireAt: Date) -> Bool {
@@ -356,10 +250,6 @@ enum DayNudgePolicy {
 
     private static func roundedKcal(_ value: Double) -> Int {
         max(0, Int((value / 10).rounded()) * 10)
-    }
-
-    private static func roundedGrams(_ value: Double) -> Int {
-        max(0, Int((value / 5).rounded()) * 5)
     }
 }
 
@@ -442,10 +332,11 @@ enum DayNotificationScheduler {
             content.title = nudge.title
             content.body = nudge.body
             content.sound = .default
-            let components = calendar.dateComponents(
+            var components = calendar.dateComponents(
                 [.year, .month, .day, .hour, .minute],
                 from: nudge.fireAt
             )
+            components.timeZone = context.timezone
             let request = UNNotificationRequest(
                 identifier: nudgeIdentifierPrefix + nudge.id,
                 content: content,

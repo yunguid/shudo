@@ -55,6 +55,7 @@ struct WeeklyInsightsScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                proteinCard
                 runningWindowCard
                 WeeklyInsightsView(
                     summaries: summaries,
@@ -100,14 +101,16 @@ struct WeeklyInsightsScreen: View {
                 }
             }
 
-            if let window = runningWindow, let average = window.average, window.loggedDayCount > 0 {
+            if let errorMessage {
+                Text(errorMessage).font(.footnote).foregroundStyle(Design.Color.muted)
+            } else if let window = runningWindow, let average = window.average, window.loggedDayCount > 0 {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("\(Int(average.caloriesKcal.rounded()))")
                         .font(.title.weight(.bold))
                         .foregroundStyle(Design.Color.ink)
                         .monospacedDigit()
                     Text(
-                        "kcal/day avg · target \(Int((window.averageTarget?.caloriesKcal ?? profile.dailyMacroTarget.caloriesKcal).rounded()))"
+                        "kcal/logged day · target \(Int((window.averageTarget?.caloriesKcal ?? profile.dailyMacroTarget.caloriesKcal).rounded()))"
                     )
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Design.Color.muted)
@@ -132,6 +135,9 @@ struct WeeklyInsightsScreen: View {
                         window.averageTarget?.fatG ?? profile.dailyMacroTarget.fatG,
                         Design.Color.ringFat)
                 }
+                Text("Averages use logged days only; even a logged day may be incomplete. Today is still in progress.")
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.muted)
             } else if isLoading {
                 VStack(alignment: .leading, spacing: 9) {
                     Capsule().fill(Design.Color.elevated).frame(width: 180, height: 12)
@@ -151,6 +157,53 @@ struct WeeklyInsightsScreen: View {
             Design.Color.glassFill,
             in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
         )
+    }
+
+    private var proteinDays: [ProteinDay] {
+        ProteinProgress.days(totals: dailyTotals, target: profile.dailyMacroTarget,
+                             history: targetHistory, timezone: profile.timezone)
+    }
+
+    private var proteinCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Your protein").font(.headline)
+            if let errorMessage {
+                Text(errorMessage).font(.footnote)
+            } else if isLoading {
+                ProgressView("Loading protein")
+            } else {
+                if let today = proteinDays.last {
+                    Text(ProteinProgress.todayMessage(today, displayName: profile.displayName))
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(proteinDays) { day in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text(day.date, format: Date.FormatStyle(timeZone: TimeZone(identifier: profile.timezone) ?? .current).weekday(.abbreviated).month(.abbreviated).day())
+                            Spacer()
+                            Text(day.loggedGrams.map { "\(Int($0.rounded())) / \(Int(day.targetGrams.rounded()))g" } ?? "No log")
+                                .monospacedDigit()
+                        }
+                        .font(.caption)
+                        if let logged = day.loggedGrams {
+                            ProgressView(value: NutritionProgressPolicy.progress(current: logged, goal: day.targetGrams))
+                                .tint(Design.Color.ringProtein)
+                                .accessibilityLabel("Protein logged against target")
+                        }
+                    }
+                }
+                Text("No log means unknown intake, not zero. Targets reflect each day’s settings; today may be incomplete.")
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.muted)
+            }
+            NavigationLink("Explore protein portions") { ProteinReferenceView() }
+                .font(.subheadline.weight(.medium))
+                .padding(.vertical, 8)
+        }
+        .foregroundStyle(Design.Color.ink)
+        .padding(18)
+        .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: Design.Radius.card))
     }
 
     private func runningMetric(
@@ -203,9 +256,8 @@ struct WeeklyInsightsScreen: View {
             async let summariesRequest = weeklySummaryProvider.fetchWeeklySummaries(
                 limit: NutritionProgressPolicy.trendWeekCount
             )
-            dailyTotals = try await totalsRequest
-            targetHistory = try await historyRequest
-            summaries = try await summariesRequest
+            let loaded = try await (totalsRequest, historyRequest, summariesRequest)
+            (dailyTotals, targetHistory, summaries) = loaded
         } catch {
             errorMessage = "Weekly insights couldn’t be loaded."
         }
