@@ -16,7 +16,7 @@ import {
 import { assertEquals, assertThrows } from "./assertions.ts";
 
 Deno.test("weekly generation is pinned and chooses the completed local week", () => {
-  assertEquals(WEEKLY_SUMMARY_MODEL, "gpt-5.6-sol");
+  assertEquals(WEEKLY_SUMMARY_MODEL, "gpt-6.1-sol");
   assertEquals(WEEKLY_SUMMARY_SCHEMA.additionalProperties, false);
   assertEquals(
     [...WEEKLY_SUMMARY_SCHEMA.required].sort(),

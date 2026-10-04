@@ -42,7 +42,7 @@ import {
   parseCorrectionReservation,
 } from "./reservation.ts";
 
-const ANALYSIS_MODEL = "gpt-5.6-sol";
+const ANALYSIS_MODEL = "gpt-6.1-sol";
 const TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const MAX_BASE_DESCRIPTION_CHARACTERS = 30_000;
 
@@ -140,7 +140,8 @@ async function analyzeCorrection(
           schema: RESULT_SCHEMA,
         },
       },
-      max_output_tokens: 2_500,
+      // Shared budget for reasoning and the concise structured result.
+      max_output_tokens: 32_000,
       safety_identifier: await safetyIdentifier(userId),
       store: false,
     }),

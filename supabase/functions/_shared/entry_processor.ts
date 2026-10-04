@@ -22,7 +22,7 @@ import { safetyIdentifier } from "./safety.ts";
 import { drainStorageCleanup } from "./storage_cleanup.ts";
 import { refreshWeeklySummaryForDay } from "./weekly_summary.ts";
 
-export const ANALYSIS_MODEL = "gpt-5.6-sol";
+export const ANALYSIS_MODEL = "gpt-6.1-sol";
 export const TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 export const PROCESSING_BUDGET_MS = 150_000;
 export const TRANSCRIPTION_TIMEOUT_MS = 60_000;
@@ -304,10 +304,10 @@ export async function analyzeMeal(
           schema: RESULT_SCHEMA,
         },
       },
-      // Reasoning tokens bill against this ceiling too; 2,500 proved able to
-      // truncate image-grounded analyses mid-stream (response.incomplete →
-      // "failed while streaming"), which reads as a dead upload to the user.
-      max_output_tokens: 4_000,
+      // Reasoning and visible output share this ceiling. Leave ample headroom
+      // to avoid truncating structured results; schema and stream-size limits
+      // still bound the visible meal analysis.
+      max_output_tokens: 32_000,
       safety_identifier: await makeSafetyIdentifier(userId),
       store: false,
       ...(searchEnabled

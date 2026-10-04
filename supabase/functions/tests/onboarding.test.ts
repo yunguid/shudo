@@ -32,8 +32,8 @@ const recommendation = {
   suggestions: ["Review the target after two weeks."],
 } as const;
 
-Deno.test("onboarding is explicitly pinned to GPT-5.6 Sol", () => {
-  assertEquals(ONBOARDING_MODEL, "gpt-5.6-sol");
+Deno.test("onboarding is explicitly pinned to GPT-6.1 Sol", () => {
+  assertEquals(ONBOARDING_MODEL, "gpt-6.1-sol");
   assertEquals(ONBOARDING_SCHEMA.additionalProperties, false);
   assertEquals(
     [...ONBOARDING_SCHEMA.required].sort(),

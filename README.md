@@ -45,8 +45,11 @@ the short onboarding flow.
 
 - Supabase Auth, PostgreSQL, private Storage, RLS, and Edge Functions provide the
   backend. The active hosted project is `shudo-2`.
-- OpenAI `gpt-4o-transcribe` transcribes voice. `gpt-5.6-sol` produces structured
+- OpenAI `gpt-4o-transcribe` transcribes voice. `gpt-6.1-sol` produces structured
   meal estimates, onboarding proposals, and weekly summaries with `store: false`.
+  All five analysis workloads use low reasoning and a 32,000-token output ceiling
+  shared by reasoning and visible output; schemas, concise-output instructions,
+  and request timeouts remain in force.
 - OpenAI and Supabase service credentials stay server-side. The apps contain only
   the public Supabase project URL and publishable key.
 - Every user-owned row is isolated by RLS. Server-only RPCs are revoked from

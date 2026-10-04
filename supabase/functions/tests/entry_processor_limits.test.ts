@@ -15,7 +15,7 @@ import { MAX_STREAMED_OUTPUT_CHARACTERS } from "../_shared/responses_stream.ts";
 import { assertEquals } from "./assertions.ts";
 
 Deno.test("OpenAI request timeouts preserve worker overhead inside the processing budget", () => {
-  assertEquals(ANALYSIS_MODEL, "gpt-5.6-sol");
+  assertEquals(ANALYSIS_MODEL, "gpt-6.1-sol");
   assertEquals(MEAL_COPY_INSTRUCTION.includes("Never speak as Shudo"), true);
   assertEquals(TRANSCRIPTION_TIMEOUT_MS, 60_000);
   assertEquals(

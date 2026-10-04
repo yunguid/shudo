@@ -20,7 +20,7 @@ import {
 } from "./target_engine.ts";
 import type { TargetEngineInput } from "./target_engine.ts";
 
-export const ONBOARDING_MODEL = "gpt-5.6-sol";
+export const ONBOARDING_MODEL = "gpt-6.1-sol";
 export const ONBOARDING_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 export const ONBOARDING_PROCESSING_BUDGET_MS = 125_000;
 export const ONBOARDING_TRANSCRIPTION_TIMEOUT_MS = 55_000;
@@ -653,7 +653,8 @@ export async function analyzeOnboarding(
           ].join("\n"),
         }],
       }],
-      max_output_tokens: 2_000,
+      // Shared budget for reasoning and the concise structured result.
+      max_output_tokens: 32_000,
       safety_identifier: await safetyIdentifier(userId),
       store: false,
     }),

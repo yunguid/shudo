@@ -8,7 +8,7 @@ import { requiredEnv } from "./http.ts";
 import { safetyIdentifier } from "./safety.ts";
 import { runWeeklyMicronutrientAgents } from "./weekly_micronutrient_agents.ts";
 
-export const WEEKLY_SUMMARY_MODEL = "gpt-5.6-sol";
+export const WEEKLY_SUMMARY_MODEL = "gpt-6.1-sol";
 export const WEEKLY_COPY_INSTRUCTION =
   `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Use direct, concise observations and suggestions.`;
 
@@ -411,7 +411,8 @@ export async function writeWeeklyNarrative(
           ].join("\n"),
         }],
       }],
-      max_output_tokens: 1_000,
+      // Shared budget for reasoning and the concise structured result.
+      max_output_tokens: 32_000,
       safety_identifier: await safetyIdentifier(userId),
       store: false,
     }),

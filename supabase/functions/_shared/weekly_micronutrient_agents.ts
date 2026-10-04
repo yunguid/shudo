@@ -6,7 +6,7 @@ import {
 import { requiredEnv } from "./http.ts";
 import { safetyIdentifier } from "./safety.ts";
 
-export const WEEKLY_MICRONUTRIENT_MODEL = "gpt-5.6-sol";
+export const WEEKLY_MICRONUTRIENT_MODEL = "gpt-6.1-sol";
 export const WEEKLY_MICRONUTRIENT_PHASE_TIMEOUT_MS = 40_000;
 
 type NutrientDefinition = {
@@ -295,7 +295,8 @@ async function structuredResponse(
         role: "user",
         content: [{ type: "input_text", text: prompt }],
       }],
-      max_output_tokens: 2_000,
+      // Shared budget for reasoning and the concise structured result.
+      max_output_tokens: 32_000,
       safety_identifier: await safetyIdentifier(userId),
       store: false,
     }),
