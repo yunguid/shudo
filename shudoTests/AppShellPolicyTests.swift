@@ -219,6 +219,10 @@ struct DayHeaderMathTests {
         #expect(over.remainingKcal == 0)
         #expect(over.overKcal == 200)
         #expect(over.isOver)
+
+        #expect(DayHeaderMath.remainingLabel(under, isPast: false) == "kcal left")
+        #expect(DayHeaderMath.remainingLabel(under, isPast: true) == "kcal short", "a finished day ended short")
+        #expect(DayHeaderMath.remainingLabel(over, isPast: true) == "kcal over")
     }
 
     @Test func zeroOrBrokenTargetsNeverProduceNaN() {

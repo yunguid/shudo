@@ -233,6 +233,13 @@ enum DayHeaderMath {
         )
     }
 
+    /// What the hero number means: still to eat today, past the target, or
+    /// — on a finished day — how far short it ended.
+    static func remainingLabel(_ numbers: DayHeaderNumbers, isPast: Bool) -> String {
+        if numbers.isOver { return "kcal over" }
+        return isPast ? "kcal short" : "kcal left"
+    }
+
     /// Progress toward a goal, 0…1 (rings and bars never overdraw; a met
     /// target glows instead).
     static func progress(_ value: Double, _ goal: Double) -> Double {

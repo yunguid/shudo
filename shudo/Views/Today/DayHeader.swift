@@ -19,6 +19,8 @@ struct DayHeader: View {
     var onDeleteMeal: (Entry) -> Void
     var onOpenInsights: () -> Void
     let zoomNamespace: Namespace.ID
+    /// A finished day in the diary: what's left reads as "short".
+    var isPast = false
 
     @Namespace private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -110,7 +112,7 @@ struct DayHeader: View {
                 .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: value)
                 .lineLimit(1)
                 .fixedSize()
-            Text(numbers.isOver ? "kcal over" : "kcal left")
+            Text(DayHeaderMath.remainingLabel(numbers, isPast: isPast))
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(numbers.isOver ? Design.Color.honey : Design.Color.textSecondary)
                 .lineLimit(1)
@@ -130,7 +132,7 @@ struct DayHeader: View {
         .accessibilityLabel(
             numbers.isOver
                 ? "\(numbers.overKcal) kilocalories over \(numbers.targetKcal)"
-                : "\(numbers.remainingKcal) kilocalories left of \(numbers.targetKcal)"
+                : "\(numbers.remainingKcal) kilocalories \(isPast ? "short" : "left") of \(numbers.targetKcal)"
         )
         .accessibilityHint(expanded ? "Collapses the day" : "Shows the week and your meals")
         .accessibilityAddTraits(.isButton)

@@ -272,7 +272,8 @@ struct TodayScreen: View {
             },
             onDeleteMeal: beginDeletion,
             onOpenInsights: { path.append(TodayRoute.insights) },
-            zoomNamespace: zoomNamespace
+            zoomNamespace: zoomNamespace,
+            isPast: !isToday
         )
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
@@ -518,10 +519,7 @@ struct TodayScreen: View {
                     MessageBubble(text: pending.text, isMine: true, position: row.position)
                         .opacity(pending.isFailed ? 0.6 : 0.85)
                 }
-                switch pending.state {
-                case .sending:
-                    EmptyView()
-                case .failed(let message, let retryable):
+                if case .failed(let message, let retryable) = pending.state {
                     HStack(spacing: 10) {
                         Text(message)
                             .font(.caption2)
