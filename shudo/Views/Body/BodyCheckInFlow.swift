@@ -274,6 +274,7 @@ struct BodyCheckInFlow: View {
         }
         .buttonStyle(.plain)
         .disabled(!canSave)
+        .accessibilityLabel(isSaving ? "Saving" : "Save")
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
         .background(Design.Color.canvas.opacity(0.92))
