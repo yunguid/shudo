@@ -122,6 +122,11 @@ final class CoachNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
                     userInfo: localDay.map { ["local_days": [$0]] }
                 )
             }
+            #if DEBUG
+            if CoachNotificationDemo.isEnabled {
+                CoachNotificationDemo.log("willPresent \(identifier.suffix(8)) options=\(options.rawValue) visible=\(CoachPresence.shared.isThreadVisible)")
+            }
+            #endif
             completionHandler(options)
         }
     }
@@ -173,6 +178,11 @@ final class CoachNotificationResponder {
     }
 
     func handle(_ action: CoachNotificationAction) async {
+        #if DEBUG
+        if CoachNotificationDemo.isEnabled {
+            CoachNotificationDemo.log("didReceive \(action.actionIdentifier) \(action.notificationIdentifier.suffix(8)) → \(CoachNotificationRouting.route(action))")
+        }
+        #endif
         switch CoachNotificationRouting.route(action) {
         case .open(let url):
             AppRouter.shared.handle(url: url)

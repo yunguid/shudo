@@ -722,6 +722,11 @@ final class LiveCoachThreadNotifier: CoachThreadNotifying {
     var isAppActive: Bool { UIApplication.shared.applicationState == .active }
 
     func removeDelivered(messageIds: [UUID]) {
+        #if DEBUG
+        if CoachNotificationDemo.isEnabled {
+            CoachNotificationDemo.log("thread read → clear delivered \(messageIds.map { $0.uuidString.lowercased().suffix(8) })")
+        }
+        #endif
         let scheduler = scheduler
         Task { await scheduler.removeDelivered(messageIds: messageIds) }
     }

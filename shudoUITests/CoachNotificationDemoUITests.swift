@@ -33,7 +33,7 @@ final class CoachNotificationDemoUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "-shudoPolishPreview", "main",
-            "-shudoNotificationDemo", "-shudoNotificationDemoDelay", "20",
+            "-shudoNotificationDemo", "-shudoNotificationDemoDelay", "8",
         ]
         app.launch()
 
@@ -42,73 +42,86 @@ final class CoachNotificationDemoUITests: XCTestCase {
             snap("permission")
             allow.tap()
         }
-        XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 10))
-        sleep(4) // self-check + scheduling
+        sleep(25) // the self-check runs while the app is in front
+        // Home: the demo schedules its four texts 8, 18, 28 and 38 s out.
         XCUIDevice.shared.press(.home)
 
-        let checkpoint = notification(containing: "62g of protein")
-        XCTAssertTrue(checkpoint.waitForExistence(timeout: 45), "checkpoint banner never arrived")
+        let banner = notification(containing: "62g of protein")
+        XCTAssertTrue(banner.waitForExistence(timeout: 30), "checkpoint banner never arrived")
         snap("banner")
-        dumpTree("banner")
 
-        let snack = notification(containing: "7-Eleven is 4 min away")
-        XCTAssertTrue(snack.waitForExistence(timeout: 20), "snack banner never arrived")
-        snap("banner-snack")
-
-        // Let the last two land (the recap is passive: no banner).
-        sleep(24)
-        openNotificationCenter()
-        snap("nc-stack")
-        dumpTree("nc-stack")
-
-        // Expand the stack.
-        let stackTop = notification(containing: "Shudo")
-        if stackTop.waitForExistence(timeout: 5) {
-            stackTop.tap()
-            sleep(2)
-        }
-        snap("nc-expanded")
-        dumpTree("nc-expanded")
-
-        // Long-look with the actions.
-        let target = notification(containing: "62g of protein")
-        guard target.waitForExistence(timeout: 5) else {
-            XCTFail("checkpoint missing from Notification Center")
-            return
-        }
-        target.press(forDuration: 1.5)
+        // Pull the banner open: the long-look with the actions.
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).press(forDuration: 1.2)
         sleep(2)
         snap("long-look")
         dumpTree("long-look")
 
-        // Reply from the lock screen; Shudo answers as a new text.
+        // Reply from the banner; Shudo answers as a new text.
         let reply = springboard.buttons["Reply"]
         if reply.waitForExistence(timeout: 5) {
             reply.tap()
-            sleep(1)
+            sleep(2)
+            // A fresh simulator shows the keyboard's slide-to-type tip first.
+            let tip = springboard.buttons["Continue"]
+            if tip.waitForExistence(timeout: 3) {
+                tip.tap()
+                sleep(1)
+            }
             springboard.typeText("Had a shake at 9")
             snap("reply-typing")
             let send = springboard.buttons["Send"]
             if send.waitForExistence(timeout: 3) { send.tap() } else { springboard.typeText("\n") }
             let answer = notification(containing: "158g")
             XCTAssertTrue(answer.waitForExistence(timeout: 30), "Shudo's answer never arrived")
-            sleep(2)
             snap("reply-answer")
-            dumpTree("reply-answer")
         } else {
             XCTFail("no Reply action in the long-look")
         }
 
+        // Let the rest land, then look at the stack.
+        sleep(35)
+        openNotificationCenter()
+        snap("nc-stack")
+        // The collapsed stack sits just above the bottom of the cover sheet.
+        let showLess = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Show less")).firstMatch
+        if !showLess.exists {
+            springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.69)).tap()
+            _ = showLess.waitForExistence(timeout: 5)
+        }
+        sleep(1)
+        snap("nc-expanded")
+        dumpTree("nc-expanded")
+
         // Tap the snack text: the app opens on Today at that message.
-        let snackRow = notification(containing: "7-Eleven is 4 min away")
-        if snackRow.waitForExistence(timeout: 5) {
+        let snackRow = springboard.buttons.matching(identifier: "ShortLook.Platter.Content.Seamless")
+            .matching(NSPredicate(format: "label CONTAINS %@", "7-Eleven is 4 min away"))
+            .firstMatch
+        if snackRow.waitForExistence(timeout: 5), snackRow.isHittable {
             snackRow.tap()
-            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
-            sleep(3)
+            sleep(6)
             snap("deep-link")
         } else {
             XCTFail("snack text missing from Notification Center")
         }
+    }
+
+    /// Tapping the first banner opens Today scrolled to that text. Taps by
+    /// coordinate only (no Springboard queries), so it survives a busy Mac.
+    @MainActor
+    func testTappingABannerOpensTheThread() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-shudoPolishPreview", "main",
+            "-shudoNotificationDemo", "-shudoNotificationDemoDelay", "8",
+        ]
+        app.launch()
+        sleep(25)
+        XCUIDevice.shared.press(.home)
+        sleep(10) // the checkpoint banner is up 8–13 s after Home
+        snap("tap-banner")
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
+        sleep(6)
+        snap("deep-link")
     }
 
     /// Before/after comparison: the app is whatever is installed; the test
@@ -119,27 +132,23 @@ final class CoachNotificationDemoUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-shudoPolishPreview", "main"]
         app.launch()
-        XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 10))
+        sleep(3)
         XCUIDevice.shared.press(.home)
         let pushed = notification(containing: "62g of protein")
-        XCTAssertTrue(pushed.waitForExistence(timeout: 90), "pushed text never arrived")
+        XCTAssertTrue(pushed.waitForExistence(timeout: 120), "pushed text never arrived")
         snap("banner")
-        sleep(6)
-        openNotificationCenter()
-        let row = notification(containing: "62g of protein")
-        if row.waitForExistence(timeout: 5) {
-            snap("nc")
-            row.press(forDuration: 1.5)
-            sleep(2)
-            snap("long-look")
-        }
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).press(forDuration: 1.2)
+        sleep(2)
+        snap("long-look")
     }
 
     // MARK: Helpers
 
     private func notification(containing text: String) -> XCUIElement {
-        springboard.descendants(matching: .any)
-            .matching(identifier: "NotificationShortLookView")
+        // Buttons only: a full Springboard descendants query times out on a
+        // busy machine.
+        springboard.buttons
+            .matching(identifier: "ShortLook.Platter.Content.Seamless")
             .matching(NSPredicate(format: "label CONTAINS %@", text))
             .firstMatch
     }

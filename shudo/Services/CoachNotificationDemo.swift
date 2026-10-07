@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import UIKit
 import UserNotifications
 
 /// `-shudoNotificationDemo` (DEBUG only): proves coach texts end to end on a
@@ -19,57 +20,52 @@ import UserNotifications
 ///
 /// The report prints as `[notification-demo] …` lines and is written to
 /// `Documents/notification-demo.txt` in the app container.
+///
+/// Clock: the PolishPreview day is pinned to 7:40 PM New York, so the fake
+/// server, CoachSync and the thread all run on that clock, and the only
+/// translation to wall time is at the notification center
+/// (`PreviewClockNotificationCenter`): a text due at "7:41 PM" fires a minute
+/// from now and lands at the bottom of the thread as it does.
 enum CoachNotificationDemo {
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-shudoNotificationDemo")
     }
 
-    /// Seconds from launch-check completion to the first demo text.
+    /// Seconds from the app going to the background to the first demo text
+    /// (the texts are scheduled then, so they always arrive as banners).
     static var deliveryDelay: TimeInterval {
         let arguments = ProcessInfo.processInfo.arguments
         guard let flag = arguments.firstIndex(of: "-shudoNotificationDemoDelay"),
               arguments.indices.contains(flag + 1),
-              let seconds = TimeInterval(arguments[flag + 1]) else { return 15 }
+              let seconds = TimeInterval(arguments[flag + 1]) else { return 8 }
         return max(3, seconds)
     }
 
     static let userId = ShellPreviewFixtures.userId
 
-    /// Coach on, quiet hours parked 6–8 h from now so the demo texts ring
-    /// whatever the time, while the self-check still has a quiet window.
+    static var timeZone: TimeZone {
+        TimeZone(identifier: ShellPreviewFixtures.timezone) ?? .autoupdatingCurrent
+    }
+
+    /// The preview day's clock (7:40 PM, advancing in real time).
+    static func clock() -> Date { ShellPreviewFixtures.now() }
+
+    /// Coach on, quiet hours 1–3 AM: the evening demo texts ring, and the
+    /// self-check still has a quiet window to test.
     static let settings: CoachSettings = {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
-        let hour = calendar.component(.hour, from: Date())
         var settings = CoachSettings.defaults
         settings.enabled = true
-        settings.quietHoursStart = CoachClockTime(hour: (hour + 6) % 24, minute: 0)
-        settings.quietHoursEnd = CoachClockTime(hour: (hour + 8) % 24, minute: 0)
+        settings.quietHoursStart = CoachClockTime(hour: 1, minute: 0)
+        settings.quietHoursEnd = CoachClockTime(hour: 3, minute: 0)
         return settings
     }()
 
-    /// The fake server runs on real time, like the real one: a scheduled
-    /// text joins the thread only once it is due. The PolishPreview thread
-    /// (pinned to 7:40 PM) is shifted onto the real clock to match.
-    static func serverClock() -> Date { Date() }
-
-    private static func fixtureThread() -> [CoachMessage] {
-        let offset = Date().timeIntervalSince(ShellPreviewFixtures.now())
-        return ShellPreviewFixtures.messages().map { message in
-            var shifted = message
-            shifted.deliverAt += offset
-            shifted.createdAt += offset
-            shifted.updatedAt += offset
-            return shifted
-        }
-    }
-
     static let service = FakeCoachService(
-        messages: fixtureThread(),
+        messages: ShellPreviewFixtures.messages(),
         memory: ShellPreviewFixtures.memory,
         settings: settings,
         stepDelayMilliseconds: 90,
-        now: { CoachNotificationDemo.serverClock() },
+        now: { CoachNotificationDemo.clock() },
         script: FakeCoachService.replyScript(
             reply: ["Good. ", "That shake puts you at 158g. ", "A yogurt before bed and you’re there."]
         )
@@ -78,10 +74,12 @@ enum CoachNotificationDemo {
     static let store = InMemoryCoachSyncStateStore()
     static let mirror = CoachSettingsMirror(suiteName: "shudo.notification-demo")
 
+    static let scheduler = CoachNotificationScheduler(center: PreviewClockNotificationCenter())
+
     static var environment: CoachSyncEnvironment {
         CoachSyncEnvironment(
-            now: { Date() },
-            timeZone: { .autoupdatingCurrent },
+            now: { CoachNotificationDemo.clock() },
+            timeZone: { CoachNotificationDemo.timeZone },
             userId: { CoachNotificationDemo.userId },
             device: {
                 CoachSyncRequest.Device(
@@ -99,10 +97,10 @@ enum CoachNotificationDemo {
 
     static func makeSharedSync() -> CoachSync? {
         guard isEnabled else { return nil }
-        mirror.save(settings, at: Date())
+        mirror.save(settings, at: clock())
         return CoachSync(
             service: service,
-            scheduler: .live,
+            scheduler: scheduler,
             store: store,
             mirror: mirror,
             environment: environment
@@ -112,13 +110,53 @@ enum CoachNotificationDemo {
     static func startIfRequested() {
         guard isEnabled else { return }
         Task { await run() }
+        // Each return to the app: what iOS still shows in Notification Center.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            Task { await logDelivered() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { _ in
+            log("entered background")
+        }
+    }
+
+    /// Timestamped trace (stdout + `Documents/notification-demo-log.txt`).
+    static func log(_ text: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let line = "\(formatter.string(from: Date())) \(text)"
+        print("[notification-demo] \(line)")
+        guard let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("notification-demo-log.txt") else { return }
+        let data = Data((line + "\n").utf8)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
+    private static func logDelivered() async {
+        let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
+            .filter { $0.request.identifier.hasPrefix(CoachNotificationIdentifiers.ownedPrefix) }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let lines = delivered.map { "\($0.request.identifier.suffix(8)) \(formatter.string(from: $0.date))" }
+        log("active; delivered: \(lines)")
     }
 
     // MARK: Run
 
     private static func run() async {
+        if let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            try? FileManager.default.removeItem(at: url.appendingPathComponent("notification-demo-log.txt"))
+        }
         let report = Report()
-        let scheduler = CoachNotificationScheduler.live
         let status = await scheduler.requestAuthorizationIfNeeded()
         report.line("authorization: \(status.rawValue)")
         guard status == .authorized || status == .provisional else {
@@ -126,17 +164,59 @@ enum CoachNotificationDemo {
             report.write()
             return
         }
+        // A clean Notification Center for the screenshots.
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
         await selfCheck(report)
+        report.write()
+        // The show waits for Home, so the texts land as banners.
+        let backgroundTask = await Backgrounding.shared.wait()
         await scheduleShow(report)
         report.write()
+        await Backgrounding.shared.end(backgroundTask)
+    }
+
+    /// Resolves once the app is in the background, holding a background
+    /// task so scheduling finishes before suspension.
+    @MainActor
+    private final class Backgrounding {
+        static let shared = Backgrounding()
+        private var waiters: [CheckedContinuation<UIBackgroundTaskIdentifier, Never>] = []
+
+        private init() {
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated { Backgrounding.shared.resume() }
+            }
+        }
+
+        func wait() async -> UIBackgroundTaskIdentifier {
+            if UIApplication.shared.applicationState == .background {
+                return UIApplication.shared.beginBackgroundTask(withName: "notification-demo")
+            }
+            return await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func end(_ task: UIBackgroundTaskIdentifier) {
+            guard task != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(task)
+        }
+
+        private func resume() {
+            let pending = waiters
+            waiters = []
+            for waiter in pending {
+                waiter.resume(returning: UIApplication.shared.beginBackgroundTask(withName: "notification-demo"))
+            }
+        }
     }
 
     // MARK: Self-check
 
     private static func selfCheck(_ report: Report) async {
         let sync = CoachSync.shared
-        let now = Date()
-        let day = CoachLocalDay.string(for: now, timeZone: .autoupdatingCurrent)
+        let now = clock()
+        let day = CoachLocalDay.string(for: now, timeZone: timeZone)
         let quietStart = nextOccurrence(of: settings.quietHoursStart, after: now)
             .addingTimeInterval(30 * 60)
 
@@ -193,7 +273,7 @@ enum CoachNotificationDemo {
         pending = await coachPending()
         report.check("re-sync: same \(before.count) requests, same content (no duplicates)",
                      hashes(pending) == before)
-        let relaunched = CoachSync(service: service, scheduler: .live, store: store, mirror: mirror, environment: environment)
+        let relaunched = CoachSync(service: service, scheduler: scheduler, store: store, mirror: mirror, environment: environment)
         await relaunched.sync(trigger: .foreground)
         pending = await coachPending()
         report.check("relaunch: a fresh CoachSync re-plans to the identical set", hashes(pending) == before)
@@ -201,7 +281,7 @@ enum CoachNotificationDemo {
         // 5. Server supersedes a text.
         var superseded = recap
         superseded.status = .superseded
-        superseded.updatedAt = serverClock()
+        superseded.updatedAt = clock()
         service.insert(superseded)
         await sync.sync(trigger: .foreground)
         pending = await coachPending()
@@ -224,7 +304,7 @@ enum CoachNotificationDemo {
             contentHash: nil, mapsQuery: nil, body: banter.notificationText,
             categoryIdentifier: CoachNotificationIdentifiers.textCategory
         )
-        await CoachNotificationScheduler.live.snooze(payload, messageId: banter.id, fireAt: Date() + 3600)
+        await scheduler.snooze(payload, messageId: banter.id, fireAt: clock() + 3600)
         pending = await coachPending()
         let snoozeFire = (pending[CoachNotificationIdentifiers.snooze(banter.id)]?.trigger as? UNCalendarNotificationTrigger)?
             .nextTriggerDate()
@@ -243,7 +323,7 @@ enum CoachNotificationDemo {
         // 9. Clean up for the show.
         for var message in [lunch, snack, banter, quiet, silent] {
             message.status = .superseded
-            message.updatedAt = serverClock()
+            message.updatedAt = clock()
             service.insert(message)
         }
         await sync.sync(trigger: .foreground)
@@ -254,8 +334,8 @@ enum CoachNotificationDemo {
     // MARK: Show
 
     private static func scheduleShow(_ report: Report) async {
-        let start = Date().addingTimeInterval(deliveryDelay)
-        let day = CoachLocalDay.string(for: start, timeZone: .autoupdatingCurrent)
+        let start = clock().addingTimeInterval(deliveryDelay)
+        let day = CoachLocalDay.string(for: start, timeZone: timeZone)
         let texts = [
             row("checkpoint", "62g of protein to go before 9. Greek yogurt and a shake closes it.", day, start),
             snackRow("7-Eleven is 4 min away. Chobani + Core Power = 67g protein. Walk over?", day, start + 10),
@@ -265,9 +345,12 @@ enum CoachNotificationDemo {
         for message in texts { service.insert(message) }
         await CoachSync.shared.sync(trigger: .foreground)
         let pending = await coachPending()
+        let unread = await CoachSync.shared.snapshot.unreadCount
+        report.line("show: unread \(unread) before the texts")
         for message in texts {
-            let scheduled = pending[CoachNotificationIdentifiers.message(message.id)] != nil
-            report.line("\(scheduled ? "show" : "FAIL show") +\(Int(message.deliverAt.timeIntervalSinceNow))s \(message.kind): \(message.notificationText)")
+            let request = pending[CoachNotificationIdentifiers.message(message.id)]
+            let badge = request?.content.badge.map { "badge \($0)" } ?? "-"
+            report.line("\(request != nil ? "show" : "FAIL show") +\(Int(message.deliverAt.timeIntervalSince(clock())))s \(message.id.uuidString.lowercased().suffix(8)) \(badge) \(message.kind): \(message.notificationText)")
         }
     }
 
@@ -289,8 +372,8 @@ enum CoachNotificationDemo {
             deliverAt: deliverAt,
             status: .scheduled,
             notify: notify,
-            createdAt: serverClock(),
-            updatedAt: serverClock()
+            createdAt: clock(),
+            updatedAt: clock()
         )
     }
 
@@ -307,16 +390,55 @@ enum CoachNotificationDemo {
             deliverAt: deliverAt,
             status: .scheduled,
             notify: true,
-            createdAt: serverClock(),
-            updatedAt: serverClock()
+            createdAt: clock(),
+            updatedAt: clock()
         )
     }
 
     private static func nextOccurrence(of time: CoachClockTime, after date: Date) -> Date {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
+        calendar.timeZone = timeZone
         let candidate = calendar.date(bySettingHour: time.hour, minute: time.minute, second: 0, of: date) ?? date
         return candidate > date ? candidate : candidate.addingTimeInterval(24 * 3600)
+    }
+
+    // MARK: Clock translation
+
+    /// The real notification center, with fire dates translated between the
+    /// preview clock and wall time. Everything else passes straight through.
+    struct PreviewClockNotificationCenter: CoachNotificationCenter {
+        private let base = LiveCoachNotificationCenter()
+        /// preview time − wall time
+        private var offset: TimeInterval { CoachNotificationDemo.clock().timeIntervalSince(Date()) }
+
+        func pendingCoachRequests() async -> [CoachPendingRequest] {
+            let offset = offset
+            return await base.pendingCoachRequests().map {
+                CoachPendingRequest(
+                    identifier: $0.identifier,
+                    contentHash: $0.contentHash,
+                    fireAt: $0.fireAt.map { $0 + offset }
+                )
+            }
+        }
+
+        func add(_ notification: PlannedCoachNotification) async {
+            let n = notification
+            await base.add(PlannedCoachNotification(
+                messageId: n.messageId, identifier: n.identifier,
+                fireAt: n.fireAt.map { $0 - offset },
+                title: n.title, body: n.body, badge: n.badge,
+                categoryIdentifier: n.categoryIdentifier, kind: n.kind, localDay: n.localDay,
+                mapsQuery: n.mapsQuery, interruption: n.interruption, relevance: n.relevance,
+                contentHash: n.contentHash
+            ))
+        }
+
+        func removePending(identifiers: [String]) async { await base.removePending(identifiers: identifiers) }
+        func removeDelivered(identifiers: [String]) async { await base.removeDelivered(identifiers: identifiers) }
+        func setBadgeCount(_ count: Int) async { await base.setBadgeCount(count) }
+        func authorizationStatus() async -> CoachSyncRequest.NotificationStatus { await base.authorizationStatus() }
+        func requestAuthorization() async -> Bool { await base.requestAuthorization() }
     }
 
     // MARK: Real-center inspection
@@ -342,7 +464,7 @@ enum CoachNotificationDemo {
         private var lines: [String] = []
 
         func line(_ text: String) {
-            print("[notification-demo] \(text)")
+            CoachNotificationDemo.log(text)
             lock.withLock { lines.append(text) }
         }
 
