@@ -242,19 +242,19 @@ final class VoiceTranscriber: ObservableObject {
         CaptureDiagnostics.record(.recorderStartAccepted, state: controlState)
 
         guard await environment.permissions.requestMicrophone() else {
-            guard isCurrent(token) else { return false }
+            guard stillStarting(token) else { return false }
             phase = .unavailable(.microphoneDenied)
             CaptureDiagnostics.record(.microphonePermissionDenied, state: controlState)
             return false
         }
-        guard isCurrent(token) else { return false }
+        guard stillStarting(token) else { return false }
         Perf.mark("mic.permission.ok")
         CaptureDiagnostics.record(.microphonePermissionGranted, state: controlState)
 
         let authorization = await environment.permissions.speechAuthorization(requestIfNeeded: true)
-        guard isCurrent(token) else { return false }
+        guard stillStarting(token) else { return false }
         let snapshot = await environment.assets.resolvedSnapshot()
-        guard isCurrent(token) else { return false }
+        guard stillStarting(token) else { return false }
 
         let engineID: SpeechEngineID
         switch SpeechEnginePolicy.select(snapshot, speechAuthorization: authorization) {
@@ -292,14 +292,14 @@ final class VoiceTranscriber: ObservableObject {
         } catch {
             capture.stop()
             primaryStart.cancel()
-            guard isCurrent(token) else { return false }
+            guard generation == token else { return false }
             tearDownInFlight()
             Perf.mark("mic.start.fail")
             phase = .failed(Self.message(for: error))
             CaptureDiagnostics.record(.recorderStartFailed, state: controlState)
             return false
         }
-        guard isCurrent(token) else {
+        guard stillStarting(token) else {
             // Aborted or canceled while the microphone warmed up.
             capture.stop()
             primaryStart.cancel()
@@ -482,8 +482,17 @@ final class VoiceTranscriber: ObservableObject {
 
     // MARK: Internals
 
-    private func isCurrent(_ token: Int) -> Bool {
-        generation == token && !Task.isCancelled
+    /// Whether the start identified by `token` should keep going. A newer
+    /// start, `cancel()` or `abortStarting()` means no; so does cancellation
+    /// of the calling task (a view's `.task` going away), which aborts the
+    /// warm-up instead of leaving the control stuck in "Starting…".
+    private func stillStarting(_ token: Int) -> Bool {
+        guard generation == token else { return false }
+        if Task.isCancelled {
+            abortStarting()
+            return false
+        }
+        return true
     }
 
     private func resetTakeState() {

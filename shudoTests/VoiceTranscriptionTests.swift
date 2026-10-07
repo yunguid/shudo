@@ -674,6 +674,24 @@ struct VoiceTranscriberTests {
         #expect(voice.phase == .idle)
     }
 
+    @Test func aCancelledStartingTaskAbortsInsteadOfStickingInStarting() async {
+        let harness = VoiceHarness()
+        harness.capture.blocksStart = true
+        let voice = harness.makeTranscriber()
+
+        let starting = Task { await voice.start() }
+        #expect(await eventually { harness.capture.isWaitingAtGate })
+        starting.cancel()
+        harness.capture.releaseStart()
+
+        #expect(await starting.value == false)
+        #expect(voice.phase == .idle)
+        #expect(harness.capture.stopCount >= 1)
+        harness.capture.blocksStart = false
+        #expect(await voice.start())
+        voice.cancel()
+    }
+
     @Test func eventsArrivingAfterCancelAreIgnored() async {
         let harness = VoiceHarness()
         let voice = harness.makeTranscriber()
