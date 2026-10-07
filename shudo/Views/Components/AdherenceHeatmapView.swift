@@ -16,7 +16,7 @@ struct AdherenceHeatmapView: View {
     let targetHistory: [DailyMacroTargetSnapshot]
     let timezone: String
     var phase: GoalPhase? = nil
-    var title = "Fuel · 12 weeks"
+    var title = "Fuel"
 
     @State private var selectedLocalDay: String?
     @State private var gridWidth: CGFloat = 0
@@ -42,14 +42,14 @@ struct AdherenceHeatmapView: View {
 
         VStack(alignment: .leading, spacing: 12) {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top) {
-                    title(cells: cells)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title).eyebrowStyle()
                     Spacer(minLength: 12)
-                    legend
+                    summary(cells: cells)
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    title(cells: cells)
-                    legend
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).eyebrowStyle()
+                    summary(cells: cells)
                 }
             }
 
@@ -85,7 +85,7 @@ struct AdherenceHeatmapView: View {
             dayReadout(selected, formatter: labelFormatter, todayLocalDay: cells.last?.localDay)
         }
         .padding(16)
-        .cardSurface()
+        .cardSurface(radius: Design.Radius.cardLarge)
         .sensoryFeedback(.selection, trigger: selectedLocalDay) { old, _ in old != nil }
         .onAppear {
             if selectedLocalDay == nil {
@@ -96,50 +96,30 @@ struct AdherenceHeatmapView: View {
 
     // MARK: - Header
 
-    private func title(cells: [AdherenceHeatmapCell]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).eyebrowStyle()
-            Text(summaryLine(cells: cells))
+    @ViewBuilder
+    private func summary(cells: [AdherenceHeatmapCell]) -> some View {
+        if let line = summaryLine(cells: cells) {
+            Text(line)
                 .font(Design.Typeface.meta)
                 .foregroundStyle(Design.Color.ember)
+                .monospacedDigit()
         }
     }
 
-    private func summaryLine(cells: [AdherenceHeatmapCell]) -> String {
+    /// The one judgment worth a line: how the last week went. The pads carry
+    /// the rest (brighter = closer to plan; dark = nothing logged).
+    private func summaryLine(cells: [AdherenceHeatmapCell]) -> String? {
         if let phase {
             let onPlan = cells.suffix(7).filter {
                 AdherencePolicy.level(
                     AdherencePolicy.day(total: $0.total, target: $0.effectiveTarget, phase: phase)) == 4
             }.count
-            let logged = cells.filter { ($0.total?.entryCount ?? 0) > 0 }.count
-            return "\(onPlan) of last 7 on plan · \(logged) logged days"
+            return "\(onPlan) of last 7 on plan"
         }
         let scores = cells.compactMap(\.adherence)
-        guard !scores.isEmpty else { return "Last 12 weeks" }
+        guard !scores.isEmpty else { return nil }
         let average = Int((scores.reduce(0, +) / Double(scores.count) * 100).rounded())
-        return "\(scores.count) logged days · avg \(average)%"
-    }
-
-    private var legend: some View {
-        HStack(spacing: 4) {
-            Text("Less").padding(.trailing, 2)
-            ForEach(0...4, id: \.self) { legendChip(level: $0) }
-            Text("More").padding(.leading, 2)
-        }
-        .font(Design.Typeface.meta)
-        .foregroundStyle(Design.Color.textTertiary)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            phase == nil
-                ? "Legend: dark pads have no logged meals; pads brighten from deep amber to honey as the day lands closer to its targets"
-                : "Legend: dark pads have no logged meals; honey pads hit both calories and protein"
-        )
-    }
-
-    private func legendChip(level: Int) -> some View {
-        RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-            .fill(Self.fillColor(level: level))
-            .frame(width: 10, height: 10)
+        return "avg \(average)%"
     }
 
     // MARK: - Calendar block
@@ -325,11 +305,12 @@ struct AdherenceHeatmapView: View {
     }
 
     private func readoutNumbers(total: DailyNutritionTotal, target: MacroTarget) -> String {
-        let kcal = "\(Int(total.caloriesKcal.rounded()))/\(Int(target.caloriesKcal.rounded())) kcal"
-        let protein = "P \(Int(total.proteinG.rounded()))/\(Int(target.proteinG.rounded()))"
+        func n(_ value: Double) -> String { Int(value.rounded()).formatted() }
+        let kcal = "\(n(total.caloriesKcal))/\(n(target.caloriesKcal)) kcal"
+        let protein = "P \(n(total.proteinG))/\(n(target.proteinG))"
         guard phase == nil else { return "\(kcal) · \(protein)" }
-        let carbs = "C \(Int(total.carbsG.rounded()))/\(Int(target.carbsG.rounded()))"
-        let fat = "F \(Int(total.fatG.rounded()))/\(Int(target.fatG.rounded()))"
+        let carbs = "C \(n(total.carbsG))/\(n(target.carbsG))"
+        let fat = "F \(n(total.fatG))/\(n(target.fatG))"
         return "\(kcal) · \(protein) · \(carbs) · \(fat)"
     }
 

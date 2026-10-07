@@ -29,12 +29,10 @@ struct ProteinProgressTests {
         #expect(rows.dropLast().last?.remainingGrams == 20)
     }
 
-    @Test func nameComesFromProfileAndGapUsesOwnTarget() {
+    @Test func remainingGramsNeverGoNegative() {
         let day = ProteinDay(localDay: "2026-09-20", date: Date(), loggedGrams: 103, targetGrams: 178)
-        #expect(ProteinProgress.todayMessage(day, displayName: " Luke ").contains("Luke, you’ve logged 103g protein today; 75g more"))
-        #expect(!ProteinProgress.todayMessage(day, displayName: nil).contains("Luke"))
+        #expect(day.remainingGrams == 75)
         let met = ProteinDay(localDay: day.localDay, date: day.date, loggedGrams: 180, targetGrams: 178)
         #expect(met.remainingGrams == 0)
-        #expect(ProteinProgress.todayMessage(met, displayName: nil).contains("reaching your 178g target"))
     }
 }

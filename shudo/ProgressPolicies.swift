@@ -103,9 +103,6 @@ struct WeightTrendSummary: Equatable, Sendable {
     let trendKG: Double
     /// kg/week from a least-squares fit; nil until there is enough spread.
     let weeklyRateKG: Double?
-    /// Mean of the last 7 days' weigh-ins; nil with fewer than 3 of them.
-    let sevenDayAverageKG: Double?
-    let weighInsLast7: Int
     let sampleCount: Int
 }
 
@@ -116,7 +113,6 @@ enum WeightTrendPolicy {
     static let minRateSpanDays = 10
     /// One weigh-in can move the trend by at most this much input (kg).
     static let outlierKG = 2.5
-    static let minAverageSamples = 3
     /// The chart needs this many real weigh-ins before it draws a trend.
     static let minChartSamples = 4
 
@@ -174,20 +170,11 @@ enum WeightTrendPolicy {
     static func summary(_ samples: [WeightSample], today: String) -> WeightTrendSummary? {
         let points = smoothed(samples)
         guard let latest = points.last else { return nil }
-        let lastWeek = samples.filter {
-            guard let offset = LocalDayMath.days(from: $0.localDay, to: today) else { return false }
-            return offset >= 0 && offset < 7
-        }
-        let average =
-            lastWeek.count >= minAverageSamples
-            ? lastWeek.map(\.kilograms).reduce(0, +) / Double(lastWeek.count) : nil
         return WeightTrendSummary(
             latestDay: latest.localDay,
             latestKG: latest.raw,
             trendKG: latest.trend,
             weeklyRateKG: weeklyRate(samples, endingOn: today),
-            sevenDayAverageKG: average,
-            weighInsLast7: lastWeek.count,
             sampleCount: points.count
         )
     }
@@ -368,46 +355,6 @@ enum TrajectoryPolicy {
         }
     }
 
-    static func sentence(_ trajectory: Trajectory, goal: BodyGoal?, units: String) -> String {
-        let unit = BodyUnits.label(units)
-        func weight(_ kg: Double) -> String { BodyUnits.format(BodyUnits.display(kg, units: units)) }
-        func rate(_ kg: Double) -> String { "\(BodyUnits.signed(BodyUnits.display(kg, units: units))) \(unit)/wk" }
-        let target = goal?.targetWeightKG.map { "\(weight($0)) \(unit)" } ?? "goal"
-
-        switch trajectory.status {
-        case .noGoal:
-            return "Set a goal weight and I'll map the road."
-        case .goalReached:
-            return "You're at \(target). Goal hit."
-        case .insufficientData:
-            let remaining = trajectory.remainingKG.map { "\(weight(abs($0))) \(unit) to \(target)." } ?? ""
-            let tail = trajectory.currentIsSelfReported
-                ? "Weigh-ins start when your scale lands."
-                : "A few more weigh-ins and the pace shows up."
-            return [remaining, tail].filter { !$0.isEmpty }.joined(separator: " ")
-        case .wrongDirection:
-            return "Moving the wrong way at \(rate(trajectory.rateKG ?? 0)). Eat more."
-        case .stalled:
-            return "Flat at \(rate(trajectory.rateKG ?? 0)). Time to add food."
-        case .tooFast:
-            return "\(rate(trajectory.rateKG ?? 0)) is quicker than a lean bulk wants. Watch the waist."
-        case .drifting:
-            return "Drifting at \(rate(trajectory.rateKG ?? 0)) on a maintenance goal."
-        case .ahead, .onPace, .behind:
-            guard let projected = trajectory.projectedDay, let date = LocalDayMath.date(projected) else {
-                return "At \(rate(trajectory.rateKG ?? 0)) the goal is more than two years out."
-            }
-            return "At \(rate(trajectory.rateKG ?? 0)) you hit \(target) around \(projectionFormatter.string(from: date))."
-        }
-    }
-
-    private static let projectionFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "MMM d, yyyy"
-        return formatter
-    }()
 }
 
 // MARK: - Streak

@@ -10,7 +10,8 @@
     /// `-shudoBodyPreview <options>` (comma-separated): `noscale` (no
     /// weigh-ins yet), `empty` (today not checked in), `revealed` (veil off),
     /// one action: `compare`, `camera`, `review`, `weight`, `viewer`, and a
-    /// section to scroll to: `meter`, `trend`, `log`, `fuel`, `recaps`.
+    /// section to scroll to: `log`, `fuel`, `recaps`. `recap` opens the
+    /// latest weekly recap sheet.
     /// `-shudoBodyCameraFixture <path>` makes the camera shoot that image.
     enum BodyFixtures {
         static let timezone = "America/New_York"
@@ -151,8 +152,33 @@
                     weekStart: start, weekEnd: end, headline: item.0, narrative: item.1,
                     repeatedFoods: [WeeklyRepeatedFood(name: "Chicken rice bowl", count: 4)],
                     patterns: ["Every day with a 40 g breakfast finished on plan"],
-                    suggestions: ["Add a 600 kcal shake on Saturdays before noon"])
+                    suggestions: ["Add a 600 kcal shake on Saturdays before noon"],
+                    micronutrientReport: index == 0 ? micronutrients : nil)
             }
+        }
+
+        static let micronutrients = WeeklyMicronutrientReport(
+            daysLogged: 7,
+            mealsLogged: 26,
+            nutrients: [
+                micronutrient("vitamin_d", "Vitamin D", "vitamin", "mcg", 6, 15, 40, "low"),
+                micronutrient("magnesium", "Magnesium", "mineral", "mg", 260, 420, 62, "low"),
+                micronutrient("sodium", "Sodium", "mineral", "mg", 3_400, 2_300, 148, "high"),
+                micronutrient("iron", "Iron", "mineral", "mg", 16, 8, 200, "on_track"),
+            ],
+            highlights: [],
+            suggestions: [],
+            caveat: "Estimates from logged meals."
+        )
+
+        private static func micronutrient(
+            _ id: String, _ name: String, _ category: String, _ unit: String,
+            _ amount: Double, _ reference: Double, _ percent: Int, _ status: String
+        ) -> WeeklyMicronutrient {
+            WeeklyMicronutrient(
+                id: id, name: name, category: category, unit: unit, estimatedDailyAmount: amount,
+                referenceDailyAmount: reference, percentReference: percent, status: status,
+                confidence: "medium", evidence: [])
         }
     }
 

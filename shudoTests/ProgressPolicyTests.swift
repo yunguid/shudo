@@ -31,7 +31,6 @@ struct ProgressPolicyTests {
         let summary = try #require(WeightTrendPolicy.summary(samples, today: "2026-10-06"))
         #expect(summary.trendKG == 80)
         #expect(summary.weeklyRateKG == nil)
-        #expect(summary.sevenDayAverageKG == nil)
     }
 
     @Test func flatFortnightHasZeroRate() throws {
@@ -84,22 +83,6 @@ struct ProgressPolicyTests {
         #expect(WeightTrendPolicy.weeklyRate(old, endingOn: "2026-10-06") == nil)
     }
 
-    @Test func sevenDayAverageNeedsThreeWeighInsThisWeek() throws {
-        let samples = [
-            WeightSample(localDay: "2026-09-20", kilograms: 74),
-            WeightSample(localDay: "2026-10-01", kilograms: 74.2),
-            WeightSample(localDay: "2026-10-04", kilograms: 74.6),
-        ]
-        let two = try #require(WeightTrendPolicy.summary(samples, today: "2026-10-06"))
-        #expect(two.weighInsLast7 == 2)
-        #expect(two.sevenDayAverageKG == nil)
-
-        let three = try #require(
-            WeightTrendPolicy.summary(samples + [WeightSample(localDay: "2026-10-06", kilograms: 74.4)], today: "2026-10-06"))
-        #expect(three.weighInsLast7 == 3)
-        #expect(abs((three.sevenDayAverageKG ?? 0) - 74.4) < 1e-9)
-    }
-
     @Test func samplesSkipPhotoOnlyCheckIns() {
         let now = Date()
         let checkIns = [
@@ -124,8 +107,7 @@ struct ProgressPolicyTests {
     private func trend(pounds: Double, ratePounds: Double?) -> WeightTrendSummary {
         WeightTrendSummary(
             latestDay: "2026-10-06", latestKG: Self.lb(pounds), trendKG: Self.lb(pounds),
-            weeklyRateKG: ratePounds.map(Self.lb), sevenDayAverageKG: nil, weighInsLast7: 3,
-            sampleCount: 8)
+            weeklyRateKG: ratePounds.map(Self.lb), sampleCount: 8)
     }
 
     private func evaluate(_ goal: BodyGoal, pounds: Double = 162.5, rate: Double?) -> Trajectory {
@@ -138,9 +120,6 @@ struct ProgressPolicyTests {
         let result = evaluate(bulk(), rate: 0.5)
         #expect(result.status == .onPace)
         #expect(result.projectedDay == "2027-03-30")
-        #expect(
-            TrajectoryPolicy.sentence(result, goal: bulk(), units: "imperial")
-                == "At +0.5 lb/wk you hit 175 lb around Mar 30, 2027.")
     }
 
     @Test func deadlineReportsRequiredRateAndLateness() throws {
@@ -182,9 +161,6 @@ struct ProgressPolicyTests {
         #expect(result.currentIsSelfReported)
         let remaining = try #require(result.remainingKG)
         #expect(abs(BodyUnits.pounds(remaining) - 12.5) < 1e-9)
-        #expect(
-            TrajectoryPolicy.sentence(result, goal: bulk(), units: "imperial")
-                == "12.5 lb to 175 lb. Weigh-ins start when your scale lands.")
     }
 
     @Test func projectionsBeyondTwoYearsAreDropped() {

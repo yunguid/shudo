@@ -34,18 +34,4 @@ enum ProteinProgress {
             return ProteinDay(localDay: localDay, date: date, loggedGrams: protein, targetGrams: goal)
         }
     }
-
-    static func todayMessage(_ day: ProteinDay, displayName: String?) -> String {
-        let name = displayName?.split(whereSeparator: { $0.isWhitespace }).first.map(String.init)
-        let greeting = name.map { "\($0), " } ?? ""
-        guard let logged = day.loggedGrams else {
-            return "\(greeting)no protein is logged today yet. Your target is \(Int(day.targetGrams.rounded()))g."
-        }
-        let loggedGrams = Int(logged.rounded())
-        let targetGrams = Int(day.targetGrams.rounded())
-        if logged >= day.targetGrams {
-            return "\(greeting)you’ve logged \(loggedGrams)g protein today, reaching your \(targetGrams)g target."
-        }
-        return "\(greeting)you’ve logged \(loggedGrams)g protein today; \(max(0, targetGrams - loggedGrams))g more would reach your \(targetGrams)g target."
-    }
 }

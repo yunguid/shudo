@@ -293,23 +293,21 @@ struct BodyCheckInTests {
 
     @Test func flowDraftsSendOnlyWhatWasProvided() {
         let now = Date()
-        let morning = WeightCheckIn(
-            id: UUID(), localDay: "2026-10-06", weightKG: 74, progressPhotoPath: nil, note: "Slept 6h",
-            createdAt: now, updatedAt: now)
 
         // Photo with a blank weight: no weight, photo columns present.
         let photoOnly = BodyCheckInFlow.draft(
-            localDay: "2026-10-06", weightKG: nil, includesPhoto: true, pose: .side, capturedAt: now,
-            note: "Slept 6h", existing: morning)
+            localDay: "2026-10-06", weightKG: nil, includesPhoto: true, pose: .side, capturedAt: now)
         #expect(photoOnly.weightKG == nil)
         #expect(photoOnly.pose == .side)
         #expect(photoOnly.capturedAt == now)
-        #expect(photoOnly.note == nil)  // unchanged note isn't re-sent
+        #expect(photoOnly.note == nil)  // an earlier note is never touched
+        let photoPayload = SupabaseService.bodyCheckInPayload(
+            userId: Self.userId, draft: photoOnly, photoPath: "\(Self.userId)/2026-10-06/progress-x.jpg")
+        #expect(photoPayload["note"] == nil && photoPayload["weight_kg"] == nil)
 
         // "Add weight" later: weight only, no photo columns.
         let weightOnly = BodyCheckInFlow.draft(
-            localDay: "2026-10-06", weightKG: 74.2, includesPhoto: false, pose: .frontRelaxed, capturedAt: now,
-            note: "", existing: morning)
+            localDay: "2026-10-06", weightKG: 74.2, includesPhoto: false, pose: .frontRelaxed, capturedAt: now)
         #expect(weightOnly.weightKG == 74.2)
         #expect(weightOnly.pose == nil && weightOnly.capturedAt == nil && weightOnly.photoJPEG == nil)
         let payload = SupabaseService.bodyCheckInPayload(userId: Self.userId, draft: weightOnly, photoPath: nil)
