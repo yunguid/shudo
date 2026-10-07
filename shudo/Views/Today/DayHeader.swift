@@ -129,15 +129,17 @@ struct DayHeader: View {
         }
         .matchedGeometryEffect(id: "remaining", in: namespace)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            numbers.isOver
-                ? "\(numbers.overKcal) kilocalories over \(numbers.targetKcal)"
-                : "\(numbers.remainingKcal) kilocalories \(isPast ? "short" : "left") of \(numbers.targetKcal)"
-        )
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(expanded ? "Collapses the day" : "Shows the week and your meals")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { toggle() }
         .accessibilityIdentifier("today.header.remaining")
+    }
+
+    private var accessibilityLabel: String {
+        numbers.isOver
+            ? "\(numbers.overKcal) kilocalories over \(numbers.targetKcal)"
+            : "\(numbers.remainingKcal) kilocalories \(isPast ? "short" : "left") of \(numbers.targetKcal)"
     }
 
     @ViewBuilder
