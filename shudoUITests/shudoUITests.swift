@@ -22,7 +22,7 @@ final class shudoUITests: XCTestCase {
 
     @MainActor
     func testPhotoFirstMealStartsVoiceAndPreservesTheMixedDraft() throws {
-        let app = launchPreview()
+        let app = launchPreview(scriptedSpeech: "with two scrambled eggs")
 
         app.buttons["Log meal"].tap()
         XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 3))
@@ -55,30 +55,43 @@ final class shudoUITests: XCTestCase {
         XCTAssertEqual(note.value as? String, "Synthetic regression meal")
 
         let recordingControl = app.buttons["Voice recording control"]
-        let startRecording = recordingControl
-        XCTAssertTrue(startRecording.isEnabled)
-        startRecording.tap()
-        allowMicrophoneIfRequested(in: app)
-
-        let stopRecording = recordingControl
-        XCTAssertTrue(waitForRecording(stopRecording, timeout: 15))
+        XCTAssertTrue(recordingControl.isEnabled)
+        recordingControl.tap()
+        XCTAssertTrue(waitForRecording(recordingControl, timeout: 15))
         XCTAssertTrue(firstPhoto.exists)
         XCTAssertTrue(secondPhoto.exists)
         XCTAssertEqual(note.value as? String, "Synthetic regression meal")
 
-        stopRecording.tap()
-        let discardRecording = app.buttons["Discard voice note"]
-        XCTAssertTrue(discardRecording.waitForExistence(timeout: 3))
+        // Stopping appends the dictated take to the editable note.
+        recordingControl.tap()
+        let undoDictation = app.buttons["Undo last dictation"]
+        XCTAssertTrue(undoDictation.waitForExistence(timeout: 5))
         XCTAssertTrue(firstPhoto.exists)
-        XCTAssertEqual(note.value as? String, "Synthetic regression meal")
+        XCTAssertTrue(waitForValue(
+            of: note,
+            toEqual: "Synthetic regression meal with two scrambled eggs",
+            timeout: 3
+        ))
 
         recordingControl.tap()
-        XCTAssertTrue(waitForRecording(stopRecording, timeout: 15))
-        stopRecording.tap()
-        XCTAssertTrue(discardRecording.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForRecording(recordingControl, timeout: 15))
+        recordingControl.tap()
+        XCTAssertTrue(waitForValue(
+            of: note,
+            toEqual: "Synthetic regression meal with two scrambled eggs with two scrambled eggs",
+            timeout: 5
+        ))
         XCTAssertTrue(firstPhoto.exists)
         XCTAssertTrue(secondPhoto.exists)
-        XCTAssertEqual(note.value as? String, "Synthetic regression meal")
+
+        // Undo removes only the last take.
+        XCTAssertTrue(undoDictation.waitForExistence(timeout: 3))
+        undoDictation.tap()
+        XCTAssertTrue(waitForValue(
+            of: note,
+            toEqual: "Synthetic regression meal with two scrambled eggs",
+            timeout: 3
+        ))
     }
 
     /// A single tall portrait photo used to leave the mic button dead: the
@@ -92,6 +105,7 @@ final class shudoUITests: XCTestCase {
         app.launchArguments = [
             "-shudoPolishPreview", "main",
             "-shudoPolishPreviewTallComposerPhoto",
+            "-shudoScriptedSpeech", "chicken and rice",
         ]
         app.launch()
         XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 5))
@@ -103,32 +117,41 @@ final class shudoUITests: XCTestCase {
         let recordingControl = app.buttons["Voice recording control"]
         XCTAssertTrue(recordingControl.waitForExistence(timeout: 3))
         recordingControl.tap()
-        allowMicrophoneIfRequested(in: app)
         XCTAssertTrue(
             waitForRecording(recordingControl, timeout: 15),
             "Mic tap was swallowed by the photo's unclipped fill overflow"
         )
         recordingControl.tap()
-        XCTAssertTrue(app.buttons["Discard voice note"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Undo last dictation"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Remove photo 1"].exists)
     }
 
     @MainActor
     func testStandaloneQuickVoiceStillAutoStarts() throws {
-        let app = launchPreview()
+        let app = launchPreview(scriptedSpeech: "overnight oats with whey")
 
         app.buttons["Quick voice meal"].tap()
-        allowMicrophoneIfRequested(in: app)
 
         let activeRecording = app.buttons["Voice recording control"]
         XCTAssertTrue(waitForRecording(activeRecording, timeout: 15))
         activeRecording.tap()
-        XCTAssertTrue(app.buttons["Discard voice note"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Undo last dictation"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue(
+            of: app.textViews.firstMatch,
+            toEqual: "overnight oats with whey",
+            timeout: 3
+        ))
     }
 
     @MainActor
     func testDeniedMicrophoneExplainsTheFailureAndKeepsTheDraft() throws {
-        let app = launchPreview()
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-shudoPolishPreview", "main",
+            "-shudoScriptedSpeechMode", "denied",
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 5))
         app.buttons["Log meal"].tap()
 
         let note = app.textViews.firstMatch
@@ -138,16 +161,125 @@ final class shudoUITests: XCTestCase {
 
         let recordingControl = app.buttons["Voice recording control"]
         recordingControl.tap()
-        if waitForRecording(recordingControl, timeout: 2) {
-            recordingControl.tap()
-            throw XCTSkip("Simulator microphone permission is granted")
-        }
         let permissionError = app.staticTexts[
             "Microphone access is required to record a meal."
         ]
         XCTAssertTrue(permissionError.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Open Settings"].exists)
         XCTAssertTrue(recordingControl.isEnabled)
+        XCTAssertFalse(waitForRecording(recordingControl, timeout: 1))
         XCTAssertEqual(note.value as? String, "Permission recovery draft")
+    }
+
+    /// The headline flow: words show up while speaking, the take lands in
+    /// the editable note, an edit sticks, and Log sends text — the timeline
+    /// card is titled with the real words immediately.
+    @MainActor
+    func testDictationStreamsIntoEditableNoteAndSendsText() throws {
+        let app = launchPreview(scriptedSpeech: "Greek yogurt with honey and granola")
+
+        app.buttons["Log meal"].tap()
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 3))
+
+        let recordingControl = app.buttons["Voice recording control"]
+        recordingControl.tap()
+        XCTAssertTrue(waitForRecording(recordingControl, timeout: 15))
+
+        let live = app.descendants(matching: .any)["Live transcript"]
+        XCTAssertTrue(live.waitForExistence(timeout: 5))
+        let streaming = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS 'Greek yogurt'"),
+            object: live
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [streaming], timeout: 5), .completed)
+
+        recordingControl.tap()
+        let note = app.textViews.firstMatch
+        XCTAssertTrue(waitForValue(
+            of: note,
+            toEqual: "Greek yogurt with honey and granola",
+            timeout: 5
+        ))
+        XCTAssertFalse(live.exists)
+
+        // The dictated words are ordinary editable text. (Where the caret
+        // lands is UIKit's call; the edit sticking is what matters.)
+        note.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.9)).tap()
+        note.typeText(" and berries")
+        let edited = try XCTUnwrap(note.value as? String)
+        XCTAssertTrue(edited.contains("Greek yogurt with honey and granola"))
+        XCTAssertTrue(edited.contains("and berries"))
+
+        let submit = app.buttons["Submit meal"]
+        XCTAssertTrue(submit.isEnabled)
+        submit.tap()
+
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForNonExistence(timeout: 5))
+        let card = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", edited.trimmingCharacters(in: .whitespaces))
+        ).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Voice note"].exists)
+    }
+
+    /// A take still being heard can be sent straight from Log meal.
+    @MainActor
+    func testLogMealWhileListeningSendsTheLiveWords() throws {
+        let app = launchPreview(scriptedSpeech: "two bananas")
+        app.buttons["Log meal"].tap()
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 3))
+
+        let recordingControl = app.buttons["Voice recording control"]
+        recordingControl.tap()
+        XCTAssertTrue(waitForRecording(recordingControl, timeout: 15))
+
+        let submit = app.buttons["Submit meal"]
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"),
+            object: submit
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        submit.tap()
+
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForNonExistence(timeout: 5))
+        let card = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "two bananas")
+        ).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+    }
+
+    /// One smoke test against the real recognizer stack. The Simulator can't
+    /// run SpeechTranscriber, so either live listening or an honest
+    /// "unavailable"/permission message is acceptable — never a dead button.
+    @MainActor
+    func testRealMicrophoneSmokeListensOrExplainsWhyNot() throws {
+        let app = launchPreview()
+        app.buttons["Log meal"].tap()
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 3))
+
+        let recordingControl = app.buttons["Voice recording control"]
+        recordingControl.tap()
+        allowSystemPromptsIfRequested(in: app)
+
+        let explained = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS 'isn’t available on this device' OR label CONTAINS 'Microphone access' OR label CONTAINS 'Speech recognition is off' OR label CONTAINS 'microphone couldn’t start' OR label CONTAINS 'microphone is taking too long' OR label CONTAINS 'Voice couldn’t start' OR label CONTAINS 'Didn’t catch that'"
+        )).firstMatch
+        let deadline = Date().addingTimeInterval(20)
+        var listened = false
+        while Date() < deadline {
+            if recordingControl.label.hasPrefix("Stop recording") {
+                listened = true
+                break
+            }
+            if explained.exists { break }
+            allowSystemPromptsIfRequested(in: app)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTAssertTrue(listened || explained.exists, "Mic tap produced neither listening nor an explanation")
+        if listened {
+            recordingControl.tap()
+        }
+        XCTAssertTrue(recordingControl.waitForExistence(timeout: 5))
     }
 
     /// The combined notifications toggle must respond to a tap, request
@@ -198,12 +330,26 @@ final class shudoUITests: XCTestCase {
     }
 
     @MainActor
-    private func launchPreview() -> XCUIApplication {
+    private func launchPreview(scriptedSpeech: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-shudoPolishPreview", "main"]
+        if let scriptedSpeech {
+            app.launchArguments += ["-shudoScriptedSpeech", scriptedSpeech]
+        }
         app.launch()
         XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 5))
         return app
+    }
+
+    @MainActor
+    private func waitForValue(
+        of element: XCUIElement,
+        toEqual expected: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let predicate = NSPredicate(format: "value == %@", expected)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     @MainActor
@@ -223,14 +369,24 @@ final class shudoUITests: XCTestCase {
         done.tap()
     }
 
+    /// Microphone, then speech recognition: up to two system prompts.
     @MainActor
-    private func allowMicrophoneIfRequested(in app: XCUIApplication) {
+    private func allowSystemPromptsIfRequested(in app: XCUIApplication) {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let alert = springboard.alerts.firstMatch
-        guard alert.waitForExistence(timeout: 1) else { return }
-        let allow = alert.buttons["Allow"]
-        if allow.exists { allow.tap() }
-        app.activate()
+        for _ in 0..<2 {
+            let alert = springboard.alerts.firstMatch
+            guard alert.waitForExistence(timeout: 1) else { return }
+            let allow = alert.buttons["Allow"]
+            let ok = alert.buttons["OK"]
+            if allow.exists {
+                allow.tap()
+            } else if ok.exists {
+                ok.tap()
+            } else {
+                return
+            }
+            app.activate()
+        }
     }
 
     @MainActor

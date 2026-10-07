@@ -393,7 +393,13 @@ final class VoiceTranscriber: ObservableObject {
             } catch {
                 guard let self, self.generation == token, self.phase == .listening else { return }
                 CaptureDiagnostics.record(.speechEngineFailed, state: self.controlState)
-                self.beginFinishing(reason: .engineEnded)
+                if self.transcript.isEmpty {
+                    // Nothing heard before the recognizer broke: say it
+                    // failed rather than blaming the speaker.
+                    self.failAfterEngineError(authorization: authorization)
+                } else {
+                    self.beginFinishing(reason: .engineEnded)
+                }
                 return
             }
             // The recognizer ended on its own while still listening (for

@@ -378,6 +378,10 @@ private final class FakeSpeechEngine: SpeechEngine, @unchecked Sendable {
         _ = lock.withLock { continuation }?.yield(event)
     }
 
+    func fail(_ error: Error) {
+        lock.withLock { continuation }?.finish(throwing: error)
+    }
+
     func append(_ buffer: AVAudioPCMBuffer) {}
 
     func finish() async throws {
@@ -762,6 +766,30 @@ struct VoiceTranscriberTests {
         harness.transcriberEngine.emit(.volatile("172 pounds"))
         #expect(await eventually { voice.phase == .ready })
         #expect(voice.collectReadyTake()?.text == "172 pounds")
+    }
+
+    @Test func aRecognizerErrorBeforeAnyWordsIsAFailureNotSilence() async {
+        struct RecognizerBroke: Error {}
+        let harness = VoiceHarness()
+        let voice = harness.makeTranscriber()
+        #expect(await voice.start())
+        harness.transcriberEngine.fail(RecognizerBroke())
+        #expect(await eventually { voice.phase == .failed(VoiceCopy.recognizerFailed) })
+        #expect(harness.capture.stopCount >= 1)
+        #expect(voice.collectReadyTake() == nil)
+    }
+
+    @Test func aRecognizerErrorAfterWordsKeepsThem() async {
+        struct RecognizerBroke: Error {}
+        let harness = VoiceHarness()
+        let voice = harness.makeTranscriber()
+        #expect(await voice.start())
+        harness.transcriberEngine.emit(.volatile("protein shake"))
+        #expect(await eventually { !voice.transcript.isEmpty })
+        harness.transcriberEngine.fail(RecognizerBroke())
+        #expect(await eventually { voice.phase == .ready })
+        #expect(voice.notice == .keptWhatWasHeard)
+        #expect(voice.collectReadyTake()?.text == "protein shake")
     }
 
     @Test func aSecondStartWhileBusyIsRejected() async {

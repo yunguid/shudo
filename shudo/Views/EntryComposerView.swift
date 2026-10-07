@@ -394,6 +394,7 @@ struct EntryComposerView: View {
         }
         .buttonStyle(.plain)
         .disabled(!canSubmit)
+        .accessibilityIdentifier("Submit meal")
         .padding(.horizontal, 20)
         .padding(.top, 10)
         .padding(.bottom, 8)
