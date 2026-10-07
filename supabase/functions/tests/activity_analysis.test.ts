@@ -97,7 +97,8 @@ Deno.test("dictation skips cardio and text it does not understand", () => {
 
 function strengthOutput(overrides: Record<string, unknown> = {}) {
   return {
-    analysis_preview: "Upper session: bench and incline dumbbell press, about 55 minutes.",
+    analysis_preview:
+      "Upper session: bench and incline dumbbell press, about 55 minutes.",
     title: "Upper: bench, incline",
     kind: "strength",
     intensity: "hard",
@@ -114,16 +115,44 @@ function strengthOutput(overrides: Record<string, unknown> = {}) {
         display_name: "Bench press",
         exercise_key: "barbell_bench_press",
         set_groups: [
-          { count: 1, reps: 10, weight: 95, unit: null, is_warmup: true, rpe: null },
-          { count: 2, reps: 8, weight: 185, unit: null, is_warmup: false, rpe: null },
-          { count: 1, reps: 7, weight: 185, unit: null, is_warmup: false, rpe: 9 },
+          {
+            count: 1,
+            reps: 10,
+            weight: 95,
+            unit: null,
+            is_warmup: true,
+            rpe: null,
+          },
+          {
+            count: 2,
+            reps: 8,
+            weight: 185,
+            unit: null,
+            is_warmup: false,
+            rpe: null,
+          },
+          {
+            count: 1,
+            reps: 7,
+            weight: 185,
+            unit: null,
+            is_warmup: false,
+            rpe: 9,
+          },
         ],
       },
       {
         display_name: "Incline dumbbell press",
         exercise_key: "incline_dumbbell_press",
         set_groups: [
-          { count: 3, reps: 10, weight: 60, unit: "lb", is_warmup: false, rpe: null },
+          {
+            count: 3,
+            reps: 10,
+            weight: 60,
+            unit: "lb",
+            is_warmup: false,
+            rpe: null,
+          },
         ],
       },
     ],
@@ -159,7 +188,14 @@ Deno.test("parsing rejects personified copy and clamps implausible numbers", () 
       exercises: [{
         display_name: "Zercher carry",
         exercise_key: "custom",
-        set_groups: [{ count: 99, reps: 5, weight: 9999, unit: "lb", is_warmup: false, rpe: null }],
+        set_groups: [{
+          count: 99,
+          reps: 5,
+          weight: 9999,
+          unit: "lb",
+          is_warmup: false,
+          rpe: null,
+        }],
       }],
     }),
     { unit: "kg" },
@@ -178,7 +214,10 @@ Deno.test("parsing rejects personified copy and clamps implausible numbers", () 
 // Personal records
 // ---------------------------------------------------------------------------
 
-function bench(sets: Array<[number, number]>, unit: "lb" | "kg" = "lb"): LoggedExercise {
+function bench(
+  sets: Array<[number, number]>,
+  unit: "lb" | "kg" = "lb",
+): LoggedExercise {
   return {
     name: "Barbell bench press",
     key: "barbell_bench_press",
@@ -319,7 +358,8 @@ function activityRow(overrides: Row = {}): Row {
     input_text: "bench 185 for 3 sets of 8, last set 7; incline 60s 3x10",
     transcript: null,
     image_path: null,
-    details: { speech_engine: "apple.speech_transcriber" },
+    speech_engine: "apple.speech_transcriber",
+    details: {},
     ...overrides,
   };
 }
@@ -427,7 +467,10 @@ Deno.test("analysis saves parsed sets, MET burn, PRs, then asks the coach to rea
   assertEquals(details.burn_method, "met");
   assertEquals(details.weight_source, "profile");
   assertEquals(details.weight_kg_used, 73.7);
-  assertEquals(details.speech_engine, "apple.speech_transcriber");
+  assertEquals(env.ledger.usage.length, 1);
+  assertEquals(env.ledger.usage[0].p_operation, "activity_analysis");
+  assertEquals(env.ledger.usage[0].p_run_id, env.ledger.runId);
+  assertEquals(env.ledger.usage[0].p_user_id, USER);
   const exercises = details.exercises as LoggedExercise[];
   assertEquals(exercises[0].sets.length, 4);
   const prs = details.prs as Array<Record<string, unknown>>;
@@ -454,7 +497,7 @@ Deno.test("streamed analysis_preview is published into details while processing"
   const previewWrite = env.mutations.find((mutation) =>
     mutation.operation === "update" &&
     (mutation.values?.details as Record<string, unknown> | undefined)
-        ?.analysis_preview
+      ?.analysis_preview
   );
   assert(previewWrite, "a preview update was written");
 });
@@ -480,7 +523,9 @@ Deno.test("photo workouts send the signed coach-media image to the model", async
     ], requests),
     dispatch: () => Promise.resolve(),
   });
-  const content = requests[0].messages?.[0].content as Array<Record<string, unknown>>;
+  const content = requests[0].messages?.[0].content as Array<
+    Record<string, unknown>
+  >;
   assertEquals(content[0].type, "image");
   assertEquals(
     (content[0].source as Record<string, unknown>).url,
@@ -488,7 +533,10 @@ Deno.test("photo workouts send the signed coach-media image to the model", async
   );
   const analysis = env.saved[0].p_analysis as Record<string, unknown>;
   assertEquals(analysis.active_kcal, 310);
-  assertEquals((analysis.details as Record<string, unknown>).burn_method, "device");
+  assertEquals(
+    (analysis.details as Record<string, unknown>).burn_method,
+    "device",
+  );
 });
 
 Deno.test("the deterministic parser fills in when the model returns no sets", async () => {
@@ -528,7 +576,9 @@ Deno.test("an exhausted run marks the workout failed", async () => {
   await analyzeStoredActivity(env.admin as never, USER, ACTIVITY, {
     dispatch: () => Promise.resolve(),
   });
-  const row = env.tables.activities.find((activity) => activity.id === ACTIVITY)!;
+  const row = env.tables.activities.find((activity) =>
+    activity.id === ACTIVITY
+  )!;
   assertEquals(row.status, "failed");
   assertEquals(row.error_message, ACTIVITY_FAILED_MESSAGE);
 });
@@ -544,11 +594,41 @@ Deno.test("a refusal fails the run and the workout with a friendly message", asy
     },
   });
   assertEquals(env.ledger.failed.length, 1);
+  // Refusals repeat on retry, so the run is terminal.
+  assertEquals(env.ledger.failed[0].p_retryable, false);
   assertEquals(env.saved.length, 0);
   assertEquals(dispatched.length, 0);
-  const row = env.tables.activities.find((activity) => activity.id === ACTIVITY)!;
+  const row = env.tables.activities.find((activity) =>
+    activity.id === ACTIVITY
+  )!;
   assertEquals(row.status, "failed");
   assertEquals(row.error_message, ACTIVITY_FAILED_MESSAGE);
+});
+
+Deno.test("a transient model error stays retryable; a budget stop says so", async () => {
+  const env = setup();
+  await analyzeStoredActivity(env.admin as never, USER, ACTIVITY, {
+    client: fakeClaude([503]),
+    dispatch: () => Promise.resolve(),
+  });
+  assertEquals(env.ledger.failed[0].p_retryable, true);
+  const row = env.tables.activities.find((activity) =>
+    activity.id === ACTIVITY
+  )!;
+  assertEquals(row.status, "failed");
+
+  const budget = setup({ claimStatus: "quota" });
+  const requests: RecordedRequest[] = [];
+  await analyzeStoredActivity(budget.admin as never, USER, ACTIVITY, {
+    client: fakeClaude([jsonTextEvents(strengthOutput())], requests),
+    dispatch: () => Promise.resolve(),
+  });
+  assertEquals(requests.length, 0);
+  const blocked = budget.tables.activities.find((activity) =>
+    activity.id === ACTIVITY
+  )!;
+  assertEquals(blocked.status, "failed");
+  assert(String(blocked.error_message).includes("AI limit"));
 });
 
 Deno.test("a stale fence stops without failing the workout", async () => {
@@ -559,7 +639,9 @@ Deno.test("a stale fence stops without failing the workout", async () => {
   });
   assertEquals(env.ledger.completed.length, 0);
   assertEquals(env.ledger.failed.length, 0);
-  const row = env.tables.activities.find((activity) => activity.id === ACTIVITY)!;
+  const row = env.tables.activities.find((activity) =>
+    activity.id === ACTIVITY
+  )!;
   assertEquals(row.status, "processing");
 });
 
@@ -596,6 +678,23 @@ Deno.test("createActivityFromText inserts a processing row and starts analysis",
   assertEquals(row.input_text, "10 min bike, easy");
   assertEquals(row.title, "Workout");
   assertEquals(row.source_message_id, "66666666-6666-4666-8666-666666666666");
+  assertEquals(row.speech_engine, null);
+});
+
+Deno.test("the phone's speech engine is stored on its own column", async () => {
+  const fake = fakeAdmin({ tables: { activities: [] } });
+  await insertProcessingActivity(fake.admin as never, USER, {
+    clientRequestId: REQUEST,
+    localDay: "2026-10-06",
+    timezone: "America/New_York",
+    text: "bench 185 for 3 sets of 8",
+    source: "voice",
+    speechEngine: "apple.speech_transcriber",
+    planSessionId: "upper_a",
+  });
+  const row = fake.tables.activities[0];
+  assertEquals(row.speech_engine, "apple.speech_transcriber");
+  assertEquals(row.details, { plan_session_id: "upper_a" });
 });
 
 Deno.test("a replayed request is a duplicate; a failed one is re-armed", async () => {
@@ -615,7 +714,9 @@ Deno.test("a replayed request is a duplicate; a failed one is re-armed", async (
   assertEquals(complete.mutations.length, 0);
 
   const failed = fakeAdmin({
-    tables: { activities: [activityRow({ status: "failed", error_message: "x" })] },
+    tables: {
+      activities: [activityRow({ status: "failed", error_message: "x" })],
+    },
   });
   const prepared = await insertProcessingActivity(failed.admin as never, USER, {
     clientRequestId: REQUEST,

@@ -160,7 +160,10 @@ export function fakeAdmin(options: FakeAdminOptions = {}) {
       const copies = result.map((row) => structuredClone(row));
       if (this.#single) {
         if (copies.length === 0 && this.#single === "one") {
-          return { data: null, error: { message: "no rows", code: "PGRST116" } };
+          return {
+            data: null,
+            error: { message: "no rows", code: "PGRST116" },
+          };
         }
         return { data: copies[0] ?? null, error: null };
       }
@@ -227,9 +230,13 @@ export function fakeAdmin(options: FakeAdminOptions = {}) {
 
     then<TResult1 = { data: unknown; error: unknown }, TResult2 = never>(
       onfulfilled?:
-        | ((value: { data: unknown; error: unknown }) => TResult1 | PromiseLike<TResult1>)
+        | ((
+          value: { data: unknown; error: unknown },
+        ) => TResult1 | PromiseLike<TResult1>)
         | null,
-      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+      onrejected?:
+        | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+        | null,
     ): PromiseLike<TResult1 | TResult2> {
       return Promise.resolve().then(() => this.#execute()).then(
         onfulfilled,
@@ -256,7 +263,9 @@ export function fakeAdmin(options: FakeAdminOptions = {}) {
       } catch (error) {
         return Promise.resolve({
           data: null,
-          error: { message: error instanceof Error ? error.message : String(error) },
+          error: {
+            message: error instanceof Error ? error.message : String(error),
+          },
         });
       }
     },
@@ -266,7 +275,9 @@ export function fakeAdmin(options: FakeAdminOptions = {}) {
           upload(path: string, body: Uint8Array | Blob) {
             storageCalls.push({ operation: "upload", bucket, path });
             storage[bucket] ??= {};
-            storage[bucket][path] = body instanceof Uint8Array ? body : new Uint8Array();
+            storage[bucket][path] = body instanceof Uint8Array
+              ? body
+              : new Uint8Array();
             return Promise.resolve({ data: { path }, error: null });
           },
           download(path: string) {
@@ -288,7 +299,9 @@ export function fakeAdmin(options: FakeAdminOptions = {}) {
           createSignedUrl(path: string, _seconds: number) {
             storageCalls.push({ operation: "sign", bucket, path });
             return Promise.resolve({
-              data: { signedUrl: `https://storage.test/${bucket}/${path}?token=t` },
+              data: {
+                signedUrl: `https://storage.test/${bucket}/${path}?token=t`,
+              },
               error: null,
             });
           },
@@ -310,13 +323,19 @@ export function fakeLedger(
   const completed: Array<Record<string, unknown>> = [];
   const failed: Array<Record<string, unknown>> = [];
   const claims: Array<Record<string, unknown>> = [];
+  const usage: Array<Record<string, unknown>> = [];
   return {
     runId,
     claimToken,
     completed,
     failed,
     claims,
+    usage,
     handlers: {
+      record_ai_provider_call(args: Record<string, unknown>) {
+        usage.push(args);
+        return crypto.randomUUID();
+      },
       claim_coach_run(args: Record<string, unknown>) {
         claims.push(args);
         const status = options.claimStatus ?? "claimed";

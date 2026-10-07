@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
+import { ClaudeOutputError, ClaudeRefusalError } from "./claude.ts";
 
 /// Thin typed wrappers over the coach-run ledger RPCs (`claim_coach_run`,
 /// `complete_coach_run`, `fail_coach_run`) used by the Train / Body / Nearby
@@ -125,17 +126,23 @@ export async function completeCoachRun(
   return { messageIds: ids };
 }
 
-/** Best effort: a failure to record failure is logged, never thrown. */
+/**
+ * Best effort: a failure to record failure is logged, never thrown.
+ * `retryable: false` marks the run terminal (the next claim is `exhausted`);
+ * for activity_analysis the ledger then also marks the activity failed.
+ */
 export async function failCoachRun(
   admin: SupabaseClient,
   run: ClaimedRun,
   message: string,
+  retryable = true,
 ): Promise<void> {
   try {
     const { error } = await admin.rpc("fail_coach_run", {
       p_run_id: run.runId,
       p_claim_token: run.claimToken,
       p_error_message: message.slice(0, 500),
+      p_retryable: retryable,
     });
     if (error) throw error;
   } catch (error) {
@@ -144,6 +151,13 @@ export async function failCoachRun(
       message: error instanceof Error ? error.message.slice(0, 200) : "unknown",
     });
   }
+}
+
+/// Refusals and malformed output repeat on retry; everything else (timeouts,
+/// 429/5xx, network) may succeed on a later attempt.
+export function isRetryableFailure(error: unknown): boolean {
+  return !(error instanceof ClaudeRefusalError ||
+    error instanceof ClaudeOutputError);
 }
 
 /** Short, log-safe text for a failure (no provider output, no user text). */

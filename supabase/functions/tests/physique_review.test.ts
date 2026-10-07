@@ -28,7 +28,11 @@ function photoPath(day: string, index: number): string {
   return `${USER}/${day}/progress-0000000${index}-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg`;
 }
 
-function checkin(day: string, index: number, weightKg: number | null = null): CheckinRow {
+function checkin(
+  day: string,
+  index: number,
+  weightKg: number | null = null,
+): CheckinRow {
   return {
     id: `c${index}`,
     local_day: day,
@@ -60,7 +64,10 @@ Deno.test("photo selection: latest recent anchor, closest ~1w/4w/12w comparisons
   assertEquals(pickAnchorCheckin("2026-10-20", rows), null);
   // A weight-only check-in is never the anchor.
   assertEquals(
-    pickAnchorCheckin("2026-10-06", [{ ...checkin("2026-10-06", 7), progress_photo_path: null }]),
+    pickAnchorCheckin("2026-10-06", [{
+      ...checkin("2026-10-06", 7),
+      progress_photo_path: null,
+    }]),
     null,
   );
 });
@@ -132,7 +139,10 @@ Deno.test("review sanitizer enforces caps, enums, and respectful body copy", () 
     "mild",
   );
   assertEquals(review.observations.length, 2);
-  assertEquals(review.observations.map((item) => item.region), ["shoulders", "waist"]);
+  assertEquals(review.observations.map((item) => item.region), [
+    "shoulders",
+    "waist",
+  ]);
   assertEquals(review.headline, "Weekly physique check is in");
   assert(review.coach_note.startsWith("Photo's logged."));
   assertEquals(review.focus_next_week, ["One", "Two", "Three"]);
@@ -147,7 +157,8 @@ Deno.test("the physique prompt is neck-down, fitness-only, with no body-fat gues
 });
 
 function physiqueSetup(
-  options: { enabled?: boolean; rows?: CheckinRow[]; claimStatus?: string } = {},
+  options: { enabled?: boolean; rows?: CheckinRow[]; claimStatus?: string } =
+    {},
 ) {
   const ledger = fakeLedger({ claimStatus: options.claimStatus });
   const reviews: Array<Record<string, unknown>> = [];
@@ -196,8 +207,13 @@ Deno.test("weekly review sends labeled base64 photos to Opus and posts photo fee
 
   assertEquals(requests.length, 1);
   assertEquals(requests[0].model, "claude-opus-5-5");
-  assertEquals((requests[0].output_config as { effort?: string }).effort, "high");
-  const content = requests[0].messages?.[0].content as Array<Record<string, unknown>>;
+  assertEquals(
+    (requests[0].output_config as { effort?: string }).effort,
+    "high",
+  );
+  const content = requests[0].messages?.[0].content as Array<
+    Record<string, unknown>
+  >;
   const images = content.filter((block) => block.type === "image");
   assertEquals(images.length, 3);
   const source = images[0].source as Record<string, unknown>;
@@ -206,7 +222,11 @@ Deno.test("weekly review sends labeled base64 photos to Opus and posts photo fee
   assertEquals(source.data, bytesToBase64(JPEG));
   // Labels precede images; no signed URL ever leaves the server.
   assertEquals(content[0].type, "text");
-  assert(String(content[0].text).includes("this check-in (2026-10-05, weigh-in 163.1 lb)"));
+  assert(
+    String(content[0].text).includes(
+      "this check-in (2026-10-05, weigh-in 163.1 lb)",
+    ),
+  );
   assert(!JSON.stringify(requests[0]).includes("https://storage.test"));
   assertEquals(
     env.storageCalls.filter((call) => call.operation === "sign").length,
@@ -215,21 +235,31 @@ Deno.test("weekly review sends labeled base64 photos to Opus and posts photo fee
 
   const claim = env.ledger.claims[0];
   assertEquals(claim.p_operation, "body_review");
-  assertEquals(claim.p_checkpoint_key, "body_review:00000001-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  assertEquals(
+    claim.p_checkpoint_key,
+    "body_review:00000001-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  );
   assertEquals(claim.p_local_day, "2026-10-05");
   assertEquals(claim.p_trigger_source, "schedule");
 
+  assertEquals(env.ledger.usage.map((call) => call.p_operation), [
+    "body_review",
+  ]);
   assertEquals(env.reviews.length, 1);
   assertEquals(env.reviews[0].p_checkin_id, "c1");
   const saved = env.reviews[0].p_review as Record<string, unknown>;
   assertEquals(saved.status, "complete");
   assertEquals(saved.photo_path, photoPath("2026-10-05", 1));
   assertEquals(
-    (saved.compared as Array<Record<string, unknown>>).map((item) => item.label),
+    (saved.compared as Array<Record<string, unknown>>).map((item) =>
+      item.label
+    ),
     ["1w", "4w"],
   );
 
-  const messages = env.ledger.completed[0].p_messages as Array<Record<string, unknown>>;
+  const messages = env.ledger.completed[0].p_messages as Array<
+    Record<string, unknown>
+  >;
   assertEquals(messages[0].kind, "photo_feedback");
   assertEquals(messages[0].notify, true);
   const payload = messages[0].payload as Record<string, unknown>;
@@ -247,13 +277,19 @@ Deno.test("a refusal becomes a failed review with a friendly message, not a retr
   await reviewPhysique(env.admin as never, USER, {
     anchorDay: "2026-10-06",
     kind: "on_demand",
-  }, { client: fakeClaude([[messageStart("claude-opus-5-5"), ...messageEnd("refusal")]]) });
+  }, {
+    client: fakeClaude([[
+      messageStart("claude-opus-5-5"),
+      ...messageEnd("refusal"),
+    ]]),
+  });
   assertEquals(env.ledger.failed.length, 0);
   const saved = env.reviews[0].p_review as Record<string, unknown>;
   assertEquals(saved.status, "failed");
   assertEquals(saved.error_code, "refused");
   assertEquals(saved.photo_path, photoPath("2026-10-05", 1));
-  const message = (env.ledger.completed[0].p_messages as Array<Record<string, unknown>>)[0];
+  const message =
+    (env.ledger.completed[0].p_messages as Array<Record<string, unknown>>)[0];
   assertEquals(message.body, PHYSIQUE_REFUSED_MESSAGE);
   assertEquals(message.notify, false);
   assertEquals(env.ledger.claims[0].p_trigger_source, "user");

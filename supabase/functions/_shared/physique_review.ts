@@ -31,6 +31,7 @@ import {
   LostRunLeaseError,
   POUNDS_PER_KG,
 } from "./fenced_run.ts";
+import { recordClaudeUsage } from "./ai_usage.ts";
 
 export const PHYSIQUE_MODEL = CLAUDE_MODELS.opus;
 export const PHYSIQUE_EFFORT: ClaudeEffort = "high";
@@ -660,6 +661,13 @@ export async function reviewPhysique(
         timeoutMs: dependencies.timeoutMs ?? PHYSIQUE_TIMEOUT_MS,
         client: dependencies.client,
       });
+      await recordClaudeUsage(
+        admin,
+        userId,
+        "body_review",
+        result.usage,
+        run.runId,
+      );
       review = sanitizePhysiqueReview(result.output, guard, profanity);
       model = result.model;
       messageId = result.messageId;

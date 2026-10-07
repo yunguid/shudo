@@ -23,6 +23,7 @@ import {
   failureMessage,
   isValidTimezone,
 } from "./fenced_run.ts";
+import { recordClaudeUsage } from "./ai_usage.ts";
 
 export const NEARBY_MODEL = CLAUDE_MODELS.sonnet;
 export const NEARBY_EFFORT: ClaudeEffort = "medium";
@@ -836,6 +837,13 @@ export async function researchNearbyFood(
     } catch (callError) {
       throw describeClaudeError(callError, "Nearby research");
     }
+    await recordClaudeUsage(
+      admin,
+      userId,
+      "nearby_research",
+      result.usage,
+      run.runId,
+    );
 
     const raw = asRecord(result.output);
     const webSources = result.webSearchSources.map((source) => source.url);

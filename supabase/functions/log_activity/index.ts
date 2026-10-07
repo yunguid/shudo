@@ -127,15 +127,21 @@ Deno.serve(async (req: Request) => {
       });
     } catch (insertError) {
       if (uploaded && imagePath) {
-        // Nothing references the object if the row never landed.
-        const { data: raced } = await admin.from("activities")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("client_request_id", clientRequestId)
-          .maybeSingle();
-        if (!raced) {
-          await admin.storage.from(COACH_MEDIA_BUCKET).remove([imagePath])
-            .catch(() => undefined);
+        // Nothing references the object if the row never landed. Cleanup is
+        // best effort and must not mask the original error.
+        try {
+          const { data: raced, error: racedError } = await admin.from(
+            "activities",
+          )
+            .select("id")
+            .eq("user_id", userId)
+            .eq("client_request_id", clientRequestId)
+            .maybeSingle();
+          if (!racedError && !raced) {
+            await admin.storage.from(COACH_MEDIA_BUCKET).remove([imagePath]);
+          }
+        } catch {
+          // A leftover object is overwritten by the next retry of this request.
         }
       }
       throw insertError;

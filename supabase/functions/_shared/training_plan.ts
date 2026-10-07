@@ -28,9 +28,11 @@ import {
   completeCoachRun,
   failCoachRun,
   failureMessage,
+  isRetryableFailure,
   localDayIn,
   LostRunLeaseError,
 } from "./fenced_run.ts";
+import { recordClaudeUsage } from "./ai_usage.ts";
 
 export const TRAINING_PLAN_MODEL = CLAUDE_MODELS.opus;
 export const TRAINING_PLAN_EFFORT: ClaudeEffort = "high";
@@ -892,6 +894,13 @@ export async function draftTrainingPlan(
       } catch (callError) {
         throw describeClaudeError(callError, "Training plan");
       }
+      await recordClaudeUsage(
+        admin,
+        userId,
+        "training_plan",
+        result.usage,
+        run.runId,
+      );
       output = asRecord(result.output);
       validated = validateTrainingPlan(output.plan);
       if (validated.ok) break;
@@ -980,6 +989,7 @@ export async function draftTrainingPlan(
         admin,
         run,
         failureMessage(error, "Training plan failed"),
+        isRetryableFailure(error),
       );
     }
     throw error;

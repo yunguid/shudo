@@ -1,14 +1,16 @@
 import {
+  type ActivityEnergyInput,
   DEFAULT_BODY_WEIGHT_KG,
   estimateActiveEnergy,
-  type ActivityEnergyInput,
   metFor,
   resolveBodyWeight,
   restingKcalPerHour,
 } from "../_shared/activity_energy.ts";
 import { assert, assertEquals } from "./assertions.ts";
 
-function input(overrides: Partial<ActivityEnergyInput> = {}): ActivityEnergyInput {
+function input(
+  overrides: Partial<ActivityEnergyInput> = {},
+): ActivityEnergyInput {
   return {
     kind: "strength",
     intensity: "moderate",

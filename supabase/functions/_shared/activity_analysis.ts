@@ -39,6 +39,7 @@ import {
   completeCoachRun,
   failCoachRun,
   failureMessage,
+  isRetryableFailure,
   LostRunLeaseError,
   POUNDS_PER_KG,
 } from "./fenced_run.ts";
@@ -47,6 +48,8 @@ import {
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
 import { HttpError, runInBackground, withTimeout } from "./http.ts";
+import { recordClaudeUsage } from "./ai_usage.ts";
+import { modelQuotaHttpError } from "./quotas.ts";
 
 export const ACTIVITY_ANALYSIS_MODEL = CLAUDE_MODELS.sonnet;
 export const ACTIVITY_ANALYSIS_EFFORT: ClaudeEffort = "low";
@@ -831,20 +834,9 @@ export type PreparedActivity = {
 };
 
 export function activityQuotaHttpError(error: unknown): HttpError | null {
-  const message = failureMessage(error, "");
-  if (message.includes("activity_daily_quota_exceeded")) {
-    return new HttpError(
-      429,
-      "You’ve logged a lot of workouts in the last 24 hours. Try again later.",
-    );
-  }
-  if (message.includes("activity_concurrency_quota_exceeded")) {
-    return new HttpError(
-      429,
-      "A few workouts are still processing. Let one finish, then try again.",
-    );
-  }
-  if (message.includes("activity_message_link_not_owned")) {
+  const shared = modelQuotaHttpError(error);
+  if (shared) return shared;
+  if (failureMessage(error, "").includes("activity_message_link_not_owned")) {
     return new HttpError(400, "That message link is not valid.");
   }
   return null;
@@ -926,7 +918,6 @@ export async function insertProcessingActivity(
 
   const details: Record<string, unknown> = {};
   if (input.planSessionId) details.plan_session_id = input.planSessionId;
-  if (input.speechEngine) details.speech_engine = input.speechEngine;
   const { data, error } = await admin.from("activities").insert({
     user_id: userId,
     client_request_id: input.clientRequestId,
@@ -938,6 +929,7 @@ export async function insertProcessingActivity(
     kind: "other",
     title: ACTIVITY_PLACEHOLDER_TITLE,
     input_text: input.text,
+    speech_engine: input.speechEngine ?? null,
     image_path: input.imagePath ?? null,
     source_message_id: input.sourceMessageId ?? null,
     details,
@@ -1290,6 +1282,13 @@ export async function analyzeStoredActivity(
           activity.id,
           ACTIVITY_FAILED_MESSAGE,
         );
+      } else if (claim.status === "quota") {
+        await markActivityFailed(
+          admin,
+          userId,
+          activity.id,
+          ACTIVITY_BUDGET_MESSAGE,
+        );
       }
       return;
     }
@@ -1367,6 +1366,13 @@ export async function analyzeStoredActivity(
     } catch (callError) {
       throw describeClaudeError(callError, "Activity analysis");
     }
+    await recordClaudeUsage(
+      admin,
+      userId,
+      "activity_analysis",
+      result.usage,
+      activeRun.runId,
+    );
 
     const parsed = parseActivityAnalysis(result.output, { unit });
     let exercises = parsed.exercises;
@@ -1448,9 +1454,6 @@ export async function analyzeStoredActivity(
         }
         : {}),
       ...(parsed.notes ? { notes: parsed.notes } : {}),
-      ...(typeof baseDetails.speech_engine === "string"
-        ? { speech_engine: baseDetails.speech_engine }
-        : {}),
     };
 
     const { data: saved, error: saveError } = await admin.rpc(
@@ -1514,10 +1517,13 @@ export async function analyzeStoredActivity(
       message: failureMessage(error, "unknown").slice(0, 200),
     });
     if (run) {
+      // Terminal for refusals and malformed output (the ledger then fails
+      // the activity itself); retryable otherwise, so a resend can re-arm it.
       await failCoachRun(
         admin,
         run,
         failureMessage(error, "Activity analysis failed"),
+        isRetryableFailure(error),
       );
     }
     await markActivityFailed(

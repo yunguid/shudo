@@ -5,7 +5,10 @@ import {
 } from "../_shared/card_copy.ts";
 import { assert, assertEquals } from "./assertions.ts";
 
-function code(text: string, profanity: "off" | "mild" | "salty" = "off"): string | null {
+function code(
+  text: string,
+  profanity: "off" | "mild" | "salty" = "off",
+): string | null {
   try {
     assertCardCopy(text, "field", { maxChars: 200, profanity });
     return null;
@@ -24,7 +27,12 @@ Deno.test("coach card copy in the persona voice passes", () => {
     ),
     "7-Eleven's a 2-min walk. Core Power should have you covered.",
   );
-  assertEquals(code("Four days, upper/lower, about 60 minutes. I built it around your 9:30 start."), null);
+  assertEquals(
+    code(
+      "Four days, upper/lower, about 60 minutes. I built it around your 9:30 start.",
+    ),
+    null,
+  );
   assertEquals(code("Rows up 10 lb. Damn.", "mild"), null);
 });
 
@@ -49,7 +57,10 @@ Deno.test("the guard rejects unsafe or off-voice card copy", () => {
 
 Deno.test("guardedCopy falls back on violations and non-strings", () => {
   const options = { maxChars: 50 };
-  assertEquals(guardedCopy(assertCardCopy, "Fine copy.", "f", options, "fb"), "Fine copy.");
+  assertEquals(
+    guardedCopy(assertCardCopy, "Fine copy.", "f", options, "fb"),
+    "Fine copy.",
+  );
   assertEquals(guardedCopy(assertCardCopy, "Go!", "f", options, "fb"), "fb");
   assertEquals(guardedCopy(assertCardCopy, 42, "f", options, "fb"), "fb");
   // An injected guard (e.g. the coach lane's assertCoachCopy) is honored.

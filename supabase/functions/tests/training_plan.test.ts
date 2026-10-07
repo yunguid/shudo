@@ -56,7 +56,14 @@ function upperLowerPlan() {
         exercises: [
           exercise("Barbell bench press", "barbell_bench_press", 4, 6, 8, 150),
           exercise("Barbell row", "barbell_row", 4, 6, 10, 120),
-          exercise("Dumbbell shoulder press", "dumbbell_shoulder_press", 3, 8, 10, 90),
+          exercise(
+            "Dumbbell shoulder press",
+            "dumbbell_shoulder_press",
+            3,
+            8,
+            10,
+            90,
+          ),
           exercise("Lat pulldown", "lat_pulldown", 3, 8, 12, 90),
           exercise("Lateral raise", "lateral_raise", 3, 12, 15, 60),
           exercise("EZ-bar curl", "ez_bar_curl", 3, 8, 12, 60),
@@ -81,7 +88,14 @@ function upperLowerPlan() {
         focus: "shoulders/arms",
         est_minutes: 60,
         exercises: [
-          exercise("Incline dumbbell press", "incline_dumbbell_press", 4, 8, 10, 120),
+          exercise(
+            "Incline dumbbell press",
+            "incline_dumbbell_press",
+            4,
+            8,
+            10,
+            120,
+          ),
           exercise("Chest-supported row", "chest_supported_row", 4, 8, 12, 90),
           exercise("Pull-up", "pull_up", 3, 6, 10, 120),
           exercise("Cable fly", "cable_fly", 3, 10, 15, 60),
@@ -96,25 +110,42 @@ function upperLowerPlan() {
         est_minutes: 55,
         exercises: [
           exercise("Deadlift", "deadlift", 3, 5, 8, 180),
-          exercise("Bulgarian split squat", "bulgarian_split_squat", 3, 8, 10, 90),
+          exercise(
+            "Bulgarian split squat",
+            "bulgarian_split_squat",
+            3,
+            8,
+            10,
+            90,
+          ),
           exercise("Leg extension", "leg_extension", 3, 10, 15, 60),
           exercise("Seated leg curl", "seated_leg_curl", 3, 10, 12, 60),
           exercise("Hanging leg raise", "hanging_leg_raise", 3, 10, 15, 60),
         ],
       },
     ],
-    conditioning: { kind: "bike", minutes: 10, when: "morning", optional: true },
+    conditioning: {
+      kind: "bike",
+      minutes: 10,
+      when: "morning",
+      optional: true,
+    },
     equipment_assumed: ["commercial gym"],
     notes: "Rotation is a queue: miss a day and the next session waits.",
   };
 }
 
-function planResponse(plan: unknown = upperLowerPlan(), overrides: Record<string, unknown> = {}) {
+function planResponse(
+  plan: unknown = upperLowerPlan(),
+  overrides: Record<string, unknown> = {},
+) {
   return {
     plan,
-    rationale: "Four rotating sessions fit a six-day work week with evening lifts.",
+    rationale:
+      "Four rotating sessions fit a six-day work week with evening lifts.",
     change_summary: null,
-    summary: "4 days a week, upper/lower, about 60 minutes, double progression in 6–10.",
+    summary:
+      "4 days a week, upper/lower, about 60 minutes, double progression in 6–10.",
     coach_message:
       "Built you a four-day upper/lower queue. Miss a day and it just waits for you. Bench and rows lead the way. Start with Upper A tonight?",
     ...overrides,
@@ -156,29 +187,47 @@ Deno.test("a sound upper/lower plan validates into TrainingPlanDoc v1", () => {
 });
 
 Deno.test("structural problems are errors", () => {
-  const oneSession = { ...upperLowerPlan(), sessions: [upperLowerPlan().sessions[0]] };
+  const oneSession = {
+    ...upperLowerPlan(),
+    sessions: [upperLowerPlan().sessions[0]],
+  };
   const result = validateTrainingPlan(oneSession);
   assertEquals(result.ok, false);
   assert(result.errors[0].includes("2 to 6 distinct sessions"));
 
   const thin = upperLowerPlan();
   thin.sessions[1].exercises = thin.sessions[1].exercises.slice(0, 2);
-  assert(validateTrainingPlan(thin).errors.some((error) => error.includes("lower_a needs 3 to 9")));
+  assert(
+    validateTrainingPlan(thin).errors.some((error) =>
+      error.includes("lower_a needs 3 to 9")
+    ),
+  );
 
   const marathon = upperLowerPlan();
-  marathon.sessions[0].exercises = marathon.sessions[0].exercises.map((item) => ({
+  marathon.sessions[0].exercises = marathon.sessions[0].exercises.map((
+    item,
+  ) => ({
     ...item,
     sets: 6,
     rest_sec: 300,
   }));
-  assert(validateTrainingPlan(marathon).errors.some((error) => error.includes("too long")));
+  assert(
+    validateTrainingPlan(marathon).errors.some((error) =>
+      error.includes("too long")
+    ),
+  );
 
   assertEquals(validateTrainingPlan(null).ok, false);
-  assertEquals(validateTrainingPlan({ ...upperLowerPlan(), name: "" }).ok, false);
+  assertEquals(
+    validateTrainingPlan({ ...upperLowerPlan(), name: "" }).ok,
+    false,
+  );
 });
 
 Deno.test("numeric slips are clamped with warnings, ids and rotation repaired", () => {
-  const plan = upperLowerPlan() as Record<string, unknown> & ReturnType<typeof upperLowerPlan>;
+  const plan = upperLowerPlan() as
+    & Record<string, unknown>
+    & ReturnType<typeof upperLowerPlan>;
   plan.sessions[0].id = "Upper A";
   plan.sessions[0].exercises[0] = {
     ...plan.sessions[0].exercises[0],
@@ -188,13 +237,23 @@ Deno.test("numeric slips are clamped with warnings, ids and rotation repaired", 
   };
   plan.rotation = ["Upper A", "lower_a", "ghost_day", "upper_b", "lower_b"];
   plan.sessions_per_week = 9;
-  plan.conditioning = { kind: "bike", minutes: 45, when: "whenever", optional: true };
+  plan.conditioning = {
+    kind: "bike",
+    minutes: 45,
+    when: "whenever",
+    optional: true,
+  };
   const result = validateTrainingPlan(plan);
   assert(result.ok && result.plan, result.errors.join("; "));
   const bench = result.plan.sessions[0].exercises[0];
   assertEquals([bench.sets, bench.rep_max, bench.rest_sec], [6, 20, 300]);
   assertEquals(result.plan.sessions[0].id, "upper_a");
-  assertEquals(result.plan.rotation, ["upper_a", "lower_a", "upper_b", "lower_b"]);
+  assertEquals(result.plan.rotation, [
+    "upper_a",
+    "lower_a",
+    "upper_b",
+    "lower_b",
+  ]);
   assertEquals(result.plan.sessions_per_week, 6);
   assertEquals(result.plan.conditioning?.minutes, 30);
   assertEquals(result.plan.conditioning?.when, "any");
@@ -268,7 +327,10 @@ Deno.test("nextSession walks the rotation queue and wraps", () => {
   assertEquals(nextSession(plan, ["upper_a", "lower_a", "upper_b"]), "lower_b");
   assertEquals(nextSession(plan, ["upper_b", "lower_b"]), "upper_a");
   // Ids that are not in the rotation (old plans, freestyle days) are ignored.
-  assertEquals(nextSession(plan, ["upper_a", "arm_day", "old_plan_x"]), "lower_a");
+  assertEquals(
+    nextSession(plan, ["upper_a", "arm_day", "old_plan_x"]),
+    "lower_a",
+  );
 });
 
 Deno.test("nextSession disambiguates repeated ids by recent history", () => {
@@ -302,7 +364,8 @@ Deno.test("plan context includes bio, schedule, equipment, never handle_with_car
 });
 
 function planSetup(
-  options: { claimStatus?: string; saveResult?: unknown; existing?: boolean } = {},
+  options: { claimStatus?: string; saveResult?: unknown; existing?: boolean } =
+    {},
 ) {
   const ledger = fakeLedger({ claimStatus: options.claimStatus });
   const saves: Array<Record<string, unknown>> = [];
@@ -381,11 +444,17 @@ Deno.test("draftTrainingPlan runs Opus high, saves the draft, and posts a card",
   assertEquals(result.plan.version, 1);
   assertEquals(requests.length, 1);
   assertEquals(requests[0].model, "claude-opus-5-5");
-  assertEquals((requests[0].output_config as { effort?: string }).effort, "high");
+  assertEquals(
+    (requests[0].output_config as { effort?: string }).effort,
+    "high",
+  );
   assert(requests[0].output_config?.format);
   const prompt = promptText(requests[0]);
   assert(prompt.includes("4-day upper/lower rotation"));
-  assert(prompt.includes("double progression") || prompt.includes("Double progression"));
+  assert(
+    prompt.includes("double progression") ||
+      prompt.includes("Double progression"),
+  );
   assert(prompt.includes("office by 9:30"));
   assert(prompt.includes("keep arms in there"));
   assert(!prompt.includes("Do not raise."));
@@ -395,6 +464,9 @@ Deno.test("draftTrainingPlan runs Opus high, saves the draft, and posts a card",
   assert(String(claim.p_checkpoint_key).startsWith("training_plan:"));
   assertEquals(claim.p_trigger_source, "user");
 
+  assertEquals(env.ledger.usage.map((call) => call.p_operation), [
+    "training_plan",
+  ]);
   assertEquals(env.saves.length, 1);
   assertEquals(env.saves[0].p_user_id, USER);
   assertEquals(env.saves[0].p_run_id, env.ledger.runId);
@@ -422,7 +494,10 @@ Deno.test("draftTrainingPlan runs Opus high, saves the draft, and posts a card",
 Deno.test("an invalid draft gets one corrective retry with the validator errors", async () => {
   const env = planSetup();
   const requests: RecordedRequest[] = [];
-  const broken = { ...upperLowerPlan(), sessions: [upperLowerPlan().sessions[0]] };
+  const broken = {
+    ...upperLowerPlan(),
+    sessions: [upperLowerPlan().sessions[0]],
+  };
   const result = await draftTrainingPlan(env.admin as never, USER, {
     instructions: null,
     reason: "weekly",
@@ -433,11 +508,13 @@ Deno.test("an invalid draft gets one corrective retry with the validator errors"
     ], requests),
   });
   assertEquals(requests.length, 2);
+  assertEquals(env.ledger.usage.length, 2);
   assert(promptText(requests[1]).includes("failed validation"));
   assert(promptText(requests[1]).includes("2 to 6 distinct sessions"));
   assertEquals(result.plan.sessions.length, 4);
   assertEquals(env.ledger.claims[0].p_trigger_source, "schedule");
-  const message = (env.ledger.completed[0].p_messages as Array<Record<string, unknown>>)[0];
+  const message =
+    (env.ledger.completed[0].p_messages as Array<Record<string, unknown>>)[0];
   assertEquals(message.notify, true);
   assert((message.payload as Record<string, unknown>).push_body);
   assertEquals(env.saves[0].p_source, "weekly");
@@ -456,12 +533,16 @@ Deno.test("off-voice coach copy falls back to a safe template", async () => {
       })),
     ]),
   });
-  const message = (env.ledger.completed[0].p_messages as Array<Record<string, unknown>>)[0];
+  const message =
+    (env.ledger.completed[0].p_messages as Array<Record<string, unknown>>)[0];
   assertEquals(
     message.body,
     "New plan drafted: Upper/Lower 4x, 4 days a week. Look it over and activate it when it looks right.",
   );
-  assertEquals(result.summary, "4 days a week, 4 rotating sessions, about 60 minutes each.");
+  assertEquals(
+    result.summary,
+    "4 days a week, 4 rotating sessions, about 60 minutes each.",
+  );
 });
 
 Deno.test("a completed run replays the stored draft without calling the model", async () => {
@@ -474,7 +555,10 @@ Deno.test("a completed run replays the stored draft without calling the model", 
   }, { client: fakeClaude([jsonTextEvents(planResponse())], requests) });
   assertEquals(requests.length, 0);
   assertEquals(result.planId, PLAN_ID);
-  assertEquals(env.ledger.claims[0].p_checkpoint_key, "training_plan:88888888-8888-4888-8888-888888888888");
+  assertEquals(
+    env.ledger.claims[0].p_checkpoint_key,
+    "training_plan:88888888-8888-4888-8888-888888888888",
+  );
 });
 
 Deno.test("a model failure fails the run and rethrows", async () => {
@@ -510,7 +594,9 @@ Deno.test("a stale save never posts the card", async () => {
 });
 
 Deno.test("the plan system prompt carries the seed prior and the safety lines", () => {
-  assert(TRAINING_PLAN_SYSTEM.includes("Upper A → Lower A → Upper B → Lower B"));
+  assert(
+    TRAINING_PLAN_SYSTEM.includes("Upper A → Lower A → Upper B → Lower B"),
+  );
   assert(TRAINING_PLAN_SYSTEM.includes("6–10 rep range"));
   assert(TRAINING_PLAN_SYSTEM.includes("10 minutes of easy morning bike"));
   assert(TRAINING_PLAN_SYSTEM.includes("never give medical advice"));

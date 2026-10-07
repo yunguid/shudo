@@ -90,7 +90,8 @@ function item(overrides: Partial<SnackItem> = {}): SnackItem {
 
 function modelOutput(overrides: Record<string, unknown> = {}) {
   return {
-    headline: "7-Eleven's a 3-min walk. Core Power plus an Uncrustable closes protein.",
+    headline:
+      "7-Eleven's a 3-min walk. Core Power plus an Uncrustable closes protein.",
     verdict: "grab",
     push_body: "7-Eleven, 3 min: Core Power + PB&J, closes your protein.",
     options: [
@@ -114,7 +115,13 @@ function modelOutput(overrides: Record<string, unknown> = {}) {
       { store_ref: "s9", items: [item()] },
       {
         store_ref: "s2",
-        items: [item({ name: "Premier Protein", source_url: null, nutrition_source: "web" })],
+        items: [
+          item({
+            name: "Premier Protein",
+            source_url: null,
+            nutrition_source: "web",
+          }),
+        ],
       },
     ],
     ...overrides,
@@ -171,8 +178,14 @@ Deno.test("location context is sanitized: bounded, sorted, never coordinates", (
   const context = sanitizeLocationContext(raw)!;
   assertEquals(context.stores.length, 15);
   assertEquals(context.stores[0].ref, "s1");
-  assertEquals(context.stores.find((store) => store.ref === "s4")?.name, "Joe's Bodega");
-  assertEquals(context.stores.find((store) => store.ref === "s4")?.distance_m, 330);
+  assertEquals(
+    context.stores.find((store) => store.ref === "s4")?.name,
+    "Joe's Bodega",
+  );
+  assertEquals(
+    context.stores.find((store) => store.ref === "s4")?.distance_m,
+    330,
+  );
   assertEquals(context.locality.country, "US");
   const text = JSON.stringify(context);
   assert(!text.includes("40.7128") && !text.includes("lat"));
@@ -188,9 +201,15 @@ Deno.test("device snapshots supply stores only while fresh", () => {
     nearby: location().stores,
     nearby_captured_at: "2026-10-06T19:00:00Z",
   };
-  const fresh = locationContextFromDeviceSnapshot(row, Date.parse("2026-10-06T20:00:00Z"))!;
+  const fresh = locationContextFromDeviceSnapshot(
+    row,
+    Date.parse("2026-10-06T20:00:00Z"),
+  )!;
   assertEquals(fresh.stores.length, 2);
-  const stale = locationContextFromDeviceSnapshot(row, Date.parse("2026-10-07T01:00:00Z"))!;
+  const stale = locationContextFromDeviceSnapshot(
+    row,
+    Date.parse("2026-10-07T01:00:00Z"),
+  )!;
   assertEquals(stale.stores, []);
   assertEquals(stale.locality.city, "New York");
 });
@@ -207,7 +226,10 @@ Deno.test("quiet hours wrap midnight; late night includes 23:00-05:00", () => {
 
 Deno.test("totals are item macros × quantity, recomputed on the server", () => {
   const totals = recomputeTotals(
-    [item({ quantity: 2 }), item({ calories_kcal: 210, protein_g: 6, carbs_g: 28, fat_g: 9 })],
+    [
+      item({ quantity: 2 }),
+      item({ calories_kcal: 210, protein_g: 6, carbs_g: 28, fat_g: 9 }),
+    ],
     { calories_kcal: 900, protein_g: 60, carbs_g: 100, fat_g: 30 },
   );
   assertEquals(totals.combined, {
@@ -242,7 +264,12 @@ Deno.test("the kitchen fallback closes protein with staples", () => {
   assertEquals(option.items[1].quantity, 2);
   assertEquals(option.combined.calories_kcal, 715);
   assertEquals(option.combined.protein_g, 48.3);
-  const small = homeFoodOption({ calories_kcal: 160, protein_g: 5, carbs_g: 30, fat_g: 2 });
+  const small = homeFoodOption({
+    calories_kcal: 160,
+    protein_g: 5,
+    carbs_g: 30,
+    fat_g: 2,
+  });
   assertEquals(small.items.map((entry) => entry.name), ["Banana"]);
 });
 
@@ -253,9 +280,14 @@ Deno.test("the kitchen fallback closes protein with staples", () => {
 Deno.test("under 100 kcal left: no snack, no model, no ledger", async () => {
   const env = nearbySetup();
   const requests: RecordedRequest[] = [];
-  const payload = await researchNearbyFood(env.admin as never, USER, input({
-    remaining: { calories_kcal: 80, protein_g: 4, carbs_g: 10, fat_g: 2 },
-  }), { client: fakeClaude([], requests) });
+  const payload = await researchNearbyFood(
+    env.admin as never,
+    USER,
+    input({
+      remaining: { calories_kcal: 80, protein_g: 4, carbs_g: 10, fat_g: 2 },
+    }),
+    { client: fakeClaude([], requests) },
+  );
   assertEquals(payload.verdict, "no_snack_needed");
   assertEquals(payload.options, []);
   assertEquals(requests.length, 0);
@@ -265,9 +297,14 @@ Deno.test("under 100 kcal left: no snack, no model, no ledger", async () => {
 Deno.test("late at night the answer is the kitchen, never a store run", async () => {
   const env = nearbySetup();
   const requests: RecordedRequest[] = [];
-  const payload = await researchNearbyFood(env.admin as never, USER, input({
-    localTime: "23:20",
-  }), { client: fakeClaude([], requests) });
+  const payload = await researchNearbyFood(
+    env.admin as never,
+    USER,
+    input({
+      localTime: "23:20",
+    }),
+    { client: fakeClaude([], requests) },
+  );
   assertEquals(payload.headline, LATE_NIGHT_HEADLINE);
   assertEquals(payload.verdict, "grab");
   assertEquals(payload.options.map((option) => option.store_ref), ["home"]);
@@ -293,7 +330,10 @@ Deno.test("research validates stores, recomputes totals, and keeps queries city-
 
   // Request shape: Sonnet medium, web search ≤4 with city-level location.
   assertEquals(requests[0].model, "claude-sonnet-5-5");
-  assertEquals((requests[0].output_config as { effort?: string }).effort, "medium");
+  assertEquals(
+    (requests[0].output_config as { effort?: string }).effort,
+    "medium",
+  );
   const tools = requests[0].tools ?? [];
   assertEquals(tools[0].max_uses, 4);
   assertEquals(tools[0].user_location, {
@@ -304,7 +344,10 @@ Deno.test("research validates stores, recomputes totals, and keeps queries city-
     timezone: "America/New_York",
   });
   const prompt = promptText(requests[0]);
-  assert(!prompt.includes("East Village"), "neighborhood never leaves the server");
+  assert(
+    !prompt.includes("East Village"),
+    "neighborhood never leaves the server",
+  );
   assert(prompt.includes('"ref":"s1"') && prompt.includes("7-Eleven"));
   assert(prompt.includes("untrusted"));
   const schema = tools[1].input_schema as Record<string, unknown>;
@@ -333,6 +376,8 @@ Deno.test("research validates stores, recomputes totals, and keeps queries city-
   assert(String(env.ledger.claims[0].p_checkpoint_key).startsWith("nearby:"));
   assertEquals(env.ledger.completed.length, 1);
   assertEquals(env.ledger.completed[0].p_messages, []);
+  assertEquals(env.ledger.usage[0].p_operation, "nearby_research");
+  assertEquals(env.ledger.usage[0].p_run_id, env.ledger.runId);
 });
 
 Deno.test("without location consent no stores or locality reach the model", async () => {
@@ -340,9 +385,17 @@ Deno.test("without location consent no stores or locality reach the model", asyn
   const requests: RecordedRequest[] = [];
   const payload = await researchNearbyFood(env.admin as never, USER, input(), {
     client: fakeClaude([
-      submitToolEvents(TOOL, modelOutput({
-        options: [{ store_ref: "any", items: [item({ source_url: null, nutrition_source: "label_known" })] }],
-      })),
+      submitToolEvents(
+        TOOL,
+        modelOutput({
+          options: [{
+            store_ref: "any",
+            items: [
+              item({ source_url: null, nutrition_source: "label_known" }),
+            ],
+          }],
+        }),
+      ),
     ], requests),
   });
   const prompt = promptText(requests[0]);
@@ -355,25 +408,47 @@ Deno.test("without location consent no stores or locality reach the model", asyn
 
 Deno.test("big overshoots are dropped and off-voice headlines replaced", async () => {
   const env = nearbySetup();
-  const payload = await researchNearbyFood(env.admin as never, USER, input({
-    remaining: { calories_kcal: 400, protein_g: 30, carbs_g: 40, fat_g: 10 },
-  }), {
-    client: fakeClaude([
-      submitToolEvents(TOOL, modelOutput({
-        headline: "LET'S GO! Grab it!",
-        push_body: "Visit https://example.com",
-        options: [
-          {
-            store_ref: "s1",
-            items: [item({ name: "Party pizza", calories_kcal: 1400, quantity: 1 })],
-          },
-          { store_ref: "s2", items: [item({ source_url: null, nutrition_source: "estimate" })] },
-        ],
-      })),
-    ]),
-  });
+  const payload = await researchNearbyFood(
+    env.admin as never,
+    USER,
+    input({
+      remaining: { calories_kcal: 400, protein_g: 30, carbs_g: 40, fat_g: 10 },
+    }),
+    {
+      client: fakeClaude([
+        submitToolEvents(
+          TOOL,
+          modelOutput({
+            headline: "LET'S GO! Grab it!",
+            push_body: "Visit https://example.com",
+            options: [
+              {
+                store_ref: "s1",
+                items: [
+                  item({
+                    name: "Party pizza",
+                    calories_kcal: 1400,
+                    quantity: 1,
+                  }),
+                ],
+              },
+              {
+                store_ref: "s2",
+                items: [
+                  item({ source_url: null, nutrition_source: "estimate" }),
+                ],
+              },
+            ],
+          }),
+        ),
+      ]),
+    },
+  );
   assertEquals(payload.options.map((option) => option.store_ref), ["s2"]);
-  assertEquals(payload.headline, "CVS Pharmacy is 6 min away and should have what you need.");
+  assertEquals(
+    payload.headline,
+    "CVS Pharmacy is 6 min away and should have what you need.",
+  );
   assertEquals(payload.push_body, null);
 });
 
