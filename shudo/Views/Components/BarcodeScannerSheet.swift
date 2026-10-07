@@ -71,19 +71,19 @@ struct BarcodeScannerSheet: View {
                     }
                 }
             }
-            .navigationTitle("Scan a label")
+            .navigationTitle("Scan barcode")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundStyle(Design.Color.muted)
+                        .foregroundStyle(Design.Color.textSecondary)
                 }
                 if liveScanningAvailable {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(isShowingManualEntry ? "Use camera" : "Type code") {
+                        Button(isShowingManualEntry ? "Camera" : "Type it") {
                             withAnimation(.snappy) { isShowingManualEntry.toggle() }
                         }
-                        .foregroundStyle(Design.Color.accentSecondary)
+                        .foregroundStyle(Design.Color.textSecondary)
                     }
                 }
             }
@@ -98,92 +98,74 @@ struct BarcodeScannerSheet: View {
 
     private var manualEntry: some View {
         VStack(spacing: 14) {
-            Text("Type the number printed under the barcode.")
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.muted)
-                .multilineTextAlignment(.center)
-                .padding(.top, 28)
-
-            TextField("0 00000 00000 0", text: $manualCode)
-                .keyboardType(.numberPad)
-                .font(.title3.weight(.semibold))
-                .monospacedDigit()
-                .multilineTextAlignment(.center)
-                .padding(.vertical, 14)
-                .background(
-                    Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
-                )
-                .padding(.horizontal, 24)
+            TextField(
+                "",
+                text: $manualCode,
+                prompt: Text("Barcode number").foregroundStyle(Design.Color.textTertiary)
+            )
+            .keyboardType(.numberPad)
+            .font(Design.Typeface.numeral(.title2))
+            .monospacedDigit()
+            .multilineTextAlignment(.center)
+            .foregroundStyle(Design.Color.textPrimary)
+            .padding(.vertical, 16)
+            .background(
+                Design.Color.surface1,
+                in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
+            )
+            .accessibilityLabel("Barcode number")
 
             Button {
                 handleScannedPayload(manualCode)
             } label: {
                 Text("Look up")
                     .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
+                    .foregroundStyle(manualCodeIsValid ? Design.Color.onEmber : Design.Color.textTertiary)
+                    .frame(maxWidth: .infinity, minHeight: 50)
                     .background(
-                        LinearGradient(
-                            colors: manualCodeIsValid
-                                ? [Design.Color.ctaPrimary, Design.Color.ctaSecondary]
-                                : [Design.Color.subtle, Design.Color.subtle],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
+                        manualCodeIsValid ? AnyShapeStyle(Design.Color.emberFill) : AnyShapeStyle(Design.Color.surface2),
                         in: Capsule()
                     )
             }
             .buttonStyle(.plain)
             .disabled(!manualCodeIsValid)
-            .padding(.horizontal, 24)
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 28)
     }
 
     private var manualCodeIsValid: Bool {
         BarcodeNutrition.normalizedGTIN(from: manualCode) != nil
     }
 
+    /// One quiet line at most: a spinner while looking, a short miss or
+    /// failure line. Nothing at rest — the viewfinder says what to do.
+    @ViewBuilder
     private var statusPanel: some View {
-        VStack(spacing: 8) {
+        Group {
             switch lookupState {
             case .idle:
-                Label(
-                    liveScanningAvailable && !isShowingManualEntry
-                        ? "Point at the barcode on the package"
-                        : "Nutrition comes from Open Food Facts",
-                    systemImage: "barcode.viewfinder"
-                )
-                .font(.footnote)
-                .foregroundStyle(Design.Color.muted)
+                EmptyView()
             case .looking:
-                HStack(spacing: 10) {
-                    ProgressView().tint(Design.Color.accentSecondary)
-                    Text("Looking up nutrition…")
-                        .font(.footnote)
-                        .foregroundStyle(Design.Color.ink)
-                }
-            case .missing(let code):
-                VStack(spacing: 5) {
-                    Text("No nutrition found for \(code).")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Design.Color.ink)
-                    Text("Close this and photograph the nutrition label instead — Shudo reads labels from photos.")
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.muted)
-                        .multilineTextAlignment(.center)
-                }
+                ProgressView()
+                    .tint(Design.Color.textSecondary)
+                    .accessibilityLabel("Looking it up")
+            case .missing:
+                statusLine("Not found. Snap the label instead.")
             case .failed:
-                Text("Couldn’t reach the product database. Check your connection and try again.")
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.danger)
-                    .multilineTextAlignment(.center)
+                statusLine("Couldn’t look that up. Try again.")
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, minHeight: 44)
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 12)
+    }
+
+    private func statusLine(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(Design.Color.honey)
+            .multilineTextAlignment(.center)
     }
 
     private func handleScannedPayload(_ payload: String) {
