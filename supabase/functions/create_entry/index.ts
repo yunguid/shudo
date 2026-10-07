@@ -1,6 +1,11 @@
 import "jsr:@supabase/functions-js@2.110.7/edge-runtime.d.ts";
-import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { scheduleStoredEntryDispatch } from "../_shared/dispatch.ts";
+import {
+  failEntryUpload,
+  prepareEntry,
+  publishEntryUpload,
+  recordSpeechEngine,
+} from "../_shared/entry_capture.ts";
 import { drainStorageCleanup } from "../_shared/storage_cleanup.ts";
 import {
   formFile,
@@ -8,7 +13,6 @@ import {
   IMAGE_TYPES,
   imageExtension,
   MAX_IMAGE_BYTES,
-  occurredAt,
   parseSpeechEngine,
   requireCaptureContent,
   requireMultipartContentType,
@@ -27,126 +31,6 @@ import {
   runInBackground,
   withTimeout,
 } from "../_shared/http.ts";
-import { modelQuotaHttpError } from "../_shared/quotas.ts";
-
-const ENTRY_FIELDS =
-  "id,status,status_message,processing_attempts,lease_expires_at,upload_token,image_path,audio_path";
-
-type EntryRecord = {
-  id: string;
-  status: string;
-  status_message: string | null;
-  processing_attempts: number;
-  lease_expires_at: string | null;
-  upload_token: string | null;
-  image_path: string | null;
-  audio_path: string | null;
-};
-
-type PreparedEntry = {
-  entry: EntryRecord;
-  uploadToken: string;
-};
-
-async function fetchEntry(
-  admin: SupabaseClient,
-  userId: string,
-  clientRequestId: string,
-): Promise<EntryRecord | null> {
-  const { data, error } = await admin.from("entries")
-    .select(ENTRY_FIELDS)
-    .eq("user_id", userId)
-    .eq("client_request_id", clientRequestId)
-    .maybeSingle();
-  if (error) throw error;
-  return data as EntryRecord | null;
-}
-
-async function prepareEntry(
-  admin: SupabaseClient,
-  userId: string,
-  clientRequestId: string,
-  localDay: string,
-  timezone: string,
-  text: string | null,
-  intendedImage: boolean,
-  intendedAudio: boolean,
-  dispatchEntry: (entryId: string) => void,
-): Promise<PreparedEntry | { response: Response }> {
-  const { data: inserted, error: insertError } = await admin.from("entries")
-    .insert({
-      user_id: userId,
-      client_request_id: clientRequestId,
-      local_day: localDay,
-      occurred_at: occurredAt(localDay, timezone),
-      timezone_snapshot: timezone,
-      status: "queued",
-      status_message: "Uploading",
-      input_text: text,
-      raw_text: text,
-      intended_image: intendedImage,
-      intended_audio: intendedAudio,
-    })
-    .select(ENTRY_FIELDS)
-    .maybeSingle();
-
-  if (insertError && insertError.code !== "23505") {
-    throw modelQuotaHttpError(insertError) ?? insertError;
-  }
-
-  const existing = (inserted as EntryRecord | null) ??
-    await fetchEntry(admin, userId, clientRequestId);
-  if (!existing) throw insertError ?? new Error("Could not prepare meal entry");
-  if (existing.status === "complete") {
-    return {
-      response: json({
-        entry_id: existing.id,
-        status: "complete",
-        duplicate: true,
-      }),
-    };
-  }
-  if (existing.status === "deleting") {
-    throw new HttpError(409, "This meal is being deleted");
-  }
-  if (existing.processing_attempts >= 3) {
-    throw new HttpError(
-      409,
-      "This meal could not be recovered. Delete it and log it again.",
-    );
-  }
-  if (
-    existing.status === "transcribing" || existing.status === "analyzing"
-  ) {
-    // The processor's database claim decides whether the lease is stale. This
-    // avoids making that decision with a potentially skewed Edge clock.
-    dispatchEntry(existing.id);
-    return {
-      response: json({
-        entry_id: existing.id,
-        status: existing.status,
-        duplicate: true,
-      }, 202),
-    };
-  }
-  const { data: claimedToken, error: claimError } = await admin.rpc(
-    "claim_entry_upload",
-    { p_entry_id: existing.id, p_user_id: userId },
-  );
-  if (claimError) throw claimError;
-  if (typeof claimedToken !== "string" || !claimedToken) {
-    const current = await fetchEntry(admin, userId, clientRequestId);
-    return {
-      response: json({
-        entry_id: current?.id ?? existing.id,
-        status: current?.status ?? existing.status,
-        duplicate: true,
-      }, 202),
-    };
-  }
-
-  return { entry: existing, uploadToken: claimedToken };
-}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -206,7 +90,13 @@ Deno.serve(async (req: Request) => {
       audio !== null,
       dispatchEntry,
     );
-    if ("response" in prepared) return prepared.response;
+    if (prepared.kind === "existing") {
+      return json({
+        entry_id: prepared.entryId,
+        status: prepared.status,
+        duplicate: true,
+      }, prepared.httpStatus);
+    }
 
     entryId = prepared.entry.id;
     const priorImagePath = prepared.entry.image_path;
@@ -248,28 +138,19 @@ Deno.serve(async (req: Request) => {
       if (speechEngine) {
         // Provenance for dictated text; written before publish so the
         // processor (which preserves this column) always sees it.
-        const { error: engineError } = await admin.from("entries")
-          .update({ transcription_model: speechEngine })
-          .eq("id", entryId)
-          .eq("user_id", userId);
-        if (engineError) throw engineError;
+        await recordSpeechEngine(admin, entryId, userId, speechEngine);
       }
 
-      const { data: published, error: publishError } = await admin.rpc(
-        "publish_entry_upload",
-        {
-          p_entry_id: entryId,
-          p_user_id: userId,
-          p_upload_token: prepared.uploadToken,
-          p_local_day: localDay,
-          p_timezone_snapshot: timezone,
-          p_input_text: text,
-          p_image_path: imagePath,
-          p_audio_path: audioPath,
-        },
-      );
-      if (publishError) throw publishError;
-      if (published !== true) throw new Error("Meal upload lease expired");
+      await publishEntryUpload(admin, {
+        entryId,
+        userId,
+        uploadToken: prepared.uploadToken,
+        localDay,
+        timezone,
+        text,
+        imagePath,
+        audioPath,
+      });
 
       runInBackground(
         drainStorageCleanup(admin, 10).catch((error) => {
@@ -288,18 +169,12 @@ Deno.serve(async (req: Request) => {
       const message = error instanceof Error
         ? error.message.slice(0, 500)
         : "Upload failed";
-      const { error: stateError } = await admin.rpc("fail_entry_upload", {
-        p_entry_id: entryId,
-        p_user_id: userId,
-        p_upload_token: prepared.uploadToken,
-        p_error_message: message,
+      await failEntryUpload(admin, {
+        entryId,
+        userId,
+        uploadToken: prepared.uploadToken,
+        message,
       });
-      if (stateError) {
-        console.error("entry_upload_state_failed", {
-          entryId,
-          message: stateError.message,
-        });
-      }
       runInBackground(
         drainStorageCleanup(admin, 10).catch((cleanupError) => {
           console.error("opportunistic_storage_cleanup_failed", {
