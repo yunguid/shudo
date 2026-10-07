@@ -420,7 +420,8 @@ struct BodyScreen: View {
     private var paceBadge: some View {
         if let rate = snapshot.trend?.weeklyRateKG {
             let status = snapshot.trajectory.status
-            Text("\(BodyUnits.signed(BodyUnits.display(rate, units: units))) \(BodyUnits.label(units))/wk · \(status.label)")
+            let rateText = "\(BodyUnits.signed(BodyUnits.display(rate, units: units))) \(BodyUnits.label(units))/wk"
+            Text([rateText, status.label].compactMap { $0 }.joined(separator: " · "))
                 .font(Design.Typeface.meta)
                 .foregroundStyle(status.color)
                 .monospacedDigit()

@@ -103,9 +103,6 @@ struct WeightTrendSummary: Equatable, Sendable {
     let trendKG: Double
     /// kg/week from a least-squares fit; nil until there is enough spread.
     let weeklyRateKG: Double?
-    /// Mean of the last 7 days' weigh-ins; nil with fewer than 3 of them.
-    let sevenDayAverageKG: Double?
-    let weighInsLast7: Int
     let sampleCount: Int
 }
 
@@ -116,7 +113,6 @@ enum WeightTrendPolicy {
     static let minRateSpanDays = 10
     /// One weigh-in can move the trend by at most this much input (kg).
     static let outlierKG = 2.5
-    static let minAverageSamples = 3
     /// The chart needs this many real weigh-ins before it draws a trend.
     static let minChartSamples = 4
 
@@ -174,20 +170,11 @@ enum WeightTrendPolicy {
     static func summary(_ samples: [WeightSample], today: String) -> WeightTrendSummary? {
         let points = smoothed(samples)
         guard let latest = points.last else { return nil }
-        let lastWeek = samples.filter {
-            guard let offset = LocalDayMath.days(from: $0.localDay, to: today) else { return false }
-            return offset >= 0 && offset < 7
-        }
-        let average =
-            lastWeek.count >= minAverageSamples
-            ? lastWeek.map(\.kilograms).reduce(0, +) / Double(lastWeek.count) : nil
         return WeightTrendSummary(
             latestDay: latest.localDay,
             latestKG: latest.raw,
             trendKG: latest.trend,
             weeklyRateKG: weeklyRate(samples, endingOn: today),
-            sevenDayAverageKG: average,
-            weighInsLast7: lastWeek.count,
             sampleCount: points.count
         )
     }

@@ -204,7 +204,9 @@ struct BarbellMeter: View {
 // MARK: - Pace
 
 extension PaceStatus {
-    var label: String {
+    /// The one-word verdict next to the rate; nil when there's no judgment
+    /// to make (no goal, or not enough data), so the badge shows the rate alone.
+    var label: String? {
         switch self {
         case .onPace: "on pace"
         case .ahead: "ahead"
@@ -214,8 +216,7 @@ extension PaceStatus {
         case .tooFast: "too fast"
         case .drifting: "drifting"
         case .goalReached: "goal hit"
-        case .insufficientData: "need weigh-ins"
-        case .noGoal: "no goal"
+        case .insufficientData, .noGoal: nil
         }
     }
 
