@@ -127,15 +127,26 @@ const nullable = (schema: Record<string, unknown>) => ({
   anyOf: [schema, { type: "null" }],
 });
 
+/// The API compiles every strict schema in a request together and caps the
+/// combined total (20 strict tools, 24 optional params, 16 union-typed
+/// params). Tools with many nullable fields opt out of strict mode; their
+/// handlers validate every input and return errors the model can correct.
+export const STRICT_SCHEMA_LIMITS = {
+  strictTools: 20,
+  optionalParams: 24,
+  unionParams: 16,
+} as const;
+
 function tool(
   name: string,
   description: string,
   properties: Record<string, unknown>,
+  options: { strict?: boolean } = {},
 ): BetaToolUnion {
   return {
     name,
     description,
-    strict: true,
+    strict: options.strict ?? true,
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -284,6 +295,7 @@ export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
       }),
       reason: { type: "string" },
     },
+    { strict: false },
   ),
 ];
 

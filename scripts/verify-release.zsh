@@ -191,6 +191,12 @@ npx --yes deno@2.5.6 fmt --check supabase/functions
 npx --yes deno@2.5.6 lint supabase/functions
 npx --yes deno@2.5.6 test --allow-env supabase/functions/tests
 npx --yes deno@2.5.6 check supabase/functions/**/*.ts
+npx --yes deno@2.5.6 check scripts/eval-nutrition.ts
+# Every AI workload is Anthropic; a stray OpenAI call or secret is a regression.
+if rg -n 'api\.openai\.com|OPENAI_API_KEY' supabase/functions scripts --glob '!scripts/verify-release.zsh'; then
+  print -u2 "OpenAI references remain in functions or scripts."
+  exit 1
+fi
 
 shudo_pg_dir="$(mktemp -d /tmp/shudo-release-pg.XXXXXX)"
 shudo_pg_port=55459
