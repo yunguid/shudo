@@ -7,6 +7,7 @@ import {
   type StructuredCallResult,
 } from "./claude.ts";
 import {
+  buildCoachBrief,
   type CoachContext,
   coachSystemBlocks,
   loadCoachContext,
@@ -16,14 +17,29 @@ import {
 import { coachMemorySafetyViolation } from "./coach_copy.ts";
 import {
   applyNoteOperations,
+  type NoteKind,
   type NoteOperation,
   updateCoachMemory,
 } from "./coach_memory.ts";
+
+const NOTE_KINDS: readonly NoteKind[] = [
+  "fact",
+  "pattern",
+  "preference",
+  "commitment",
+  "win",
+  "running_joke",
+];
 import {
   COACH_DAY_DIGEST_INSTRUCTIONS,
   COACH_PERSONA_VERSION,
 } from "./coach_persona.ts";
-import { addDays, coachLocalDay, localClock } from "./coach_policy.ts";
+import {
+  addDays,
+  coachLocalDay,
+  formatClock,
+  localClock,
+} from "./coach_policy.ts";
 import {
   claimCoachRun,
   completeCoachRun,
@@ -98,8 +114,24 @@ export const DAY_DIGEST_SCHEMA = {
           op: { type: "string", enum: ["add", "update", "remove"] },
           key: { type: ["string", "null"] },
           text: { type: ["string", "null"], maxLength: 200 },
+          kind: {
+            anyOf: [
+              {
+                type: "string",
+                enum: [
+                  "fact",
+                  "pattern",
+                  "preference",
+                  "commitment",
+                  "win",
+                  "running_joke",
+                ],
+              },
+              { type: "null" },
+            ],
+          },
         },
-        required: ["op", "key", "text"],
+        required: ["op", "key", "text", "kind"],
       },
     },
   },
@@ -189,12 +221,14 @@ export function parseDigestOutput(value: unknown): DayDigestOutput {
         const key = (item as Record<string, unknown>).key;
         const text = safeText((item as Record<string, unknown>).text, 200);
         if (op !== "remove" && !text) return [];
+        const kind = (item as Record<string, unknown>).kind;
         return [{
           op,
           key: typeof key === "string" && /^[a-z0-9_]{1,40}$/u.test(key)
             ? key
             : null,
           text,
+          kind: NOTE_KINDS.includes(kind as NoteKind) ? kind as NoteKind : null,
         }];
       }).slice(0, 6),
   };
@@ -356,6 +390,12 @@ export async function runDayDigest(
   }
 
   try {
+    const localTime = (iso: string | null): string | null => {
+      const at = iso ? new Date(iso) : null;
+      return at && Number.isFinite(at.getTime())
+        ? formatClock(localClock(at, context.timezone).minutes)
+        : null;
+    };
     const dayLog = {
       day: digestDay,
       weekday: localClock(new Date(`${digestDay}T12:00:00Z`), "UTC").weekday,
@@ -365,13 +405,14 @@ export async function runDayDigest(
           .weekday,
       scorecard: metrics,
       targets: context.targets,
+      // Local wall-clock times: a UTC stamp reads as the wrong hour.
       meals: context.meals.filter((meal) => meal.status === "complete").map((
         meal,
       ) => ({
         title: meal.title,
         calories_kcal: numeric(meal.calories_kcal),
         protein_g: numeric(meal.protein_g),
-        at: meal.occurred_at,
+        at: localTime(meal.occurred_at ?? meal.created_at),
       })),
       activities: context.activities.map((activity) => ({
         title: activity.title,
@@ -389,9 +430,13 @@ export async function runDayDigest(
         : null,
       thread: context.thread.filter((row) => row.local_day === digestDay)
         .map((row) => ({
-          role: row.role,
+          role: row.role === "user" ? "luke" : row.role,
           kind: row.kind,
+          at: localTime(row.deliver_at),
           text: row.body.slice(0, 500),
+          ...(typeof row.payload?.asks === "string"
+            ? { asked_open_question: row.payload.asks }
+            : {}),
         })),
       training_plan: context.trainingPlan
         ? {
@@ -400,12 +445,21 @@ export async function runDayDigest(
         }
         : null,
     };
+    // The digest edits notes by key and settles open questions, so it sees
+    // both; chat and plan prompts get neither.
     const system = coachSystemBlocks(
       context.profile.goal_type,
       COACH_DAY_DIGEST_INSTRUCTIONS,
-      renderMemoryBlock(context),
+      renderMemoryBlock(context, {
+        noteKeys: true,
+        includeOpenQuestions: true,
+      }),
     );
-    const content = `<day_log>\n${
+    const brief = buildCoachBrief(context, {
+      perspective: "review",
+      includeTomorrow: true,
+    });
+    const content = `<brief>\n${brief}\n</brief>\n\n<day_log>\n${
       JSON.stringify(dayLog)
     }\n</day_log>\n\nWrite the digest for ${digestDay}.`;
     let result: StructuredCallResult;

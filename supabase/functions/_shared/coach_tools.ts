@@ -24,10 +24,14 @@ import {
 } from "./coach_goals.ts";
 import {
   addMemoryNote,
+  answerOpenQuestion,
   applyBioChanges,
   BIO_SECTION_KEYS,
   type BioChange,
   type BioSectionKey,
+  labelledNote,
+  type NoteKind,
+  openQuestions,
   updateCoachMemory,
 } from "./coach_memory.ts";
 import {
@@ -80,6 +84,9 @@ export type CoachToolEnvironment = {
   facts: unknown[];
   /// What the turn changed (drives a plan refresh afterwards).
   changed: Set<string>;
+  /// Meals and workouts this turn logged: the reply is their only
+  /// acknowledgment, so the later automatic reaction stands down.
+  acked?: { entryIds: string[]; activityIds: string[] };
   /// The coach_reply run, for cost attribution of nested model calls.
   runId?: string | null;
 };
@@ -96,6 +103,7 @@ export const COACH_TOOL_TIMEOUTS_MS: Record<string, number> = {
 export const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
 
 export const COACH_TOOL_STATUS_LABELS: Record<string, string> = {
+  answer_open_question: "Making a note…",
   get_day_state: "Checking today's log…",
   get_weight_trend: "Pulling up your weight trend…",
   update_goals: "Running the numbers…",
@@ -111,6 +119,7 @@ export const COACH_TOOL_STATUS_LABELS: Record<string, string> = {
 };
 
 export const MUTATING_COACH_TOOLS: ReadonlySet<string> = new Set([
+  "answer_open_question",
   "update_goals",
   "update_bio",
   "remember",
@@ -158,6 +167,21 @@ function tool(
 
 /// Static and sorted by name so the tools prefix caches across turns.
 export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
+  tool(
+    "answer_open_question",
+    "Settle one of the open questions you still had about Luke (scale, gym and equipment, lift days, and so on) once he answers it. The question leaves the open list and his answer is kept as a note. Use update_bio as well when the answer changes his schedule, lift days, or equipment.",
+    {
+      question: {
+        type: "string",
+        description: "The open question he answered, as listed.",
+      },
+      answer: {
+        type: "string",
+        description:
+          "His answer as one short line in plain words, e.g. 'Lifts at the Monterey Gym: full rack, dumbbells to 100'.",
+      },
+    },
+  ),
   tool(
     "draft_training_plan",
     "Start building (or rebuilding) Luke's training plan in the background. Returns immediately; the plan arrives as a card. Use when he asks for a plan or a change to his split.",
@@ -219,12 +243,19 @@ export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
   ),
   tool(
     "remember",
-    "Keep a short fact about Luke on file (preferences, commitments, wins, running jokes). Not for numbers the app tracks.",
+    "Keep a short, durable thing about Luke on file: a preference, a pattern, a commitment he makes, a win, or a running joke. One plain line. Not for numbers the app tracks.",
     {
       note: { type: "string" },
       kind: {
         type: "string",
-        enum: ["fact", "commitment", "win", "running_joke"],
+        enum: [
+          "fact",
+          "preference",
+          "pattern",
+          "commitment",
+          "win",
+          "running_joke",
+        ],
       },
     },
   ),
@@ -662,14 +693,12 @@ async function remember(
   raw: Record<string, unknown>,
 ): Promise<CoachToolResult> {
   const note = str(raw.note, "note", 200);
-  const kind = typeof raw.kind === "string" ? raw.kind : "fact";
+  const kind = REMEMBER_KINDS.find((value) => value === raw.kind) ?? "fact";
   const saved = await updateCoachMemory(
     environment.admin,
     environment.userId,
     (sections) => {
-      const text = kind === "fact"
-        ? note
-        : `${kind.replace("_", " ")}: ${note}`;
+      const text = labelledNote(note, kind);
       if (Object.values(sections.notes).includes(text)) return null;
       return {
         sections: addMemoryNote(sections, text, environment.now).sections,
@@ -683,6 +712,58 @@ async function remember(
   }
   environment.changed.add("memory");
   return ok({ saved: true });
+}
+
+const REMEMBER_KINDS: readonly NoteKind[] = [
+  "fact",
+  "preference",
+  "pattern",
+  "commitment",
+  "win",
+  "running_joke",
+];
+
+async function answerOpenQuestionTool(
+  environment: CoachToolEnvironment,
+  raw: Record<string, unknown>,
+): Promise<CoachToolResult> {
+  const question = str(raw.question, "question", 300);
+  const answer = str(raw.answer, "answer", 200);
+  let matched: string | null = null;
+  const saved = await updateCoachMemory(
+    environment.admin,
+    environment.userId,
+    (sections) => {
+      const result = answerOpenQuestion(
+        sections,
+        question,
+        answer,
+        environment.now,
+      );
+      matched = result.question;
+      if (
+        !result.question && Object.values(sections.notes).includes(answer)
+      ) return null;
+      return {
+        sections: result.sections,
+        summary: result.question
+          ? `Answered: ${result.question} ${answer}`
+          : `Remembered: ${answer}`,
+      };
+    },
+    { source: "coach_reply", messageId: environment.userMessageId },
+  );
+  if (saved.status === "conflict" || saved.status === "stale") {
+    return fail("Couldn't keep that answer; try again.");
+  }
+  environment.changed.add("memory");
+  const sections = saved.sections;
+  return ok({
+    saved: true,
+    settled: matched,
+    // The next one is for another day unless the moment is obviously right.
+    still_open: openQuestions(sections).length,
+  });
 }
 
 async function logMealText(
@@ -714,14 +795,14 @@ async function logMealText(
     },
     environment.dispatchEntry,
   );
-  // The meal shows in the day thread as its own card; the coach reacts with
-  // a meal_ack once the estimate lands (entry finalize hook), never twice.
+  // The meal shows in the day thread as its own card, numbers and all. This
+  // reply is its acknowledgment; the automatic meal_ack stands down for it.
   if (!created.duplicate) environment.changed.add("meal");
+  environment.acked?.entryIds.push(created.entryId);
   return ok({
-    status: created.status,
-    entry_id: created.entryId,
+    status: "logged",
     note:
-      "The estimate lands in about a minute on the meal card. Don't state macros for it.",
+      "The meal card shows the numbers on its own. React to the food in a few words; state no macros for it.",
   });
 }
 
@@ -745,13 +826,14 @@ async function logActivityText(
       sourceMessageId: environment.userMessageId,
     },
   );
-  // Like meals: the activity card is in the thread already and the
-  // workout_ack reaction follows its analysis.
+  // Like meals: the workout card is in the thread already and carries the
+  // breakdown and any PRs; this reply is the acknowledgment.
   if (!created.duplicate) environment.changed.add("activity");
+  environment.acked?.activityIds.push(created.activityId);
   return ok({
-    status: "processing",
-    activity_id: created.activityId,
-    note: "The breakdown and any PRs land on the workout card shortly.",
+    status: "logged",
+    note:
+      "The workout card shows the breakdown and any PRs on its own. React to the work in a few words, using last time from the brief if it helps; claim no PR yourself.",
   });
 }
 
@@ -931,6 +1013,7 @@ const HANDLERS: Record<
     raw: Record<string, unknown>,
   ) => Promise<CoachToolResult>
 > = {
+  answer_open_question: answerOpenQuestionTool,
   draft_training_plan: draftTrainingPlanTool,
   find_nearby_food: findNearbyFood,
   get_day_state: getDayState,

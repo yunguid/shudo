@@ -20,6 +20,7 @@ import { mergeBioDictation } from "./coach_bio.ts";
 import { handleCardAction, parseCardAction } from "./coach_cards.ts";
 import {
   allowedFiguresFor,
+  buildCoachBrief,
   buildStatePack,
   type CoachContext,
   coachSystemBlocks,
@@ -29,10 +30,10 @@ import {
 } from "./coach_context.ts";
 import {
   type CoachCopyPolicy,
-  coachCopyViolation,
+  coachCopyReview,
   sanitizeCoachText,
-  SOFT_COACH_COPY_CODES,
   splitBubbles,
+  stripPreamble,
 } from "./coach_copy.ts";
 import { type CoachJobRequest, dispatchCoachJob } from "./coach_dispatch.ts";
 import {
@@ -41,12 +42,18 @@ import {
   WELLBEING_CARD_BODY,
   WELLBEING_RESOURCES,
 } from "./coach_fallbacks.ts";
-import { COACH_CHAT_RULES, COACH_PERSONA_VERSION } from "./coach_persona.ts";
+import {
+  COACH_CHAT_RULES,
+  COACH_PERSONA_VERSION,
+  type CoachContextHint,
+  contextHintRouting,
+} from "./coach_persona.ts";
 import {
   addDays,
   formatClock,
   isValidTimezone,
   localClock,
+  weekdayOf,
 } from "./coach_policy.ts";
 import {
   claimCoachRun,
@@ -189,8 +196,18 @@ export type CoachSendRequest = {
   timezone: string;
   attachmentPath: string | null;
   location: LocationContext | null;
-  contextHint: "bio" | null;
+  /// Where the global mic was: Today (null), Train, Body, or Bio.
+  contextHint: CoachContextHint | null;
 };
+
+const CONTEXT_HINTS: readonly CoachContextHint[] = ["train", "body", "bio"];
+
+/** The screen hint from the app; anything unknown is the general mic. */
+export function parseContextHint(value: unknown): CoachContextHint | null {
+  if (typeof value !== "string") return null;
+  const hint = value.trim().toLowerCase();
+  return CONTEXT_HINTS.find((item) => item === hint) ?? null;
+}
 
 export type CoachChatBody =
   | { kind: "send"; request: CoachSendRequest }
@@ -276,7 +293,7 @@ export function parseCoachChatBody(value: unknown): CoachChatBody {
       timezone,
       attachmentPath,
       location: parseLocationContext(object.location),
-      contextHint: object.context_hint === "bio" ? "bio" : null,
+      contextHint: parseContextHint(object.context_hint),
     },
   };
 }
@@ -407,6 +424,9 @@ class StreamingReply {
     readonly messageId: string,
     readonly emit: (event: CoachStreamEvent) => void,
     readonly clock: () => number,
+    /// Payload carried on in-flight writes too (what the reply acknowledges),
+    /// so a fast meal analysis already sees the chat acknowledged it.
+    readonly extras: () => Record<string, unknown> = () => ({}),
   ) {}
 
   append(piece: string): void {
@@ -428,7 +448,7 @@ class StreamingReply {
         claimToken: this.claimToken,
         messageId: this.messageId,
         body: snapshot.slice(0, MAX_TEXT_CHARACTERS),
-        payload: { persona_version: COACH_PERSONA_VERSION },
+        payload: { persona_version: COACH_PERSONA_VERSION, ...this.extras() },
         done: false,
       }).catch((error) => {
         console.warn("coach_stream_write_failed", { message: String(error) });
@@ -473,17 +493,26 @@ function wantsLongForm(text: string): boolean {
   return /\b(?:why|explain|how come|walk me through)\b/iu.test(text);
 }
 
+/// Bio merges reason over his whole bio; everything else is a quick text.
 function chatEffort(request: CoachSendRequest): ClaudeEffort {
   const words = request.text.split(/\s+/u).filter(Boolean).length;
   return request.contextHint === "bio" || words > 120 ? "medium" : "low";
 }
+
+const HINT_LABEL: Record<CoachContextHint, string> = {
+  train: " · from the Train screen",
+  body: " · from the Body screen",
+  bio: " · from the Bio screen",
+};
 
 function userTurnText(
   request: CoachSendRequest,
   context: CoachContext,
 ): string {
   const clock = localClock(context.now, request.timezone);
-  const meta = `(${clock.weekday} ${request.localDay} ${
+  // The weekday of the day he is on (after midnight the coach's 04:00 day
+  // is still yesterday, but his calendar says today).
+  const meta = `(${weekdayOf(request.localDay)} ${request.localDay} ${
     formatClock(clock.minutes)
   } · ${
     request.inputMode === "typed"
@@ -491,14 +520,49 @@ function userTurnText(
       : request.inputMode === "dictated"
       ? "dictated, may contain transcription slips"
       : "replied from a notification"
-  }${request.contextHint === "bio" ? " · from the Bio screen" : ""})`;
+  }${request.contextHint ? HINT_LABEL[request.contextHint] : ""})`;
   return `${meta}\n${request.text || "(photo only)"}`;
 }
+
+/// The mid-conversation system note: who he is right now, the live state,
+/// and where he spoke from. Server-written; his words never go in here.
+export function liveStateNote(
+  context: CoachContext,
+  statePack: Record<string, unknown>,
+  hint: CoachContextHint | null,
+): string {
+  const brief = buildCoachBrief(context, {
+    includeHisWords: false,
+    offerOpenQuestion: true,
+  });
+  const routing = contextHintRouting(hint);
+  return `<brief>\n${brief}\n</brief>\n<live_state>${
+    JSON.stringify(statePack)
+  }</live_state>${routing ? `\n<routing>${routing}</routing>` : ""}`;
+}
+
+function ackedPayload(
+  acked: { entryIds: string[]; activityIds: string[] },
+): Record<string, unknown> {
+  return {
+    ...(acked.entryIds.length ? { acked_entry_ids: [...acked.entryIds] } : {}),
+    ...(acked.activityIds.length
+      ? { acked_activity_ids: [...acked.activityIds] }
+      : {}),
+  };
+}
+
+const REWRITE_HINTS: Partial<Record<string, string>> = {
+  machinery:
+    "it talked about the app's machinery (logging, saving, tools, estimates, IDs); say the same thing as a coach who simply knows",
+  preamble: "it opened with filler; start with the point",
+  verbose: "it was too long for a text; say it in a sentence or two",
+};
 
 async function rewriteReply(
   client: Anthropic | undefined,
   system: ReturnType<typeof coachSystemBlocks>,
-  statePack: Record<string, unknown>,
+  liveNote: string,
   userText: string,
   draft: string,
   violation: string,
@@ -511,9 +575,10 @@ async function rewriteReply(
       system,
       messages: [{
         role: "user",
-        content: `<live_state>${
-          JSON.stringify(statePack)
-        }</live_state>\n\nLuke wrote:\n${userText}\n\nYour draft reply broke a rule (${violation}):\n${draft}\n\nRewrite the reply so it follows every rule. Use only figures from the live state. Return bubbles.`,
+        content:
+          `${liveNote}\n\nLuke wrote:\n${userText}\n\nYour draft reply broke a rule (${violation}${
+            REWRITE_HINTS[violation] ? `: ${REWRITE_HINTS[violation]}` : ""
+          }):\n${draft}\n\nRewrite the reply so it follows every rule. Use only figures from the live state. Return bubbles.`,
       }],
       schema: CHAT_REWRITE_SCHEMA,
       schemaName: "submit_reply",
@@ -553,6 +618,7 @@ export async function runCoachTurn(
   const client = dependencies.client ?? claudeClient();
   // One reply row per attempt: a reclaimed run hides earlier attempts' rows.
   const replyMessageId = await deterministicUuid(`${input.claimToken}:reply`);
+  const acked = { entryIds: [] as string[], activityIds: [] as string[] };
   const reply = new StreamingReply(
     admin,
     input.runId,
@@ -560,6 +626,7 @@ export async function runCoachTurn(
     replyMessageId,
     emit,
     clock,
+    () => ackedPayload(acked),
   );
   let usage = emptyUsage("coach_reply", COACH_CHAT_MODEL);
   const toolCalls: string[] = [];
@@ -602,6 +669,7 @@ export async function runCoachTurn(
       cards: [],
       facts: [],
       changed: new Set(),
+      acked,
       runId: input.runId,
     };
 
@@ -643,9 +711,10 @@ export async function runCoachTurn(
     messages.push({ role: "user", content: userContent });
     // Volatile state rides as a mid-conversation system message after his
     // words, so his history and the cached prefix are never edited.
+    const liveNote = liveStateNote(context, statePack, request.contextHint);
     messages.push({
       role: "system",
-      content: `<live_state>${JSON.stringify(statePack)}</live_state>`,
+      content: liveNote,
     });
 
     const tools = [...COACH_TOOL_DEFINITIONS, webSearchTool(3)];
@@ -776,6 +845,7 @@ export async function runCoachTurn(
         : CHAT_FAILURE_FALLBACK;
     }
     let bubbles = splitBubbles(finalText, 3);
+    if (!fallback && bubbles.length) bubbles[0] = stripPreamble(bubbles[0]);
     const policy: CoachCopyPolicy = {
       mode: "chat_reply",
       profanity: context.settings.profanity,
@@ -786,15 +856,20 @@ export async function runCoachTurn(
       pushCapable: false,
       longForm: wantsLongForm(request.text),
     };
-    const violation = fallback
-      ? null
-      : coachCopyViolation({ skip: false, bubbles, push_body: null }, policy);
-    if (violation && !SOFT_COACH_COPY_CODES.has(violation.code)) {
+    const review = fallback
+      ? { safety: null, voice: null }
+      : coachCopyReview({ skip: false, bubbles, push_body: null }, policy);
+    // Safety problems are always rewritten (or replaced). Of the voice
+    // problems only machinery is: the reply has already streamed, and
+    // swapping it just to trim a sentence would read as a glitch.
+    const violation = review.safety ??
+      (review.voice?.code === "machinery" ? review.voice : null);
+    if (violation) {
       const rewrite = deadline - clock() > 25_000
         ? await rewriteReply(
           dependencies.client,
           system,
-          statePack,
+          liveNote,
           request.text,
           finalText,
           violation.code,
@@ -810,22 +885,27 @@ export async function runCoachTurn(
           input.runId,
         );
       }
-      if (
-        rewrite &&
-        !coachCopyViolation({
+      const rewriteReview = rewrite
+        ? coachCopyReview({
           skip: false,
           bubbles: rewrite.bubbles,
           push_body: null,
         }, policy)
+        : null;
+      if (
+        rewrite && rewriteReview && !rewriteReview.safety &&
+        (review.safety !== null || rewriteReview.voice?.code !== "machinery")
       ) {
         bubbles = rewrite.bubbles;
         rewritten = true;
-      } else {
+      } else if (review.safety) {
         bubbles = [CHAT_FAILURE_FALLBACK];
         fallback = `guard:${violation.code}`;
+      } else {
+        console.info("coach_reply_voice_kept", { code: violation.code });
       }
-    } else if (violation) {
-      console.info("coach_reply_soft_violation", { code: violation.code });
+    } else if (review.voice) {
+      console.info("coach_reply_soft_violation", { code: review.voice.code });
     }
     const body = bubbles.join("\n\n");
     await reply.finish(body, {
@@ -833,6 +913,8 @@ export async function runCoachTurn(
       model: lastModel,
       input_mode: request.inputMode,
       tools: toolCalls,
+      ...(request.contextHint ? { context_hint: request.contextHint } : {}),
+      ...ackedPayload(acked),
       ...(rewritten ? { rewritten: true } : {}),
       ...(fallback ? { fallback } : {}),
     });

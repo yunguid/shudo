@@ -2,9 +2,10 @@ import type { SlotTopic } from "./coach_policy.ts";
 
 /// Deterministic coach-voice copy used when the model refuses, fails, or
 /// keeps breaking the guard. Ported from the app's DayNudgePolicy (lunch
-/// log check, protein check, evening close-out) so nothing regresses. Every
-/// figure comes from the snapshot passed in; the tests run these through
-/// assertCoachCopy.
+/// log check, protein check, evening close-out) so nothing regresses. Each
+/// line reads like a friend's text on a lock screen: no preamble, one idea,
+/// at most 90 characters. Every figure comes from the snapshot passed in;
+/// the tests run these through assertCoachCopy.
 
 export type FallbackSnapshot = {
   name: string | null;
@@ -25,50 +26,34 @@ function grams(value: number): string {
   return String(Math.max(0, Math.round(value)));
 }
 
+function same(text: string): FallbackCopy {
+  return { body: text, push_body: text };
+}
+
 /** Copy for one proactive slot, or null when silence is the better call. */
 export function fallbackSlotCopy(
   topic: SlotTopic,
   snapshot: FallbackSnapshot,
 ): FallbackCopy | null {
   if (snapshot.wellbeingHold || topic === "friend_checkin") {
-    const text = "Checking in on you, not the numbers. How's today going?";
-    return { body: text, push_body: text };
+    return same("Checking in on you, not the numbers. How's today going?");
   }
-  const name = snapshot.name ? `${snapshot.name}, ` : "";
   switch (topic) {
-    case "morning_plan": {
-      const text = `Morning. ${kcal(snapshot.calories.target)} cal and ${
-        grams(snapshot.protein.target)
-      }g protein today. Breakfast before you walk out.`;
-      return { body: text, push_body: text };
-    }
+    case "morning_plan":
+      return same("Morning. Eat before you walk out and the rest gets easy.");
     case "breakfast":
       if (snapshot.mealsLogged > 0) return null;
-      return {
-        body: "Breakfast first, then the day. Eggs, rice, fruit, the classic.",
-        push_body: "Breakfast first, then the day. Eggs, rice, fruit.",
-      };
+      return same("Breakfast first. Eggs, rice, fruit, the classic.");
     case "snack":
-      return {
-        body:
-          "Desk snack window. Yogurt, a shake, or a banana with peanut butter.",
-        push_body: "Desk snack window. Yogurt, a shake, or a banana with PB.",
-      };
+      return same("Snack window. Yogurt, a shake, or a banana with PB.");
     case "lunch":
       if (snapshot.mealsLogged === 0) {
-        return {
-          body:
-            "Nothing logged yet today. Anything you ate that I don't know about?",
-          push_body:
-            "Nothing logged yet today. Anything you ate that I don't know about?",
-        };
+        return same(
+          "Nothing logged yet. Anything you ate that I don't know about?",
+        );
       }
       if ((snapshot.minutesSinceLastLog ?? 0) < 180) return null;
-      return {
-        body:
-          "Lunch logged while it's fresh keeps the trend honest. Make it a real one.",
-        push_body: "Log lunch while it's fresh. Make it a real one.",
-      };
+      return same("Make lunch a real one, and log it while it's fresh.");
     case "protein_gap": {
       const { logged, target, remaining } = snapshot.protein;
       if (
@@ -76,41 +61,35 @@ export function fallbackSlotCopy(
       ) {
         return null;
       }
-      const text = `${name}${grams(logged)}g protein logged so far. ${
-        grams(remaining)
-      }g more gets you to ${grams(target)}g. Log anything I missed first.`;
-      return { body: text, push_body: text };
+      return same(
+        `${grams(logged)}g protein so far, ${
+          grams(remaining)
+        }g to go. Anything I missed?`,
+      );
     }
     case "pre_workout":
-      return {
-        body: "Lift day. Eat something an hour out, then go move some weight.",
-        push_body: "Lift day. Eat an hour out, then go move some weight.",
-      };
+      return same("Lift day. Eat an hour out, then go move some weight.");
     case "dinner": {
       if (snapshot.mealsLogged === 0) return null;
-      const text = `About ${
-        kcal(snapshot.calories.remaining)
-      } cal left on today's number. Make dinner the big meal.`;
       return snapshot.calories.remaining >= 300
-        ? { body: text, push_body: text }
+        ? same(
+          `About ${
+            kcal(snapshot.calories.remaining)
+          } cal left. Make dinner the big one.`,
+        )
         : null;
     }
     case "closeout": {
-      const { logged, target, remaining } = snapshot.calories;
+      const { target, remaining } = snapshot.calories;
       if (
         snapshot.mealsLogged > 0 && target > 0 &&
         remaining >= Math.min(target * 0.25, 400)
       ) {
-        const text = `${kcal(logged)} cal logged, about ${
-          kcal(remaining)
-        } under your number. Anything still to log?`;
-        return { body: text, push_body: text };
+        return same(
+          `About ${kcal(remaining)} cal short tonight. Anything still to log?`,
+        );
       }
-      return {
-        body:
-          "Kitchen's closing. Something with milk if you're short, then bed on time.",
-        push_body: "Kitchen's closing. Milk if you're short, then bed on time.",
-      };
+      return same("Kitchen's closing. Milk if you're short, then bed on time.");
     }
     default:
       return null;
@@ -127,33 +106,23 @@ export function fallbackReactionCopy(
   kind: ReactionKind,
   snapshot: FallbackSnapshot,
 ): FallbackCopy {
-  if (snapshot.wellbeingHold) {
-    const text = "Got it, thanks for logging it.";
-    return { body: text, push_body: text };
-  }
+  if (snapshot.wellbeingHold) return same("Thanks for logging it.");
   switch (kind) {
-    case "meal_ack": {
-      const text = snapshot.calories.remaining > 0
-        ? `Got it. ${kcal(snapshot.calories.remaining)} cal and ${
-          grams(snapshot.protein.remaining)
-        }g protein left today.`
-        : "Got it. That covers today's number. Normal day tomorrow.";
-      return { body: text, push_body: text };
-    }
-    case "workout_ack": {
-      const text =
-        "Session logged. Get protein in over the next couple hours, then sleep.";
-      return { body: text, push_body: text };
-    }
-    case "weigh_in_ack": {
-      const text = "Check-in's in. One day is noise; the trend decides.";
-      return { body: text, push_body: text };
-    }
-    case "photo_feedback": {
-      const text =
-        "Photo's in. Same light, same pose, and we compare over weeks, not days.";
-      return { body: text, push_body: text };
-    }
+    case "meal_ack":
+      if (snapshot.calories.remaining <= 0) {
+        return same("That covers today's number. Normal day tomorrow.");
+      }
+      return same(
+        `${snapshot.mealsLogged <= 1 ? "Good start. " : ""}${
+          kcal(snapshot.calories.remaining)
+        } cal and ${grams(snapshot.protein.remaining)}g protein to go.`,
+      );
+    case "workout_ack":
+      return same("Good work. Protein in the next couple hours, then sleep.");
+    case "weigh_in_ack":
+      return same("One weigh-in is noise. The trend decides.");
+    case "photo_feedback":
+      return same("Photo's in. Same light, same pose; we judge it in weeks.");
   }
 }
 

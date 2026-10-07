@@ -3,9 +3,11 @@ import {
   assertCoachCopy,
   coachCardCopyGuard,
   type CoachCopyPolicy,
+  coachCopyReview,
   coachCopyViolation,
   sanitizeCoachText,
   splitBubbles,
+  stripPreamble,
   unverifiedFigures,
 } from "../_shared/coach_copy.ts";
 import {
@@ -117,11 +119,24 @@ function pushViolationCode(
 Deno.test("all forty persona examples pass the coach guard as bubble and push", () => {
   assertEquals(FORTY_EXAMPLES.length, 40);
   for (const example of FORTY_EXAMPLES) {
-    const violation = coachCopyViolation(
+    // Every example is safe on the lock screen and a clean bubble.
+    const safety = coachCopyViolation(
+      { skip: false, bubbles: [example], push_body: example },
+      policy({ voice: false }),
+    );
+    assert(safety === null, `${safety?.message}: ${example}`);
+    const bubble = coachCopyViolation(
+      { skip: false, bubbles: [example], push_body: null },
+      policy(),
+    );
+    assert(bubble === null, `${bubble?.message}: ${example}`);
+    // As a push, only the few past 110 characters earn a tightening pass.
+    const push = coachCopyViolation(
       { skip: false, bubbles: [example], push_body: example },
       policy(),
     );
-    assert(violation === null, `${violation?.message}: ${example}`);
+    const expected = Array.from(example).length > 110 ? "verbose" : null;
+    assert((push?.code ?? null) === expected, `${push?.message}: ${example}`);
   }
 });
 
@@ -380,4 +395,93 @@ Deno.test("card copy from the Train/Body/Nearby lanes goes through the same voic
     caught = error;
   }
   assert(caught instanceof CardCopyViolation);
+});
+
+Deno.test("the coach never narrates machinery: tools, saving, estimates, IDs", () => {
+  const cases = [
+    "I've logged that for you. Nice lunch.",
+    "I logged the sandwich. Keep going.",
+    "I'll save that to your bio.",
+    "Saved it to your notes.",
+    "It's in my memory now.",
+    "The estimate lands in about a minute.",
+    "Still analyzing the photo, hang tight.",
+    "I ran a tool call to check your day.",
+    "Claude here: eat more rice.",
+    "Your entry_id is on the card.",
+    "That meal has a confidence score of 80.",
+    "Logged as a2b4c6d8-0000-4000-8000-000000000001.",
+  ];
+  for (const text of cases) {
+    assert(violationCode(text) === "machinery", text);
+  }
+  // Short, human acknowledgments stay allowed.
+  for (
+    const text of [
+      "Logged. Bench moving.",
+      "You logged every slice and every beer. Respect.",
+      "Anything you forgot to log?",
+      "A rough guess beats a blank page.",
+    ]
+  ) {
+    assert(violationCode(text) === null, `${violationCode(text)}: ${text}`);
+  }
+});
+
+Deno.test("preambles are flagged and stripped, never the whole text", () => {
+  assertEquals(violationCode("Great question. Eat at 3."), "preamble");
+  assertEquals(violationCode("Sure, a shake works."), "preamble");
+  assertEquals(stripPreamble("Great question. Eat at 3."), "Eat at 3.");
+  assertEquals(stripPreamble("Sure thing, a shake works."), "A shake works.");
+  assertEquals(stripPreamble("Absolutely. Rice and eggs."), "Rice and eggs.");
+  assertEquals(stripPreamble("Sure."), "Sure.");
+  // An adverb that opens a real sentence is not throat-clearing.
+  assertEquals(violationCode("Definitely keep the elbows tucked."), null);
+  assertEquals(
+    stripPreamble("Shake at 3, then lift."),
+    "Shake at 3, then lift.",
+  );
+});
+
+Deno.test("text-message length: long copy is a voice problem, not a safety one", () => {
+  const sentence =
+    "Eat a real breakfast before work, a big lunch with rice, a shake at three, and dinner after the gym.";
+  const long = [sentence, sentence, sentence, sentence].join(" ");
+  const review = coachCopyReview(
+    {
+      skip: false,
+      bubbles: [long.slice(0, 270), long.slice(0, 200)],
+      push_body: null,
+    },
+    policy({ mode: "chat_reply" }),
+  );
+  assertEquals(review.safety, null);
+  assertEquals(review.voice?.code, "verbose");
+  // A "why" question may run long without tripping the voice limit.
+  assertEquals(
+    coachCopyReview(
+      {
+        skip: false,
+        bubbles: [long.slice(0, 270), long.slice(0, 200)],
+        push_body: null,
+      },
+      policy({ mode: "chat_reply", longForm: true }),
+    ).voice,
+    null,
+  );
+  const push =
+    "Shake math: milk, two scoops, banana, peanut butter. About 850 cal in one glass. You were built on milk, remember?";
+  assertEquals(pushViolationCode(push), "verbose");
+  assertEquals(pushViolationCode(push, { voice: false }), null);
+  // Safety still wins over voice in the review.
+  const unsafe = coachCopyReview(
+    {
+      skip: false,
+      bubbles: ["Great question. Skip dinner tonight."],
+      push_body: null,
+    },
+    policy(),
+  );
+  assertEquals(unsafe.safety?.code, "extreme_diet");
+  assertEquals(unsafe.voice, null);
 });

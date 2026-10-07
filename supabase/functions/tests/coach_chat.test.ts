@@ -423,6 +423,7 @@ Deno.test("history renders as alternating text turns from yesterday on", () => {
   assertEquals(
     COACH_TOOL_DEFINITIONS.map((tool) => (tool as { name: string }).name),
     [
+      "answer_open_question",
       "draft_training_plan",
       "find_nearby_food",
       "get_day_state",

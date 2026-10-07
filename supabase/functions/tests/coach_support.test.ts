@@ -392,11 +392,28 @@ Deno.test("the weekly recap posts once per week, after quiet hours", async () =>
     target_calories_kcal: 2900,
     target_protein_g: 170,
   });
+  // The card carries the numbers; the text says what they mean, and the
+  // lock-screen line fits in one glance.
   assertEquals(
     copy.body,
-    "Week of Sep 28 is in: 6 days logged, averaging 2,630 cal and 152g protein. The full recap is on the Body tab.",
+    "Week of Sep 28: 2,630 cal a day, right on the number. Same again. Full recap's on the Body tab.",
   );
-  assert(copy.push_body.length <= 150);
+  assertEquals(
+    copy.push_body,
+    "Week of Sep 28: 2,630 cal a day against 2,900.",
+  );
+  assert(copy.push_body.length <= 90);
+  const short = weeklyRecapCopy("2026-09-28", {
+    days_logged: 3,
+    average_calories_kcal: 2350,
+    average_protein_g: 120,
+    target_calories_kcal: 2900,
+    target_protein_g: 170,
+  });
+  assertEquals(
+    short.body,
+    "Week of Sep 28: 2,350 cal a day against 2,900. Closing that gap is the week. Only 3 of 7 days logged, so it's a partial read. Full recap's on the Body tab.",
+  );
   const fake = coachFakeAdmin({
     tables: {
       profiles: [{
