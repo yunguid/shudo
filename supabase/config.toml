@@ -458,6 +458,29 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/generate_weekly_summaries/index.ts"
 
+[functions.coach_chat]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/coach_chat/index.ts"
+
+[functions.coach_sync]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/coach_sync/index.ts"
+
+[functions.log_activity]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/log_activity/index.ts"
+
+[functions.coach_tick]
+enabled = true
+# Dispatched by generate_weekly_summaries (daily) and by coach jobs. Every
+# request must carry x-shudo-weekly-secret; user JWTs are never accepted by
+# this maintenance endpoint.
+verify_jwt = false
+entrypoint = "./functions/coach_tick/index.ts"
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
