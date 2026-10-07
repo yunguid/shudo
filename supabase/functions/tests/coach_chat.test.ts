@@ -197,10 +197,13 @@ Deno.test("chat runs the tool loop: tool call, tool result, then the reply", asy
   assert(
     toolNames.includes("get_day_state") && toolNames.includes("web_search"),
   );
+  // Every client tool is strict except update_goals, which opts out to keep
+  // the request under the API's 16 union-typed params (see
+  // coach_tool_limits.test.ts); its handler validates input itself.
   assert(
-    (first.tools ?? []).filter((tool) => tool.name !== "web_search").every((
-      tool,
-    ) => tool.strict === true),
+    (first.tools ?? []).filter((tool) =>
+      tool.name !== "web_search" && tool.name !== "update_goals"
+    ).every((tool) => tool.strict === true),
   );
   assertEquals(first.tool_choice, undefined);
   const firstMessages = first.messages ?? [];
