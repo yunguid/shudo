@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>luke.shudo.coach.refresh</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -40,11 +44,18 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Shudo uses the camera so you can attach a meal photo.</string>
+	<string>Shudo uses the camera for meal photos, workout photos and progress photos.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>NearbyGrab</key>
+		<string>Precise location gives real walking times to nearby stores.</string>
+	</dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Shudo uses your location to find stores within walking distance and pick snacks that fit today’s macros.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Shudo uses the microphone to record and transcribe your meal description.</string>
+	<string>Shudo uses the microphone so you can talk to it. Your audio is transcribed on your iPhone and never uploaded.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Shudo uses speech recognition so you can say your weight during a weigh-in instead of typing it.</string>
+	<string>Shudo transcribes what you say on your iPhone so you can log meals, workouts and weigh-ins by voice. Your audio is never uploaded.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -53,6 +64,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>fetch</string>
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>

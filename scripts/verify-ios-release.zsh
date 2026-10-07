@@ -41,11 +41,34 @@ plutil -lint "$shudo_project/project.pbxproj" "$shudo_info" "$shudo_privacy"
   fail "microphone purpose text is missing"
 [[ "$(plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes.0 raw "$shudo_info")" == \
   "$shudo_expected_url_scheme" ]] || fail "the shudo deep-link scheme changed"
+[[ -n "$(plutil -extract NSSpeechRecognitionUsageDescription raw "$shudo_info")" ]] || \
+  fail "speech recognition purpose text is missing"
 [[ "$(plutil -extract UIBackgroundModes.0 raw "$shudo_info")" == "audio" ]] || \
   fail "background recording mode is missing"
 if plutil -extract NSPhotoLibraryUsageDescription raw "$shudo_info" >/dev/null 2>&1; then
   fail "PhotosPicker does not need full-library permission; remove NSPhotoLibraryUsageDescription"
 fi
+
+# Coach: background refresh, When-In-Use location only, on-device voice.
+shudo_info_json="$(plutil -convert json -o - "$shudo_info")"
+print -r -- "$shudo_info_json" | jq -e '.UIBackgroundModes | index("fetch") != null' >/dev/null || \
+  fail "the coach background-refresh mode (fetch) is missing"
+print -r -- "$shudo_info_json" | jq -e '.UIBackgroundModes | index("location") == null' >/dev/null || \
+  fail "Shudo uses When-In-Use location only; remove the location background mode"
+print -r -- "$shudo_info_json" | \
+  jq -e '.BGTaskSchedulerPermittedIdentifiers | index("luke.shudo.coach.refresh") != null' >/dev/null || \
+  fail "the coach refresh task identifier is not permitted"
+[[ -n "$(plutil -extract NSLocationWhenInUseUsageDescription raw "$shudo_info")" ]] || \
+  fail "When-In-Use location purpose text is missing"
+[[ -n "$(plutil -extract NSLocationTemporaryUsageDescriptionDictionary.NearbyGrab raw "$shudo_info")" ]] || \
+  fail "the NearbyGrab precise-location purpose text is missing"
+if plutil -extract NSLocationAlwaysAndWhenInUseUsageDescription raw "$shudo_info" >/dev/null 2>&1; then
+  fail "Shudo must not request Always location"
+fi
+for shudo_voice_key in NSMicrophoneUsageDescription NSSpeechRecognitionUsageDescription; do
+  [[ "$(plutil -extract "$shudo_voice_key" raw "$shudo_info")" == *"never uploaded"* ]] || \
+    fail "$shudo_voice_key must say audio is never uploaded"
+done
 
 [[ "$(plutil -extract NSPrivacyTracking raw "$shudo_privacy")" == "false" ]] || \
   fail "the privacy manifest unexpectedly enables tracking"
@@ -53,6 +76,19 @@ fi
   fail "tracking domains must be empty"
 [[ "$(plutil -extract NSPrivacyCollectedDataTypes raw "$shudo_privacy")" -ge 8 ]] || \
   fail "the privacy manifest is missing Shudo data categories"
+shudo_privacy_types="$(plutil -convert json -o - "$shudo_privacy" | \
+  jq -r '.NSPrivacyCollectedDataTypes[].NSPrivacyCollectedDataType')"
+for shudo_required_type in \
+  NSPrivacyCollectedDataTypePreciseLocation \
+  NSPrivacyCollectedDataTypeFitness \
+  NSPrivacyCollectedDataTypeHealth \
+  NSPrivacyCollectedDataTypePhotosorVideos; do
+  print -r -- "$shudo_privacy_types" | grep -qx "$shudo_required_type" || \
+    fail "the privacy manifest must declare $shudo_required_type"
+done
+if print -r -- "$shudo_privacy_types" | grep -qx NSPrivacyCollectedDataTypeAudioData; then
+  fail "voice is transcribed on the device; the privacy manifest must not declare AudioData"
+fi
 [[ "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw "$shudo_privacy")" == \
   "NSPrivacyAccessedAPICategoryUserDefaults" ]] || fail "UserDefaults required-reason API is missing"
 [[ "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw "$shudo_privacy")" == \

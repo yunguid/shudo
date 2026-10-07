@@ -253,9 +253,11 @@ enum DayNudgePolicy {
     }
 }
 
-/// Owns every local notification the app schedules: the repeating morning
-/// weigh-in reminder and today's dynamic pacing nudges, behind one master
-/// toggle. Replaces the old WeightReminderScheduler.
+/// Owns the app's non-coach local notifications: the repeating morning
+/// weigh-in reminder and today's pacing nudges, behind one master toggle.
+/// With the coach enabled, the server-written coach queue owns the day
+/// (`CoachSync`), so `DayNudgePolicy` only runs as the offline fallback while
+/// the coach is disabled.
 enum DayNotificationScheduler {
     static let enabledDefaultsKey = "dayNotificationsEnabled"
     static let weighInSecondsDefaultsKey = "weightReminderSecondsFromMidnight"
@@ -304,6 +306,12 @@ enum DayNotificationScheduler {
         )
     }
 
+    /// Pacing nudges are a fallback for when no coach queue exists: they stay
+    /// off while the coach is enabled so Luke never gets both voices.
+    static func shouldScheduleFallbackNudges(defaults: UserDefaults = .standard) -> Bool {
+        !CoachSettingsMirror.isCoachEnabled(defaults: defaults)
+    }
+
     /// Rebuilds today's plan from live data. Cheap and idempotent — call it
     /// whenever today's meals change or the app comes to the foreground.
     static func reschedule(
@@ -324,6 +332,7 @@ enum DayNotificationScheduler {
             secondsFromMidnight: weighInSecondsFromMidnight,
             copy: WeightReminderPolicy.copy(context: context)
         )
+        guard shouldScheduleFallbackNudges(defaults: defaults) else { return }
 
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = context.timezone
