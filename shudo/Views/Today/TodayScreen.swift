@@ -149,9 +149,9 @@ struct TodayScreen: View {
             GeometryReader { geometry in
                 ScrollViewReader { proxy in
                     ScrollView {
-                        thread(rows)
+                        thread(rows, viewport: geometry.size.height)
                             .padding(.horizontal, 12)
-                            .padding(.top, 6)
+                            .padding(.top, 4)
                             .padding(.bottom, 16)
                     }
                     .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -179,6 +179,9 @@ struct TodayScreen: View {
                     }
                     .onAppear {
                         if let id = coach.focusedMessageId { focus(on: id, proxy: proxy) }
+                        #if DEBUG
+                        previewScroll(proxy: proxy)
+                        #endif
                     }
                     .onChange(of: rows.last?.id) { _, _ in
                         guard settledDay == selectedDay else { return }
@@ -279,19 +282,20 @@ struct TodayScreen: View {
     // MARK: Thread
 
     @ViewBuilder
-    private func thread(_ rows: [DayThreadRow]) -> some View {
-        let receipt = DayThreadPolicy.readReceipt(for: rows)
-        VStack(alignment: .leading, spacing: 3) {
-            dayLabel
+    private func thread(_ rows: [DayThreadRow], viewport: CGFloat) -> some View {
+        let receiptRowId = DayThreadPolicy.readReceiptRowId(for: rows)
+        VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
                 if today.isLoadingDay || coach.isLoading {
                     loadingRows
                 } else {
                     emptyState
+                        .frame(minHeight: viewport * 0.6)
                 }
             }
-            ForEach(rows) { row in
-                rowView(row, receipt: receipt)
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                rowView(row, isFirst: index == 0, showsReceipt: row.id == receiptRowId)
+                    .padding(.top, Self.spacing(above: row, after: index > 0 ? rows[index - 1] : nil))
                     .id(row.id)
                     .transition(arrival(for: row.item.side))
             }
@@ -301,6 +305,30 @@ struct TodayScreen: View {
             settledDay == selectedDay ? Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion) : nil,
             value: rows.map(\.id)
         )
+    }
+
+    /// Messages rhythm: bubbles in a run sit 2pt apart, anything with a card
+    /// 6pt, a new speaker 14pt; a timestamp brings its own room.
+    static func spacing(above row: DayThreadRow, after previous: DayThreadRow?) -> CGFloat {
+        guard let previous, row.timestamp == nil else { return 0 }
+        if row.startsGroup { return 14 }
+        return isPlainBubble(previous.item) && isPlainBubble(row.item) ? 2 : 6
+    }
+
+    /// A text bubble with nothing hanging off it.
+    static func isPlainBubble(_ item: DayThreadItem) -> Bool {
+        switch item {
+        case .pending, .typing:
+            return true
+        case .message(let message):
+            guard item.isBubble else { return false }
+            switch message.payload {
+            case .none, .mealAck, .unknown: return true
+            default: return false
+            }
+        case .meal, .activity, .checkIn:
+            return false
+        }
     }
 
     private func arrival(for side: ThreadSide) -> AnyTransition {
@@ -314,32 +342,17 @@ struct TodayScreen: View {
         )
     }
 
-    private var dayLabel: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(dayTitle).eyebrowStyle()
-            Spacer()
-            if let phaseDayLabel {
-                Text(phaseDayLabel)
-                    .font(Design.Typeface.meta)
-                    .foregroundStyle(Design.Color.textTertiary)
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.top, 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-    }
-
-    private var dayTitle: String {
-        let weekday = formatters.weekdayFormatter.string(from: today.currentDay)
-        return "\(weekday) · \(formatters.dateFormatter.string(from: today.currentDay))"
+    /// "Today", "Yesterday", "Monday", "Mon, Sep 28".
+    private var threadDayName: String {
+        DayLabelPolicy.threadDay(localDay: selectedDay, today: todayDay)
     }
 
     @ViewBuilder
-    private func rowView(_ row: DayThreadRow, receipt: (rowId: String, readAt: Date)?) -> some View {
+    private func rowView(_ row: DayThreadRow, isFirst: Bool, showsReceipt: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let timestamp = row.timestamp {
-                ThreadTimestamp(text: timeText(timestamp))
+                ThreadTimestamp(day: isFirst ? threadDayName : nil, time: timeText(timestamp))
+                    .accessibilityAddTraits(isFirst ? .isHeader : [])
             }
             Group {
                 switch row.item {
@@ -348,7 +361,7 @@ struct TodayScreen: View {
                 case .meal(let entry): mealRow(entry)
                 case .activity(let activity): activityRow(activity)
                 case .checkIn(let checkIn): checkInRow(checkIn)
-                case .typing(let label, _): typingRow(label: label)
+                case .typing: typingRow
                 }
             }
             .background {
@@ -359,16 +372,16 @@ struct TodayScreen: View {
                         .transition(.opacity)
                 }
             }
-            if receipt?.rowId == row.id, let readAt = receipt?.readAt {
-                Text("Read \(timeText(readAt))")
+            if showsReceipt {
+                Text("Read")
                     .font(Design.Typeface.meta)
                     .foregroundStyle(Design.Color.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 4)
-                    .padding(.top, 3)
+                    .padding(.trailing, 6)
+                    .padding(.top, 4)
+                    .transition(.opacity)
             }
         }
-        .padding(.top, row.startsGroup && row.timestamp == nil ? 8 : 0)
     }
 
     // MARK: Rows
@@ -402,8 +415,8 @@ struct TodayScreen: View {
         case .coach:
             let hasBody = !message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let card = cardView(for: message)
-            CoachRow(showsAvatar: row.showsAvatar, isThinking: message.isStreaming) {
-                VStack(alignment: .leading, spacing: 4) {
+            CoachRow {
+                VStack(alignment: .leading, spacing: 6) {
                     if hasBody {
                         MessageBubble(
                             text: message.body,
@@ -430,7 +443,7 @@ struct TodayScreen: View {
         let cardActions = self.cardActions
         switch message.payload {
         case .plan(let card):
-            return AnyView(GamePlanCardView(card: card, localDay: message.localDay))
+            return AnyView(GamePlanCardView(card: card))
         case .recap(let card):
             let hour = formatters.calendar.component(.hour, from: message.deliverAt)
             return AnyView(RecapCardView(
@@ -442,7 +455,6 @@ struct TodayScreen: View {
             return AnyView(SnackRecCardView(
                 message: message,
                 card: card,
-                target: today.effectiveTarget,
                 liftLater: liftLaterToday(after: message.deliverAt),
                 actions: cardActions
             ))
@@ -453,11 +465,14 @@ struct TodayScreen: View {
         case .profileUpdate(let card):
             return AnyView(ProfileUpdateCardView(message: message, card: card, actions: cardActions))
         case .workoutAck(let card):
-            let activity = card.activityId.flatMap { id in dayActivities.first { $0.id == id } }
-            return AnyView(WorkoutAckCardView(card: card, activity: activity, actions: cardActions))
+            // The workout's own receipt is right above; only PRs earn a card.
+            guard !card.prs.isEmpty else { return nil }
+            return AnyView(WorkoutAckCardView(card: card, actions: cardActions))
         case .checkIn(let card):
-            guard card.review != nil || card.weightKg != nil else { return nil }
-            return AnyView(CheckInFeedbackCardView(card: card, units: units))
+            // A weigh-in's number is already on his check-in card and in
+            // the bubble; only a physique review adds something to read.
+            guard card.kind == .photoFeedback, let review = card.review else { return nil }
+            return AnyView(PhysiqueReviewCardView(review: review))
         case .mealAck, .none, .unknown:
             return nil
         }
@@ -590,20 +605,30 @@ struct TodayScreen: View {
     @ViewBuilder
     private func activityRow(_ activity: Activity) -> some View {
         MeRow {
-            let card = ActivityCard(
-                activity: activity,
-                units: units,
-                onRetry: activity.isNotSent ? { logging.retry(activity.id) } : nil,
-                onDiscard: activity.isNotSent ? { logging.discard(activity.id) } : nil
-            )
-            .frame(width: Design.Layout.threadCardWidth)
             if activity.isLocalOnly {
-                card
+                liveActivityCard(activity)
             } else {
-                NavigationLink(value: TodayRoute.activity(activity.id)) { card }
-                    .buttonStyle(.plain)
+                NavigationLink(value: TodayRoute.activity(activity.id)) {
+                    if activity.status == .complete, activity.localState == nil {
+                        WorkoutReceiptCard(activity: activity, units: units)
+                    } else {
+                        liveActivityCard(activity)
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
+    }
+
+    /// Sending, reading, failed or unsent: the Train card has those states.
+    private func liveActivityCard(_ activity: Activity) -> some View {
+        ActivityCard(
+            activity: activity,
+            units: units,
+            onRetry: activity.isNotSent ? { logging.retry(activity.id) } : nil,
+            onDiscard: activity.isNotSent ? { logging.discard(activity.id) } : nil
+        )
+        .frame(width: Design.Layout.threadCardWidth)
     }
 
     private func checkInRow(_ checkIn: WeightCheckIn) -> some View {
@@ -618,32 +643,31 @@ struct TodayScreen: View {
         }
     }
 
-    private func typingRow(label: String?) -> some View {
-        CoachRow(showsAvatar: true, isThinking: true) {
+    private var typingRow: some View {
+        CoachRow {
             // Dots only, like Messages; tool status labels read as noise.
             CoachTypingBubble()
         }
-        .padding(.top, 6)
     }
 
+    /// A day with nothing in it yet: Shudo's face and a hello. The header
+    /// above already says what the day asks for. A past empty day just
+    /// says so.
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            CoachAvatar(size: 44)
-            Text(isToday ? "Fresh day." : "Nothing logged this day.")
-                .font(.headline)
-                .foregroundStyle(Design.Color.textPrimary)
+        VStack(spacing: 16) {
+            CoachAvatar(size: 64)
+                .opacity(isToday ? 1 : 0.5)
             Text(
                 isToday
-                    ? "Tell Shudo what you ate, what you lifted, or what’s on your mind."
-                    : "Swipe from the edge or use the calendar to move between days."
+                    ? DayLabelPolicy.greeting(hour: formatters.calendar.component(.hour, from: environment.now()), name: currentProfile.displayName)
+                    : "Nothing logged"
             )
-            .font(.subheadline)
-            .foregroundStyle(Design.Color.textSecondary)
-            .multilineTextAlignment(.center)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(isToday ? Design.Color.textPrimary : Design.Color.textSecondary)
         }
+        .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
-        .padding(.horizontal, 24)
+        .accessibilityElement(children: .combine)
     }
 
     private var loadingRows: some View {
@@ -747,25 +771,25 @@ struct TodayScreen: View {
                 Text("Shudo")
                     .font(.headline)
                     .foregroundStyle(Design.Color.textPrimary)
-                Text(titleSubtitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(isTyping ? Design.Color.ember : Design.Color.textTertiary)
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
+                if let titleSubtitle {
+                    Text(titleSubtitle)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isTyping ? Design.Color.ember : Design.Color.textTertiary)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                }
             }
         }
         .animation(Design.Motion.snap, value: isTyping)
         .accessibilityElement(children: .combine)
     }
 
-    private var titleSubtitle: String {
-        if isTyping {
-            if case .thinking(let label?)? = coach.typing { return label }
-            return "typing…"
-        }
-        if isToday { return "Today" }
-        let weekday = formatters.weekdayFormatter.string(from: today.currentDay)
-        return "\(weekday) · diary"
+    /// "typing…" while Shudo works (never the tool phase), else where he is
+    /// in the phase today ("Day 35 of the bulk") or which day this is.
+    private var titleSubtitle: String? {
+        if isTyping { return "typing…" }
+        if isToday { return phaseDayLabel }
+        return threadDayName
     }
 
     private var datePicker: some View {
@@ -917,6 +941,23 @@ struct TodayScreen: View {
             }
         }
     }
+
+    #if DEBUG
+    /// `-shudoTodayScrollRow N` (previews only): park row N at the top so
+    /// screenshots can show the morning without a touch driver.
+    private func previewScroll(proxy: ScrollViewProxy) {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flag = arguments.firstIndex(of: "-shudoTodayScrollRow"),
+              arguments.indices.contains(flag + 1),
+              let index = Int(arguments[flag + 1]) else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1_500))
+            let rows = DayThreadPolicy.rows(for: threadItems)
+            guard rows.indices.contains(index) else { return }
+            proxy.scrollTo(rows[index].id, anchor: .top)
+        }
+    }
+    #endif
 
     // MARK: Delete with undo
 

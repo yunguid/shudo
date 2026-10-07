@@ -27,12 +27,6 @@ enum ThreadCardCopy {
         return "checkmark.circle.fill"
     }
 
-    /// "Game plan · Tue" from the message's local day.
-    static func planEyebrow(localDay: String) -> String {
-        guard let weekday = weekdayName(localDay, short: true) else { return "Game plan" }
-        return "Game plan · \(weekday)"
-    }
-
     // MARK: Recap
 
     /// A day recap delivered in the morning is about yesterday ("Monday
@@ -59,15 +53,17 @@ enum ThreadCardCopy {
         return !option.mapsQuery.trimmingCharacters(in: .whitespaces).isEmpty || !option.storeName.isEmpty
     }
 
+    /// Where it is, as the card's one label: "7-Eleven · 4 min walk".
     static func snackEyebrow(_ option: SnackRec.Option?) -> String {
         guard let option else { return "Nearby" }
         switch option.storeRef.lowercased() {
         case "home": return "Your kitchen"
         case "any": return "Any corner store"
         default:
-            if option.walkMinutes <= 0 { return "Nearby" }
-            if option.walkMinutes <= 2 { return "Nearby · 1 block" }
-            return "Nearby · \(option.walkMinutes) min walk"
+            let place = option.storeName.isEmpty ? "Nearby" : option.storeName
+            if option.walkMinutes <= 0 { return place }
+            if option.walkMinutes <= 2 { return "\(place) · 1 block" }
+            return "\(place) · \(option.walkMinutes) min walk"
         }
     }
 
@@ -79,20 +75,6 @@ enum ThreadCardCopy {
             return item.name + suffix
         }
         .joined(separator: " + ")
-    }
-
-    /// "7-Eleven · 4 min walk · ~$9"
-    static func snackSubtitle(_ option: SnackRec.Option) -> String {
-        var parts: [String] = []
-        if !option.storeName.isEmpty { parts.append(option.storeName) }
-        if option.walkMinutes > 0, !["home", "any"].contains(option.storeRef.lowercased()) {
-            parts.append("\(option.walkMinutes) min walk")
-        }
-        let prices = option.items.compactMap { item in item.priceUsdEst.map { $0 * max(1, item.quantity) } }
-        if !prices.isEmpty {
-            parts.append("~$\(Int(prices.reduce(0, +).rounded(.up)))")
-        }
-        return parts.joined(separator: " · ")
     }
 
     /// The one-line payoff under the deltas.
@@ -153,25 +135,5 @@ enum ThreadCardCopy {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = short ? "EEE" : "EEEE"
         return formatter.string(from: date)
-    }
-}
-
-/// An icon tile for a meal receipt when there's no photo.
-enum MealGlyphPolicy {
-    static func symbol(for summary: String) -> String {
-        let tokens = ThreadCardCopy.words(in: summary)
-        func has(_ prefixes: [String]) -> Bool {
-            tokens.contains { token in prefixes.contains { token.hasPrefix($0) } }
-        }
-        if has(["coffee", "latte", "espresso", "cappuccino"]) { return "cup.and.saucer.fill" }
-        if has(["milk", "shake", "smoothie", "core", "fairlife", "chobani"]) {
-            return "takeoutbag.and.cup.and.straw.fill"
-        }
-        if has(["egg", "oat", "toast", "pancake", "waffle", "bagel", "cereal"]) { return "sunrise.fill" }
-        if has(["bowl", "chipotle", "sweetgreen", "salad", "burrito", "rice"]) { return "fork.knife" }
-        if has(["steak", "chicken", "beef", "salmon", "fish", "pork", "turkey"]) { return "flame.fill" }
-        if has(["banana", "apple", "berries", "fruit", "orange"]) { return "leaf.fill" }
-        if has(["bar", "snack", "chips", "cookie", "jerky", "yogurt"]) { return "bag.fill" }
-        return "fork.knife"
     }
 }

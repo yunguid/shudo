@@ -75,26 +75,33 @@ struct DayHeader: View {
             .accessibilityHidden(true)
     }
 
+    /// The hero number. Compact: "855 kcal left" and nothing else — the
+    /// ring already shows how far along the day is. Expanded adds the target.
     private func remaining(style: Font.TextStyle) -> some View {
         let value = numbers.isOver ? numbers.overKcal : numbers.remainingKcal
-        return VStack(alignment: .leading, spacing: 1) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(value.formatted())
-                    .font(Design.Typeface.numeral(style, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .contentTransition(.numericText(value: Double(value)))
-                    .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: value)
-                    .lineLimit(1)
-                    .fixedSize()
-                Text(numbers.isOver ? "over" : "left")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(numbers.isOver ? Design.Color.honey : Design.Color.textSecondary)
-            }
-            Text("of \(numbers.targetKcal.formatted()) kcal")
-                .eyebrowStyle()
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(value.formatted())
+                .font(Design.Typeface.numeral(style, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(Design.Color.textPrimary)
+                .contentTransition(.numericText(value: Double(value)))
+                .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: value)
                 .lineLimit(1)
                 .fixedSize()
+            Text(numbers.isOver ? "kcal over" : "kcal left")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(numbers.isOver ? Design.Color.honey : Design.Color.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
+            if expanded {
+                Text("of \(numbers.targetKcal.formatted())")
+                    .font(Design.Typeface.numeral(.footnote, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(Design.Color.textTertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .transition(.opacity)
+            }
         }
         .matchedGeometryEffect(id: "remaining", in: namespace)
         .accessibilityElement(children: .ignore)
@@ -118,37 +125,26 @@ struct DayHeader: View {
 
     // MARK: Ledger
 
+    /// The day's meals (tap to fix, swipe to delete — no need to say so),
+    /// then the way into the week's insights.
     private var ledger: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Logged · \(meals.count)").eyebrowStyle()
-                Spacer()
-                if !meals.isEmpty {
-                    Text("Tap to fix · swipe to delete")
-                        .font(Design.Typeface.meta)
-                        .foregroundStyle(Design.Color.textTertiary)
+            if !meals.isEmpty {
+                HairlineRule().padding(.bottom, 4)
+                if meals.count <= 5 {
+                    ledgerRows
+                } else {
+                    // A long day scrolls inside the header instead of pushing
+                    // the thread off screen.
+                    ScrollView { ledgerRows }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(height: 300)
                 }
-            }
-            .padding(.bottom, 6)
-            if meals.isEmpty {
-                Text("Nothing logged yet. Tell Shudo what you ate.")
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 10)
-            } else if meals.count <= 5 {
-                ledgerRows
-            } else {
-                // A long day scrolls inside the header instead of pushing
-                // the thread off screen.
-                ScrollView { ledgerRows }
-                    .scrollBounceBehavior(.basedOnSize)
-                    .frame(height: 300)
             }
             HairlineRule().padding(.top, 4)
             Button(action: onOpenInsights) {
                 HStack {
-                    Label("Week insights & protein guide", systemImage: "chart.bar.xaxis")
+                    Text("Week insights")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Design.Color.textSecondary)
                     Spacer()
@@ -156,11 +152,13 @@ struct DayHeader: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(Design.Color.textTertiary)
                 }
-                .padding(.top, 10)
+                .padding(.top, 12)
+                .padding(.bottom, 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Week insights")
+            .accessibilityHint("Protein, weekly patterns and the protein guide")
         }
     }
 
@@ -185,18 +183,21 @@ struct DayHeader: View {
                     .monospacedDigit()
                     .foregroundStyle(Design.Color.textTertiary)
                     .frame(width: 40, alignment: .leading)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(meal.summary)
                         .font(.subheadline)
-                        .foregroundStyle(Design.Color.textPrimary)
+                        .foregroundStyle(meal.status == .complete ? Design.Color.textPrimary : Design.Color.textSecondary)
                         .lineLimit(1)
                     if meal.status == .complete {
                         MacroInline(p: meal.proteinG, c: meal.carbsG, f: meal.fatG)
-                    } else {
+                    } else if meal.status == .failed {
                         Text(meal.displayStatusMessage)
                             .font(.caption)
-                            .foregroundStyle(meal.status == .failed ? Design.Color.danger : Design.Color.honey)
+                            .foregroundStyle(Design.Color.danger)
                             .lineLimit(1)
+                    } else {
+                        ThreadShimmerLine(width: 72)
+                            .accessibilityLabel("Working on it")
                     }
                 }
                 Spacer()

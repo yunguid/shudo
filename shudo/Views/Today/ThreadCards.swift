@@ -3,30 +3,29 @@ import SwiftUI
 
 // MARK: - Rich cards inside the coach thread
 //
-// Shared chrome: opaque surface1, 22pt continuous corners, a stamped
-// eyebrow, max width 300 so they read as "sent by Shudo", never as a
-// dashboard. Numbers come from the card payloads (server-computed).
+// Shared chrome: opaque surface1, 22pt continuous corners, one width for
+// the whole column. The bubble above a card says *why*; the card holds the
+// one thing to look at or act on, so it carries no explainer copy and at
+// most one prominent button. An eyebrow appears only where the card is a
+// document worth naming (game plan, recap, a store run, new targets).
 
 struct ThreadCard<Content: View>: View {
-    let eyebrow: String
-    let symbol: String
+    var eyebrow: String?
     var accent: Color = Design.Color.ember
-    var maxWidth: CGFloat = Design.Layout.threadCardWidth
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(accent)
-                Text(eyebrow).eyebrowStyle(accent)
+            if let eyebrow {
+                Text(eyebrow)
+                    .eyebrowStyle(accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .accessibilityElement(children: .combine)
             content
         }
-        .padding(14)
-        .frame(width: maxWidth, alignment: .leading)
+        .padding(16)
+        .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
         .cardSurface(radius: Design.Radius.card)
     }
 }
@@ -42,7 +41,7 @@ struct ThreadCardActions {
     var openActivity: (UUID) -> Void
     /// Targets changed (goal card applied/undone): refresh the profile.
     var targetsChanged: () -> Void
-    /// "I grabbed it" logged a meal server-side: reload the day's meals.
+    /// "Log it" logged a meal server-side: reload the day's meals.
     var mealLogged: () -> Void
 }
 
@@ -63,14 +62,39 @@ struct CardButtonStyle: ButtonStyle {
     }
 }
 
+/// A settled outcome ("Logged", "Applied"), quiet and green.
+private struct DoneLabel: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "checkmark.circle.fill")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Design.Color.positive)
+    }
+}
+
+/// A trailing text action ("Undo", "Open Train").
+private struct CardLink: View {
+    let title: String
+    var color: Color = Design.Color.ember
+    let action: () -> Void
+
+    var body: some View {
+        Button(title, action: action)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(color)
+            .buttonStyle(.plain)
+            .contentShape(Rectangle().inset(by: -10))
+    }
+}
+
 // MARK: - Game plan (`plan`)
 
 struct GamePlanCardView: View {
     let card: PlanCard
-    let localDay: String
 
     var body: some View {
-        ThreadCard(eyebrow: ThreadCardCopy.planEyebrow(localDay: localDay), symbol: "list.bullet.clipboard.fill") {
+        ThreadCard(eyebrow: "Game plan") {
             if let theme = card.theme, !theme.isEmpty {
                 Text(theme)
                     .font(.title3.weight(.bold))
@@ -78,13 +102,14 @@ struct GamePlanCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !card.actions.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 9) {
                     ForEach(Array(card.actions.enumerated()), id: \.offset) { _, action in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Image(systemName: ThreadCardCopy.planSymbol(for: action))
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(Design.Color.honey)
                                 .frame(width: 16)
+                                .accessibilityHidden(true)
                             Text(action)
                                 .font(.subheadline)
                                 .foregroundStyle(Design.Color.textSecondary)
@@ -92,21 +117,13 @@ struct GamePlanCardView: View {
                         }
                     }
                 }
-            }
-            if let remaining = card.remaining, remaining.caloriesKcal > 0 {
-                HStack(spacing: 6) {
-                    MacroChip(value: "\(Int(remaining.caloriesKcal.rounded()).formatted())", unit: "kcal", color: Design.Color.cream)
-                    MacroChip(value: "\(Int(remaining.proteinG.rounded()))", unit: "P", color: Design.Color.macroProtein)
-                    Text("to go")
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.textTertiary)
-                }
+                .padding(.top, 2)
             }
         }
     }
 }
 
-/// "+84 P" style pill.
+/// "+67 P" style pill.
 struct MacroChip: View {
     let value: String
     let unit: String
@@ -133,7 +150,7 @@ struct RecapCardView: View {
     let actions: ThreadCardActions
 
     var body: some View {
-        ThreadCard(eyebrow: eyebrow, symbol: "flame.fill") {
+        ThreadCard(eyebrow: eyebrow) {
             if let headline = card.headline, !headline.isEmpty {
                 Text(headline)
                     .font(.title3.weight(.bold))
@@ -145,9 +162,10 @@ struct RecapCardView: View {
                     MacroRings(
                         kcal: DayHeaderMath.progress(kcal, card.kcalTarget ?? 0),
                         protein: DayHeaderMath.progress(card.proteinG ?? 0, card.proteinTargetG ?? 0),
-                        size: 54
+                        size: 48
                     )
-                    VStack(alignment: .leading, spacing: 6) {
+                    .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 5) {
                         stat(
                             Int(kcal.rounded()).formatted(),
                             card.kcalTarget.map { "of \(Int($0.rounded()).formatted()) kcal" } ?? "kcal"
@@ -158,11 +176,9 @@ struct RecapCardView: View {
                                 ThreadCardCopy.proteinVerdict(protein: protein, target: card.proteinTargetG ?? 0)
                             )
                         }
-                        if let score = card.score {
-                            stat("\(Int(score.rounded()))", "day score")
-                        }
                     }
                 }
+                .padding(.top, 2)
             }
             if card.period == .week {
                 Button {
@@ -185,15 +201,18 @@ struct RecapCardView: View {
                 .font(.caption)
                 .foregroundStyle(Design.Color.textTertiary)
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
 // MARK: - Snack recommendation (`snack_rec`)
 
+/// Where, what, and what it does for the day. Directions is the one
+/// prominent action; "Log it" logs it once he has it; "Swap it" lives in
+/// the long-press menu (or he just asks).
 struct SnackRecCardView: View {
     let message: CoachMessage
     let card: SnackRec
-    let target: MacroTarget
     /// The plan has a lift later today (wording only).
     var liftLater = false
     let actions: ThreadCardActions
@@ -206,113 +225,77 @@ struct SnackRecCardView: View {
     private var isLogged: Bool { status == "logged" || confirmedGrab }
 
     var body: some View {
-        ThreadCard(eyebrow: ThreadCardCopy.snackEyebrow(option), symbol: option?.storeRef == "home" ? "house.fill" : "location.fill") {
+        ThreadCard(eyebrow: ThreadCardCopy.snackEyebrow(option)) {
             if card.verdict == .noSnackNeeded || option == nil {
                 Text(card.headline.isEmpty ? "You're covered. No snack needed." : card.headline)
                     .font(.headline)
                     .foregroundStyle(Design.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let option {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(ThreadCardCopy.snackTitle(option))
-                        .font(.headline)
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    let subtitle = ThreadCardCopy.snackSubtitle(option)
-                    if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.footnote)
-                            .foregroundStyle(Design.Color.textSecondary)
-                    }
+                Text(ThreadCardCopy.snackTitle(option))
+                    .font(.headline)
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    MacroChip(value: "+\(Int(option.combined.proteinG.rounded()))", unit: "P", color: Design.Color.macroProtein)
+                    MacroChip(value: "+\(Int(option.combined.caloriesKcal.rounded()))", unit: "kcal", color: Design.Color.cream)
                 }
-                deltas(option.combined)
-                HStack(spacing: 8) {
-                    MacroRings(
-                        kcal: projected(option, \.caloriesKcal, target: target.caloriesKcal),
-                        protein: projected(option, \.proteinG, target: target.proteinG),
-                        size: 22,
-                        lineWidth: 3
-                    )
-                    Text(ThreadCardCopy.snackPayoff(remainingAfter: option.remainingAfter, beforeLift: liftLater))
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(Design.Color.honey)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    "Adds \(Int(option.combined.proteinG.rounded())) grams protein, \(Int(option.combined.caloriesKcal.rounded())) kilocalories"
+                )
+                Text(ThreadCardCopy.snackPayoff(remainingAfter: option.remainingAfter, beforeLift: liftLater))
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Design.Color.honey)
+                    .fixedSize(horizontal: false, vertical: true)
                 buttons(option)
-                if card.options.count > 1 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(card.options.dropFirst().prefix(2)) { alternative in
-                            Text("Or: \(ThreadCardCopy.snackTitle(alternative)) · \(alternative.storeName)")
-                                .font(.caption)
-                                .foregroundStyle(Design.Color.textTertiary)
-                                .lineLimit(2)
-                        }
-                    }
+                    .padding(.top, 2)
+            }
+        }
+        .contextMenu {
+            if let option, !isLogged {
+                Button("Swap it", systemImage: "arrow.triangle.2.circlepath") {
+                    actions.send("Swap it — what else is there instead of \(ThreadCardCopy.snackTitle(option))?")
                 }
             }
         }
         .sensoryFeedback(.success, trigger: confirmedGrab)
     }
 
-    private func deltas(_ combined: CoachMacros) -> some View {
-        HStack(spacing: 6) {
-            MacroChip(value: "+\(Int(combined.proteinG.rounded()))", unit: "P", color: Design.Color.macroProtein)
-            MacroChip(value: "+\(Int(combined.carbsG.rounded()))", unit: "C", color: Design.Color.macroCarbs)
-            MacroChip(value: "+\(Int(combined.fatG.rounded()))", unit: "F", color: Design.Color.macroFat)
-            MacroChip(value: "+\(Int(combined.caloriesKcal.rounded()))", unit: "kcal", color: Design.Color.cream)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "Adds \(Int(combined.proteinG.rounded())) grams protein, \(Int(combined.caloriesKcal.rounded())) kilocalories"
-        )
-    }
-
-    /// The day's rings after eating it (target − what would still be left).
-    private func projected(_ option: SnackRec.Option, _ key: KeyPath<CoachMacros, Double>, target: Double) -> Double {
-        DayHeaderMath.progress(target - max(0, option.remainingAfter[keyPath: key]), target)
-    }
-
     @ViewBuilder
     private func buttons(_ option: SnackRec.Option) -> some View {
-        HStack(spacing: 8) {
-            if ThreadCardCopy.hasDirections(option) {
-                Button {
-                    openDirections(option)
-                } label: {
-                    Label("Directions", systemImage: "arrow.up.right")
-                }
-                .buttonStyle(CardButtonStyle(prominent: true))
-            }
-            Button {
-                actions.send("Swap it — what else is there instead of \(ThreadCardCopy.snackTitle(option))?")
-            } label: {
-                Text("Swap it")
-            }
-            .buttonStyle(CardButtonStyle(prominent: false, fills: !ThreadCardCopy.hasDirections(option)))
-        }
         if isLogged {
-            Label("Logged", systemImage: "checkmark.circle.fill")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(Design.Color.positive)
+            DoneLabel(text: "Logged")
         } else {
-            Button {
-                Task {
-                    let done = await actions.act(.nearby(messageId: message.id, decision: .apply))
-                    if done {
-                        confirmedGrab = true
-                        actions.mealLogged()
+            HStack(spacing: 8) {
+                if ThreadCardCopy.hasDirections(option) {
+                    Button {
+                        openDirections(option)
+                    } label: {
+                        Label("Directions", systemImage: "arrow.up.right")
+                    }
+                    .buttonStyle(CardButtonStyle(prominent: true))
+                }
+                Button {
+                    Task {
+                        let done = await actions.act(.nearby(messageId: message.id, decision: .apply))
+                        if done {
+                            confirmedGrab = true
+                            actions.mealLogged()
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        if actions.isActing(message.id) {
+                            ProgressView().controlSize(.small).tint(Design.Color.textPrimary)
+                        }
+                        Text("Log it")
                     }
                 }
-            } label: {
-                HStack(spacing: 6) {
-                    if actions.isActing(message.id) {
-                        ProgressView().controlSize(.small).tint(Design.Color.textPrimary)
-                    }
-                    Text("I grabbed it — log it")
-                }
+                .buttonStyle(CardButtonStyle(prominent: false, fills: !ThreadCardCopy.hasDirections(option)))
+                .disabled(actions.isActing(message.id))
+                .accessibilityLabel("I grabbed it, log it")
             }
-            .buttonStyle(CardButtonStyle(prominent: false))
-            .disabled(actions.isActing(message.id))
         }
     }
 
@@ -341,24 +324,11 @@ struct TrainingPlanCardView: View {
     let actions: ThreadCardActions
 
     var body: some View {
-        ThreadCard(
-            eyebrow: card.isActive ? "Training plan · active" : "Training plan · draft",
-            symbol: "dumbbell.fill"
-        ) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(card.name)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                Text("\(card.sessionsPerWeek) days a week")
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.textTertiary)
-            }
-            if !card.summary.isEmpty {
-                Text(card.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        ThreadCard(eyebrow: "Training plan") {
+            Text(card.name)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Design.Color.textPrimary)
+                .accessibilityLabel("\(card.name), \(card.sessionsPerWeek) days a week")
             if !card.sessions.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(Array(card.sessions.prefix(5).enumerated()), id: \.element.id) { index, session in
@@ -372,14 +342,9 @@ struct TrainingPlanCardView: View {
                                 .font(.caption)
                                 .foregroundStyle(Design.Color.textTertiary)
                                 .lineLimit(1)
-                            if let minutes = session.estMinutes {
-                                Text("\(minutes)m")
-                                    .font(Design.Typeface.numeral(.caption, weight: .semibold))
-                                    .foregroundStyle(Design.Color.textSecondary)
-                                    .monospacedDigit()
-                            }
                         }
-                        .padding(.vertical, 7)
+                        .padding(.vertical, 8)
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
@@ -393,7 +358,7 @@ struct TrainingPlanCardView: View {
                             if actions.isActing(card.planId) {
                                 ProgressView().controlSize(.small).tint(Design.Color.onEmber)
                             }
-                            Text("Activate")
+                            Text("Run it")
                         }
                     }
                     .buttonStyle(CardButtonStyle(prominent: true))
@@ -403,13 +368,9 @@ struct TrainingPlanCardView: View {
                 }
             case .active:
                 HStack {
-                    Label("Running this one", systemImage: "checkmark.circle.fill")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Design.Color.positive)
+                    DoneLabel(text: "Active")
                     Spacer()
-                    Button("Open Train") { actions.openTab(.train) }
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Design.Color.ember)
+                    CardLink(title: "Open Train") { actions.openTab(.train) }
                 }
             case .superseded, .rejected:
                 Text(card.status == .rejected ? "Passed on this one" : "Replaced by a newer plan")
@@ -428,7 +389,7 @@ struct GoalChangeCardView: View {
     let actions: ThreadCardActions
 
     var body: some View {
-        ThreadCard(eyebrow: "New targets", symbol: "target") {
+        ThreadCard(eyebrow: "New targets") {
             VStack(spacing: 0) {
                 row("Calories", card.before.caloriesKcal, card.after.caloriesKcal, unit: "kcal")
                 row("Protein", card.before.proteinG, card.after.proteinG, unit: "g")
@@ -443,7 +404,7 @@ struct GoalChangeCardView: View {
                 }
             }
             if let date = card.projectedGoalDate ?? card.after.goalDate {
-                Label("On pace for \(prettyDate(date))", systemImage: "calendar")
+                Text("On pace for \(prettyDate(date))")
                     .font(.footnote)
                     .foregroundStyle(Design.Color.textSecondary)
             }
@@ -477,17 +438,13 @@ struct GoalChangeCardView: View {
                 .disabled(actions.isActing(card.changeId))
             case .applied:
                 HStack {
-                    Label("Applied", systemImage: "checkmark.circle.fill")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Design.Color.positive)
+                    DoneLabel(text: "Applied")
                     Spacer()
-                    Button("Undo") {
+                    CardLink(title: "Undo") {
                         Task {
                             if await actions.act(.goalChange(card, decision: .undo)) { actions.targetsChanged() }
                         }
                     }
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Design.Color.ember)
                     .disabled(actions.isActing(card.changeId))
                 }
             case .undone, .discarded, .rejected:
@@ -498,21 +455,22 @@ struct GoalChangeCardView: View {
         }
     }
 
+    /// Only what moved; an unchanged macro is noise on a "what changed" card.
     @ViewBuilder
     private func row(_ label: String, _ before: Double?, _ after: Double?, unit: String) -> some View {
-        if let after {
+        if let after, before.map({ Int($0.rounded()) != Int(after.rounded()) }) ?? true {
             HStack(alignment: .firstTextBaseline) {
                 Text(label)
                     .font(.subheadline)
                     .foregroundStyle(Design.Color.textSecondary)
                 Spacer()
-                if let before, Int(before.rounded()) != Int(after.rounded()) {
+                if let before {
                     Text(Int(before.rounded()).formatted())
-                        .strikethrough(color: Design.Color.textTertiary)
                         .foregroundStyle(Design.Color.textTertiary)
                     Image(systemName: "arrow.right")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(Design.Color.textTertiary)
+                        .accessibilityLabel("to")
                 }
                 Text("\(Int(after.rounded()).formatted()) \(unit)")
                     .foregroundStyle(Design.Color.textPrimary)
@@ -533,11 +491,11 @@ struct GoalChangeCardView: View {
             if let before {
                 Text(before)
                     .font(.subheadline)
-                    .strikethrough(color: Design.Color.textTertiary)
                     .foregroundStyle(Design.Color.textTertiary)
                 Image(systemName: "arrow.right")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(Design.Color.textTertiary)
+                    .accessibilityLabel("to")
             }
             Text(after)
                 .font(.subheadline.weight(.semibold))
@@ -564,29 +522,28 @@ struct GoalChangeCardView: View {
 
 // MARK: - Bio update (`profile_update`)
 
+/// The bubble already says "Updated your bio"; the card is just what
+/// changed, with Undo and a way into the bio.
 struct ProfileUpdateCardView: View {
     let message: CoachMessage
     let card: ProfileUpdateCard
     let actions: ThreadCardActions
 
     var body: some View {
-        ThreadCard(eyebrow: "Bio updated", symbol: "person.text.rectangle.fill") {
+        ThreadCard {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(card.changes) { change in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Image(systemName: symbol(change.op))
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(Design.Color.ember)
+                            .foregroundStyle(Design.Color.honey)
                             .frame(width: 14)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(change.sectionTitle)
-                                .eyebrowStyle()
-                            Text(change.summary)
-                                .font(.subheadline)
-                                .foregroundStyle(card.isUndone ? Design.Color.textTertiary : Design.Color.textPrimary)
-                                .strikethrough(card.isUndone, color: Design.Color.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                            .accessibilityHidden(true)
+                        Text(change.summary)
+                            .font(.subheadline)
+                            .foregroundStyle(card.isUndone ? Design.Color.textTertiary : Design.Color.textPrimary)
+                            .strikethrough(card.isUndone, color: Design.Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -596,23 +553,25 @@ struct ProfileUpdateCardView: View {
                         .font(.footnote)
                         .foregroundStyle(Design.Color.textTertiary)
                 } else if card.undoVersion != nil {
-                    Button("Undo") {
+                    CardLink(title: "Undo") {
                         Task { _ = await actions.act(.bioUpdate(messageId: message.id, decision: .undo)) }
                     }
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Design.Color.ember)
                     .disabled(actions.isActing(message.id))
                 }
                 Spacer()
                 Button {
                     actions.openBio()
                 } label: {
-                    Label("Your bio", systemImage: "chevron.right")
-                        .labelStyle(TrailingIconLabelStyle())
+                    HStack(spacing: 3) {
+                        Text("Your bio")
+                        Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                    }
                 }
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(Design.Color.textSecondary)
+                .buttonStyle(.plain)
             }
+            .padding(.top, 2)
         }
     }
 
@@ -625,43 +584,29 @@ struct ProfileUpdateCardView: View {
     }
 }
 
-struct TrailingIconLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 3) {
-            configuration.title
-            configuration.icon.font(.caption2.weight(.bold))
-        }
-    }
-}
+// MARK: - Personal records (`workout_ack`)
 
-// MARK: - Workout acknowledgement (`workout_ack`)
-
+/// Only the PRs: the workout itself is the receipt just above, and the
+/// bubble says the rest. Tap through to the session.
 struct WorkoutAckCardView: View {
     let card: WorkoutAckCard
-    let activity: Activity?
     let actions: ThreadCardActions
 
     var body: some View {
         Button {
             if let id = card.activityId { actions.openActivity(id) }
         } label: {
-            ThreadCard(eyebrow: "\(activity?.title ?? "Workout") · logged", symbol: "dumbbell.fill") {
-                if card.prs.isEmpty, let activity {
-                    Text(ActivitySummaryFormatter.subtitle(for: activity, units: "imperial") ?? activity.title)
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.textSecondary)
-                }
-                VStack(alignment: .leading, spacing: 7) {
+            ThreadCard(eyebrow: card.prs.count > 1 ? "\(card.prs.count) new PRs" : "New PR") {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(card.prs) { record in
-                        HStack(spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(record.exercise)
                                 .font(.subheadline)
                                 .foregroundStyle(Design.Color.textPrimary)
                                 .lineLimit(1)
                             Spacer(minLength: 6)
-                            TrainPRBadge()
                             Text(ThreadCardCopy.prValue(record))
-                                .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
+                                .font(Design.Typeface.numeral(.headline, weight: .bold))
                                 .foregroundStyle(Design.Color.textPrimary)
                                 .monospacedDigit()
                             if let delta = ThreadCardCopy.prDelta(record) {
@@ -674,18 +619,6 @@ struct WorkoutAckCardView: View {
                         .accessibilityElement(children: .combine)
                     }
                 }
-                if let activity, activity.status == .complete {
-                    HStack(spacing: 8) {
-                        if let duration = ActivitySummaryFormatter.metaDuration(for: activity) {
-                            Text(duration)
-                        }
-                        if let kcal = activity.activeKcal, kcal >= 1 {
-                            Text("~\(Int(kcal.rounded())) kcal burned")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.textTertiary)
-                }
             }
         }
         .buttonStyle(.plain)
@@ -694,44 +627,27 @@ struct WorkoutAckCardView: View {
     }
 }
 
-// MARK: - Check-in feedback (`weigh_in_ack`, `photo_feedback`)
+// MARK: - Physique review (`photo_feedback`)
 
-struct CheckInFeedbackCardView: View {
-    let card: CheckInCard
-    let units: String
+struct PhysiqueReviewCardView: View {
+    let review: CheckInCard.Review
 
     var body: some View {
-        ThreadCard(
-            eyebrow: card.kind == .photoFeedback ? "Physique review" : "Weigh-in",
-            symbol: card.kind == .photoFeedback ? "camera.aperture" : "scalemass.fill",
-            accent: Design.Color.honey
-        ) {
-            if let weight = card.weightKg {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(String(format: "%.1f", BodyUnits.display(weight, units: units)))
-                        .font(Design.Typeface.numeral(.title2, weight: .bold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .monospacedDigit()
-                    Text(BodyUnits.label(units))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.textSecondary)
-                }
+        ThreadCard {
+            if !review.headline.isEmpty {
+                Text(review.headline)
+                    .font(.headline)
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if let review = card.review {
-                if !review.headline.isEmpty {
-                    Text(review.headline)
-                        .font(.headline)
-                        .foregroundStyle(Design.Color.textPrimary)
+            ForEach(review.observations.prefix(3), id: \.self) { observation in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle().fill(Design.Color.honey).frame(width: 4, height: 4)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 4 }
+                    Text(observation)
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                ForEach(review.observations.prefix(3), id: \.self) { observation in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Circle().fill(Design.Color.honey).frame(width: 4, height: 4)
-                        Text(observation)
-                            .font(.subheadline)
-                            .foregroundStyle(Design.Color.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
             }
         }

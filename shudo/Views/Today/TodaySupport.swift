@@ -210,8 +210,6 @@ struct AccountAvatarIcon: View {
 /// hold the instances in @State and rebuild only when the timezone changes.
 final class DayFormatterCache {
     private(set) var calendar = Calendar(identifier: .gregorian)
-    private(set) var weekdayFormatter = DateFormatter()
-    private(set) var dateFormatter = DateFormatter()
     private(set) var localDayFormatter = DateFormatter()
     private(set) var timeFormatter = DateFormatter()
     private var timezoneIdentifier: String?
@@ -221,12 +219,6 @@ final class DayFormatterCache {
         self.timezoneIdentifier = timezoneIdentifier
         calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timezoneIdentifier) ?? .autoupdatingCurrent
-        weekdayFormatter.calendar = calendar
-        weekdayFormatter.timeZone = calendar.timeZone
-        weekdayFormatter.dateFormat = "EEEE"
-        dateFormatter.calendar = calendar
-        dateFormatter.timeZone = calendar.timeZone
-        dateFormatter.dateFormat = "MMM d"
         localDayFormatter.calendar = calendar
         localDayFormatter.locale = Locale(identifier: "en_US_POSIX")
         localDayFormatter.timeZone = calendar.timeZone

@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// A meal in the day thread, on Luke's side. While it analyzes (or fails,
-/// or is being corrected) it is the existing streaming `EntryCard` — status
-/// typewriter, researching globe, live analysis preview — on a receipt
-/// surface; once complete it settles into the receipt: tile or photo,
-/// title, P/C/F, and the big kcal number.
+/// A meal in the day thread, on Luke's side: title, P/C/F and the kcal
+/// number. While Shudo works on it the macro line is one quiet shimmer —
+/// the research, sources and confidence live in the meal's detail, not
+/// here — and the receipt settles in place when the numbers land.
 struct MealReceiptCard: View {
     let entry: Entry
     var isRetrying = false
@@ -15,118 +14,191 @@ struct MealReceiptCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isSettled: Bool { entry.status == .complete && !isRetrying }
-
-    private var wasCheckedOnline: Bool {
-        entry.status == .complete && EntryResearchPresentation.hasVerifiedResearch(notes: entry.analysisNotes)
-    }
+    private var isWorking: Bool { isRetrying || entry.status.isProcessing }
 
     var body: some View {
-        Group {
+        HStack(alignment: .center, spacing: 12) {
+            if let url = entry.imageURL {
+                MealPhotoTile(url: url)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(entry.summary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isSettled ? Design.Color.textPrimary : Design.Color.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                detail
+            }
+            Spacer(minLength: 8)
             if isSettled {
-                receipt
-                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .trailing)))
-            } else {
-                EntryCard(
-                    entry: entry,
-                    isRetrying: isRetrying,
-                    onRetry: onRetry
-                )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 1)
-                .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
-                .cardSurface(radius: Design.Radius.card)
-                .overlay {
-                    if entry.status == .failed {
-                        RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                            .stroke(Design.Color.danger.opacity(0.45), lineWidth: 1)
-                    }
-                }
+                kcal.transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
+        .cardSurface(radius: Design.Radius.card)
+        .overlay {
+            if entry.status == .failed {
+                RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
+                    .stroke(Design.Color.danger.opacity(0.4), lineWidth: 1)
             }
         }
         .animation(Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion), value: isSettled)
         .task(id: animateCompletion) {
             guard animateCompletion else { return }
-            // The receipt's own arrival is the reveal; hand the flag back.
+            // The receipt settling in place is the reveal; hand the flag back.
             try? await Task.sleep(for: .milliseconds(450))
             onCompletionRevealFinished?()
         }
     }
 
-    private var receipt: some View {
-        HStack(alignment: .center, spacing: 12) {
-            tile
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.summary)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                HStack(spacing: 6) {
-                    MacroInline(p: entry.proteinG, c: entry.carbsG, f: entry.fatG)
-                    if wasCheckedOnline {
-                        Image(systemName: "globe")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Design.Color.textTertiary)
-                    }
-                }
+    @ViewBuilder
+    private var detail: some View {
+        if isSettled {
+            MacroInline(p: entry.proteinG, c: entry.carbsG, f: entry.fatG)
+                .transition(.opacity)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
                     "Protein \(Int(entry.proteinG.rounded()))g, Carbs \(Int(entry.carbsG.rounded()))g, Fat \(Int(entry.fatG.rounded()))g, Calories \(Int(entry.caloriesKcal.rounded()))kcal"
-                        + (wasCheckedOnline ? ", checked online" : "")
                 )
-            }
-            Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(Int(entry.caloriesKcal.rounded()).formatted())
-                    .font(Design.Typeface.numeral(.title3, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .contentTransition(.numericText(value: entry.caloriesKcal))
-                Text("kcal").eyebrowStyle()
-            }
-            .accessibilityHidden(true)
-        }
-        .padding(12)
-        .frame(width: Design.Layout.threadCardWidth)
-        .cardSurface(radius: Design.Radius.card)
-    }
-
-    @ViewBuilder
-    private var tile: some View {
-        if let url = entry.imageURL {
-            AsyncImage(url: url, transaction: .init(animation: .easeInOut(duration: 0.2))) { phase in
-                switch phase {
-                case .success(let image): image.resizable().scaledToFill()
-                default: glyphTile
+        } else if isWorking {
+            ThreadShimmerLine()
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(isRetrying ? "Retrying" : entry.displayStatusMessage)
+                .accessibilityAddTraits(.updatesFrequently)
+        } else if entry.status == .failed {
+            HStack(spacing: 10) {
+                Text(entry.displayStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.danger)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if entry.canRetry, let onRetry {
+                    Button("Retry", action: onRetry)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.ember)
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle().inset(by: -10))
+                        .accessibilityLabel("Retry meal analysis")
                 }
             }
-            .frame(width: 48, height: 48)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .allowsHitTesting(false)
-            .accessibilityLabel("Meal photo")
         } else {
-            glyphTile
-                .frame(width: 48, height: 48)
-                .accessibilityHidden(true)
+            Text(entry.displayStatusMessage)
+                .font(.caption)
+                .foregroundStyle(Design.Color.textTertiary)
+                .lineLimit(1)
         }
     }
 
-    private var glyphTile: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(LinearGradient(
-                colors: [Color(hex: 0x5B3A1E), Color(hex: 0x2A1D12)],
-                startPoint: .top,
-                endPoint: .bottom
-            ))
-            .overlay(
-                Image(systemName: MealGlyphPolicy.symbol(for: entry.summary))
-                    .foregroundStyle(Design.Color.honey.opacity(0.85))
-            )
+    private var kcal: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(Int(entry.caloriesKcal.rounded()).formatted())
+                .font(Design.Typeface.numeral(.title3, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(Design.Color.textPrimary)
+                .contentTransition(.numericText(value: entry.caloriesKcal))
+            Text("kcal")
+                .font(Design.Typeface.meta)
+                .foregroundStyle(Design.Color.textTertiary)
+        }
+        .accessibilityHidden(true)
     }
 }
 
-/// The day's body check-in on Luke's side: a veiled photo thumbnail (tap
-/// the eye to peek), "Check-in · Day N", and the weight or "no scale yet".
+/// The one processing line every thread card uses: a short shimmering bar
+/// where the numbers will land. No phases, no narration.
+struct ThreadShimmerLine: View {
+    var width: CGFloat = 112
+
+    var body: some View {
+        Capsule()
+            .fill(Design.Color.surface3)
+            .frame(width: width, height: 8)
+            .shimmering()
+            .padding(.vertical, 3)
+    }
+}
+
+private struct MealPhotoTile: View {
+    let url: URL
+
+    var body: some View {
+        AsyncImage(url: url, transaction: .init(animation: .easeInOut(duration: 0.2))) { phase in
+            if case .success(let image) = phase {
+                image.resizable().scaledToFill()
+            } else {
+                Design.Color.surface2
+            }
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .allowsHitTesting(false)
+        .accessibilityLabel("Meal photo")
+    }
+}
+
+/// A finished workout in the thread, matching the meal receipt: a small
+/// kind glyph, the session, its one-line summary, and minutes as the
+/// number. PRs are Shudo's to celebrate (his card follows), and live or
+/// unsent states use the Train tab's full `ActivityCard`.
+struct WorkoutReceiptCard: View {
+    let activity: Activity
+    let units: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label {
+                    Text(activity.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Design.Color.textPrimary)
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: activity.kind.symbolName)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(ActivityKindTile.tint(for: activity.kind))
+                }
+                .labelStyle(TightLabelStyle())
+                if let subtitle = ActivitySummaryFormatter.subtitle(for: activity, units: units) {
+                    Text(subtitle)
+                        .font(Design.Typeface.numeral(.footnote, weight: .medium))
+                        .foregroundStyle(Design.Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            if let minutes = activity.durationMin, minutes > 0 {
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(Int(minutes.rounded()).formatted())
+                        .font(Design.Typeface.numeral(.title3, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(Design.Color.textPrimary)
+                    Text("min")
+                        .font(Design.Typeface.meta)
+                        .foregroundStyle(Design.Color.textTertiary)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
+        .cardSurface(radius: Design.Radius.card)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct TightLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            configuration.icon
+            configuration.title
+        }
+    }
+}
+
+/// The day's body check-in on Luke's side: a veiled photo (tap to peek),
+/// "Check-in", and the weight — or the bulk day when there's no scale.
 struct CheckInThreadCard: View {
     let checkIn: WeightCheckIn
     let dayLabel: String?
@@ -139,32 +211,26 @@ struct CheckInThreadCard: View {
     @State private var revealed = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             if checkIn.hasPhoto {
                 thumbnail
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(dayLabel.map { "Check-in · \($0)" } ?? "Check-in")
-                    .eyebrowStyle(Design.Color.honey)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Text(checkIn.hasPhoto ? "Photo logged" : "Weight logged")
-                    .font(.headline)
+                Text("Check-in")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Design.Color.textPrimary)
-                Text(weightLine)
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .monospacedDigit()
+                if let detail {
+                    Text(detail)
+                        .font(Design.Typeface.numeral(.footnote, weight: .medium))
+                        .foregroundStyle(Design.Color.textSecondary)
+                        .monospacedDigit()
+                }
             }
             Spacer(minLength: 0)
         }
         .padding(10)
         .frame(width: Design.Layout.threadCardWidth)
-        .background(Design.Color.surface1, in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                .stroke(Design.Color.ember.opacity(0.45), lineWidth: 1)
-        )
+        .cardSurface(radius: Design.Radius.card)
         .contentShape(RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
         .onTapGesture(perform: onOpenBody)
         .accessibilityElement(children: .combine)
@@ -180,9 +246,11 @@ struct CheckInThreadCard: View {
         }
     }
 
-    private var weightLine: String {
-        guard let kilograms = checkIn.weightKG else { return "Weight — no scale yet" }
-        return "\(String(format: "%.1f", BodyUnits.display(kilograms, units: units))) \(BodyUnits.label(units))"
+    private var detail: String? {
+        if let kilograms = checkIn.weightKG {
+            return "\(String(format: "%.1f", BodyUnits.display(kilograms, units: units))) \(BodyUnits.label(units))"
+        }
+        return dayLabel
     }
 
     private var thumbnail: some View {
@@ -197,12 +265,12 @@ struct CheckInThreadCard: View {
             }
             if !revealed {
                 Image(systemName: "eye.slash.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Design.Color.textPrimary.opacity(0.8))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Design.Color.textPrimary.opacity(0.7))
             }
         }
-        .frame(width: 66, height: 88)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(width: 48, height: 64)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(Design.Motion.snap) { revealed.toggle() }

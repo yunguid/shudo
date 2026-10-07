@@ -114,14 +114,15 @@ final class AppShellUITests: XCTestCase {
     }
 
     /// While a turn is thinking: Shudo's pads step in the typing bubble and
-    /// the tool status shows.
+    /// the title says "typing…" — the tool phase stays behind the scenes.
     @MainActor
     func testTypingIndicatorWhileShudoThinks() {
         let app = launch(extra: ["-shudoTodayPreview", "typing"])
         let typing = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Shudo is typing'")).firstMatch
         XCTAssertTrue(typing.waitForExistence(timeout: 8))
-        let status = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Checking what'")).firstMatch
-        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        let title = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'typing…'")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Checking what'")).firstMatch.exists)
         XCTAssertTrue(app.staticTexts["anything else I should grab on the way home?"].firstMatch.exists)
     }
 

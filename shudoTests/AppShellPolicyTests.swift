@@ -109,12 +109,11 @@ struct DayThreadPolicyTests {
             messages: messages, pending: [], entries: [], activities: [], checkIn: nil,
             typing: .thinking(label: "Checking what's near you…"), now: at(13)
         )
-        guard case .typing(let label, let date)? = thinking.last else {
+        guard case .typing(let date)? = thinking.last else {
             Issue.record("expected a typing row")
             return
         }
-        #expect(label == "Checking what's near you…")
-        #expect(date == at(13))
+        #expect(date == at(13), "dots only; the tool label stays behind the scenes")
         let streaming = DayThreadPolicy.merge(
             messages: messages, pending: [], entries: [], activities: [], checkIn: nil,
             typing: .streaming(messageId: UUID()), now: at(13)
@@ -129,19 +128,17 @@ struct DayThreadPolicyTests {
         )
         let rows = DayThreadPolicy.rows(for: items)
         #expect(rows.map(\.position) == [.first, .middle, .last, .single, .single])
-        #expect(rows.map(\.showsAvatar) == [false, false, true, false, true])
         #expect(rows.map(\.startsGroup) == [true, false, false, true, true])
     }
 
-    @Test func timestampsOnTheFirstRowAndOnFifteenMinuteGaps() {
+    @Test func timestampsOnTheFirstRowAndOnHourLongGaps() {
         let items = DayThreadPolicy.merge(
-            messages: [coach(0), coach(14), coach(29), coach(44.5)],
-            pending: [], entries: [], activities: [], checkIn: nil, typing: nil, now: at(50)
+            messages: [coach(0), coach(45), coach(105), coach(170)],
+            pending: [], entries: [], activities: [], checkIn: nil, typing: nil, now: at(180)
         )
         let rows = DayThreadPolicy.rows(for: items)
         #expect(rows.map { $0.timestamp != nil } == [true, false, true, true])
-        // A timestamp breaks the group, so the avatar lands before it.
-        #expect(rows.map(\.showsAvatar) == [false, true, true, true])
+        // A timestamp breaks the group.
         #expect(rows.map(\.position) == [.first, .last, .single, .single])
     }
 
@@ -157,28 +154,43 @@ struct DayThreadPolicyTests {
         #expect(rows[1].startsGroup && rows[2].startsGroup)
         #expect(rows[3].timestamp == nil, "the typing bubble rides with the last group")
         #expect(rows[2].position == .first && rows[3].position == .last)
-        #expect(rows[3].showsAvatar && !rows[2].showsAvatar)
     }
 
-    @Test func readReceiptSitsUnderLukesLatestText() {
+    @Test func readReceiptSitsUnderLukesLatestTextUntilShudoAnswers() {
         let question = me(10, created: 10)
-        let rows = DayThreadPolicy.rows(for: DayThreadPolicy.merge(
+        let waiting = DayThreadPolicy.rows(for: DayThreadPolicy.merge(
+            messages: [question], pending: [], entries: [], activities: [], checkIn: nil,
+            typing: .thinking(label: nil), now: at(11)
+        ))
+        #expect(DayThreadPolicy.readReceiptRowId(for: waiting) == DayThreadItem.message(question).id)
+
+        let answered = DayThreadPolicy.rows(for: DayThreadPolicy.merge(
             messages: [question, coach(11)],
             pending: [], entries: [], activities: [], checkIn: nil, typing: nil, now: at(12)
         ))
-        let receipt = DayThreadPolicy.readReceipt(for: rows)
-        #expect(receipt?.rowId == DayThreadItem.message(question).id)
-        #expect(receipt?.readAt == at(11))
+        #expect(DayThreadPolicy.readReceiptRowId(for: answered) == nil, "the reply is the receipt")
 
         let mealLast = DayThreadPolicy.rows(for: DayThreadPolicy.merge(
             messages: [question], pending: [], entries: [meal(20)], activities: [], checkIn: nil, typing: nil, now: at(21)
         ))
-        #expect(DayThreadPolicy.readReceipt(for: mealLast) == nil, "only texts get a receipt")
+        #expect(DayThreadPolicy.readReceiptRowId(for: mealLast) == nil, "only texts get a receipt")
 
         let sending = DayThreadPolicy.rows(for: DayThreadPolicy.merge(
             messages: [], pending: [pending(5)], entries: [], activities: [], checkIn: nil, typing: nil, now: at(6)
         ))
-        #expect(DayThreadPolicy.readReceipt(for: sending) == nil)
+        #expect(DayThreadPolicy.readReceiptRowId(for: sending) == nil)
+    }
+
+    @Test @MainActor func bubblesInARunSitTighterThanCardsAndNewSpeakers() {
+        let card = CoachMessage(role: .coach, kind: "plan", body: "Morning.", rawPayload: CoachJSON(encoding: PlanCard(theme: "Eat big.", actions: [])), localDay: day, deliverAt: at(2))
+        let rows = DayThreadPolicy.rows(for: DayThreadPolicy.merge(
+            messages: [coach(0, "a"), coach(1, "b"), card, me(3)],
+            pending: [], entries: [], activities: [], checkIn: nil, typing: nil, now: at(4)
+        ))
+        #expect(TodayScreen.spacing(above: rows[0], after: nil) == 0)
+        #expect(TodayScreen.spacing(above: rows[1], after: rows[0]) == 2)
+        #expect(TodayScreen.spacing(above: rows[2], after: rows[1]) == 6, "a card in the run gets room")
+        #expect(TodayScreen.spacing(above: rows[3], after: rows[2]) == 14, "a new speaker")
     }
 
     @Test @MainActor func bubbleBeforeItsCardKeepsATightBottomCorner() {
@@ -259,6 +271,20 @@ struct DayHeaderMathTests {
         #expect(DayLabelPolicy.phaseDay(localDay: "2026-10-06", goalStartedOn: nil, goalType: .gain) == nil)
         #expect(DayLabelPolicy.phaseDay(localDay: "2026-10-06", goalStartedOn: "2026-09-02", goalType: .maintain) == nil)
     }
+
+    @Test func threadNamesDaysLikeMessages() {
+        #expect(DayLabelPolicy.threadDay(localDay: "2026-10-06", today: "2026-10-06") == "Today")
+        #expect(DayLabelPolicy.threadDay(localDay: "2026-10-05", today: "2026-10-06") == "Yesterday")
+        #expect(DayLabelPolicy.threadDay(localDay: "2026-10-01", today: "2026-10-06") == "Thursday")
+        #expect(DayLabelPolicy.threadDay(localDay: "2026-09-28", today: "2026-10-06") == "Mon, Sep 28")
+    }
+
+    @Test func emptyDayGreetsByTheHour() {
+        #expect(DayLabelPolicy.greeting(hour: 7, name: "Luke") == "Morning, Luke.")
+        #expect(DayLabelPolicy.greeting(hour: 13, name: "Luke Y") == "Afternoon, Luke.")
+        #expect(DayLabelPolicy.greeting(hour: 21, name: nil) == "Evening.")
+        #expect(DayLabelPolicy.greeting(hour: 2, name: "") == "Evening.")
+    }
 }
 
 // MARK: - Card copy
@@ -293,15 +319,14 @@ struct ThreadCardCopyTests {
         #expect(ThreadCardCopy.recapEyebrow(card: RecapCard(period: .week, weekStart: "2026-09-28"), localDay: "2026-10-06", deliveredHour: 9) == "Weekly recap")
         #expect(ThreadCardCopy.proteinVerdict(protein: 181, target: 175) == "protein · hit")
         #expect(ThreadCardCopy.proteinVerdict(protein: 150, target: 175) == "protein · 25g short")
-        #expect(ThreadCardCopy.planEyebrow(localDay: "2026-10-06") == "Game plan · Tue")
     }
 
     @Test func snackCardCopy() {
         let store = option()
         #expect(ThreadCardCopy.snackTitle(store) == "Core Power Elite ×2 + Chobani Complete")
-        #expect(ThreadCardCopy.snackSubtitle(store) == "7-Eleven · 4 min walk · ~$9")
-        #expect(ThreadCardCopy.snackEyebrow(store) == "Nearby · 4 min walk")
-        #expect(ThreadCardCopy.snackEyebrow(option(walk: 2)) == "Nearby · 1 block")
+        #expect(ThreadCardCopy.snackEyebrow(store) == "7-Eleven · 4 min walk", "the store is the label")
+        #expect(ThreadCardCopy.snackEyebrow(option(walk: 2)) == "7-Eleven · 1 block")
+        #expect(ThreadCardCopy.snackEyebrow(option(walk: 0)) == "7-Eleven")
         #expect(ThreadCardCopy.snackEyebrow(option(ref: "home")) == "Your kitchen")
         #expect(ThreadCardCopy.snackEyebrow(nil) == "Nearby")
         #expect(ThreadCardCopy.hasDirections(store))
@@ -330,13 +355,6 @@ struct ThreadCardCopyTests {
         #expect(ThreadCardCopy.goalLabel("maintain") == "Maintain")
         #expect(ThreadCardCopy.goalLabel("recomp_phase") == "Recomp Phase")
         #expect(ThreadCardCopy.goalLabel(nil) == nil)
-    }
-
-    @Test func mealGlyphs() {
-        #expect(MealGlyphPolicy.symbol(for: "Whole milk, 16 oz") == "takeoutbag.and.cup.and.straw.fill")
-        #expect(MealGlyphPolicy.symbol(for: "Eggs, rice, banana") == "sunrise.fill")
-        #expect(MealGlyphPolicy.symbol(for: "Iced latte") == "cup.and.saucer.fill")
-        #expect(MealGlyphPolicy.symbol(for: "Mystery") == "fork.knife")
     }
 }
 

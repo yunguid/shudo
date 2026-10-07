@@ -12,7 +12,8 @@ import UIKit
 ///
 /// Launch with `-shudoPolishPreview main | today-expanded | today-cards`;
 /// add `-shudoTodayPreview typing` to start a coach turn that stays in the
-/// "thinking" state (typing indicator + tool label).
+/// "thinking" state (typing indicator), `quiet` for a light day (the plan and
+/// two meals), or `empty` for a fresh day with nothing in it yet.
 enum ShellPreviewFixtures {
     static let timezone = "America/New_York"
     static let userId = "00000000-0000-4000-8000-000000000001"
@@ -70,6 +71,12 @@ enum ShellPreviewFixtures {
     // MARK: Meals
 
     static func entries() -> [Entry] {
+        if options.contains("empty") { return [] }
+        if options.contains("quiet") { return Array(allEntries().prefix(2)) }
+        return allEntries()
+    }
+
+    private static func allEntries() -> [Entry] {
         [
             Entry(
                 id: UUID(uuidString: "11111111-1111-4111-8111-0000000000E1")!,
@@ -209,7 +216,7 @@ enum ShellPreviewFixtures {
             )
         }
 
-        return [
+        let thread = [
             coach("000000000001", "recap", "Yesterday, scored.", at(6, 52), payload: CoachJSON(encoding: recap), slot: "wake"),
             coach("000000000002", "plan", "Morning. Liquid calories today — milk with every meal.", at(6, 58), payload: CoachJSON(encoding: plan), slot: "wake"),
             coach("000000000003", "weigh_in_ack", "Photo’s in. Same pose, same light. That’s how we see it move.", at(7, 14), payload: CoachJSON(encoding: checkIn)),
@@ -226,6 +233,12 @@ enum ShellPreviewFixtures {
             me("00000000000e", "dinner is steak and rice. anything else?", at(19, 34)),
             coach("00000000000f", "text", "855 left and the lift earned every one. Steak, two cups of rice, and a glass of milk closes the day.", at(19, 35)),
         ]
+        if options.contains("empty") { return [] }
+        if options.contains("quiet") {
+            let quiet: Set<String> = ["000000000002", "000000000004", "000000000007"]
+            return thread.filter { quiet.contains(String($0.id.uuidString.suffix(12)).lowercased()) }
+        }
+        return thread
     }
 
     /// Every other card kind, for `-shudoPolishPreview today-cards`.
@@ -355,14 +368,15 @@ enum ShellPreviewFixtures {
 
     static func trainService() -> PreviewTrainService {
         let history = TrainPreviewFixtures.activities.filter { $0.localDay != today }
+        let lifted = options.isDisjoint(with: ["quiet", "empty"])
         return PreviewTrainService(
             plans: TrainingPlanState(active: TrainPreviewFixtures.activePlan),
-            activities: history + [upperA]
+            activities: history + (lifted ? [upperA] : [])
         )
     }
 
     static func bodyService() -> ShellPreviewBodyService {
-        let checkIns = BodyFixtures.checkIns(today: today, noScale: false, empty: false)
+        let checkIns = BodyFixtures.checkIns(today: today, noScale: false, empty: options.contains("empty"))
         return ShellPreviewBodyService(
             base: FixtureBodyService(checkIns: checkIns, nutrition: BodyFixtures.nutrition(today: today)),
             goalStartedOn: LocalDayMath.adding(-34, to: today)
