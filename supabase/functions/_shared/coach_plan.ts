@@ -9,6 +9,7 @@ import {
 import {
   allowedFiguresFor,
   avoidOpeners,
+  buildCoachBrief,
   buildStatePack,
   type CoachContext,
   coachSystemBlocks,
@@ -22,9 +23,11 @@ import {
 } from "./coach_context.ts";
 import {
   type CoachCopyPolicy,
+  coachCopyReview,
   coachCopyViolation,
   type CoachRenderOutput,
   splitBubbles,
+  stripPreamble,
 } from "./coach_copy.ts";
 import {
   fallbackReactionCopy,
@@ -32,13 +35,19 @@ import {
   type FallbackSnapshot,
   type ReactionKind,
 } from "./coach_fallbacks.ts";
-import { addMemoryNote, updateCoachMemory } from "./coach_memory.ts";
+import {
+  addMemoryNote,
+  openQuestions,
+  updateCoachMemory,
+} from "./coach_memory.ts";
 import {
   COACH_DAY_PLAN_INSTRUCTIONS,
   COACH_PERSONA_VERSION,
   type CoachMode,
 } from "./coach_persona.ts";
 import {
+  addDays,
+  type CoachSlotKey,
   formatClock,
   isBehindPace,
   isQuietMinute,
@@ -223,6 +232,9 @@ export type ReactionPlan = {
   payload: Record<string, unknown>;
   entryId: string | null;
   activityId: string | null;
+  /// The thread day the reaction belongs on: the subject's own day, so it
+  /// sits next to the meal or workout card.
+  localDay: string;
 };
 
 async function hasAck(
@@ -242,9 +254,68 @@ async function hasAck(
   return Array.isArray(data) && data.length > 0;
 }
 
+/// A chat reply already reacted to this meal or workout (he logged it by
+/// talking to the coach): the reply was the acknowledgment, so the later
+/// automatic reaction would be a second text about the same thing.
+export async function ackedInChat(
+  admin: SupabaseClient,
+  userId: string,
+  field: "acked_entry_ids" | "acked_activity_ids",
+  id: string,
+  now: Date,
+): Promise<boolean> {
+  const { data, error } = await admin.from("coach_messages")
+    .select("id,payload")
+    .eq("user_id", userId)
+    .eq("role", "coach")
+    .eq("kind", "text")
+    .gte("created_at", new Date(now.getTime() - 12 * 3_600_000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) throw error;
+  return ((data ?? []) as Array<{ payload: Record<string, unknown> | null }>)
+    .some((row) => {
+      const ids = row.payload?.[field];
+      return Array.isArray(ids) && ids.includes(id);
+    });
+}
+
+/// The finished subject from the coached day, or (after midnight, when the
+/// app files it under the next calendar day) from the day either side.
+async function findSubject<T extends { id: string; local_day: string }>(
+  admin: SupabaseClient,
+  context: CoachContext,
+  table: "entries" | "activities",
+  columns: string,
+  id: string,
+  inContext: T | undefined,
+): Promise<T | null> {
+  if (inContext) return inContext;
+  const { data, error } = await admin.from(table)
+    .select(columns)
+    .eq("user_id", context.userId)
+    .eq("id", id)
+    .eq("status", "complete")
+    .gte("local_day", addDays(context.localDay, -1))
+    .lte("local_day", addDays(context.localDay, 1))
+    .limit(1);
+  if (error) throw error;
+  return ((data ?? []) as unknown as T[])[0] ?? null;
+}
+
+function crossDayNote(
+  context: CoachContext,
+  day: string,
+): Record<string, unknown> {
+  return day === context.localDay ? {} : {
+    day_note:
+      `Logged under ${day}, not the day in the pack: react to the item itself and cite no totals.`,
+  };
+}
+
 /// Which logged thing, if any, deserves an immediate reaction. A subject
-/// that already has an ack (chat logged it, or an earlier plan reacted) is
-/// never acknowledged twice.
+/// that already has an ack (an earlier plan reacted, or the chat reply that
+/// logged it) is never acknowledged twice.
 export async function resolveReaction(
   admin: SupabaseClient,
   context: CoachContext,
@@ -254,13 +325,30 @@ export async function resolveReaction(
     (request.trigger === "meal_complete" ||
       request.trigger === "meal_corrected") && request.entryId
   ) {
-    const meal = context.meals.find((row) =>
-      row.id === request.entryId && row.status === "complete"
+    const meal = await findSubject(
+      admin,
+      context,
+      "entries",
+      "id,local_day,occurred_at,created_at,updated_at,title,status,calories_kcal,protein_g,carbs_g,fat_g",
+      request.entryId,
+      context.meals.find((row) =>
+        row.id === request.entryId && row.status === "complete"
+      ),
     );
     if (!meal) return null;
     if (await hasAck(admin, context.userId, "meal_ack", "entry_id", meal.id)) {
       return null;
     }
+    if (
+      request.trigger === "meal_complete" &&
+      await ackedInChat(
+        admin,
+        context.userId,
+        "acked_entry_ids",
+        meal.id,
+        context.now,
+      )
+    ) return null;
     return {
       kind: "meal_ack",
       mode: "meal_ack",
@@ -270,15 +358,24 @@ export async function resolveReaction(
         calories_kcal: numeric(meal.calories_kcal),
         protein_g: numeric(meal.protein_g),
         corrected: request.trigger === "meal_corrected",
+        ...crossDayNote(context, meal.local_day),
       },
       payload: { entry_id: meal.id },
       entryId: meal.id,
       activityId: null,
+      localDay: meal.local_day,
     };
   }
   if (request.trigger === "activity_complete" && request.activityId) {
-    const activity = context.activities.find((row) =>
-      row.id === request.activityId && row.status === "complete"
+    const activity = await findSubject(
+      admin,
+      context,
+      "activities",
+      "id,local_day,occurred_at,updated_at,title,kind,status,duration_min,active_kcal,details",
+      request.activityId,
+      context.activities.find((row) =>
+        row.id === request.activityId && row.status === "complete"
+      ),
     );
     if (!activity) return null;
     if (
@@ -288,6 +385,13 @@ export async function resolveReaction(
         "workout_ack",
         "activity_id",
         activity.id,
+      ) ||
+      await ackedInChat(
+        admin,
+        context.userId,
+        "acked_activity_ids",
+        activity.id,
+        context.now,
       )
     ) return null;
     const details = activity.details ?? {};
@@ -305,10 +409,12 @@ export async function resolveReaction(
           ? details.exercises.slice(0, 8)
           : [],
         prs,
+        ...crossDayNote(context, activity.local_day),
       },
       payload: { activity_id: activity.id, prs },
       entryId: null,
       activityId: activity.id,
+      localDay: activity.local_day,
     };
   }
   if (request.trigger === "checkin" && context.checkin) {
@@ -342,7 +448,42 @@ export async function resolveReaction(
       },
       entryId: null,
       activityId: null,
+      localDay: context.localDay,
     };
+  }
+  return null;
+}
+
+/// Slots that may carry an open question, most expendable topic first.
+const ASK_SLOT_PREFERENCE: readonly CoachSlotKey[] = [
+  "mid_morning",
+  "afternoon",
+  "lunch",
+  "dinner",
+  "breakfast",
+];
+const ASK_COOLDOWN_MS = 36 * 3_600_000;
+
+/// First run: memory holds questions the coach still needs answered
+/// (scale? gym? lift days?). One slot today asks the next one, and only
+/// when no question went out in the last 36 hours, so he is never quizzed.
+export function pickAskSlot(
+  context: CoachContext,
+  slots: PlannedSlot[],
+): { slotKey: CoachSlotKey; day: "today"; question: string } | null {
+  if (context.wellbeingHold || !context.memory) return null;
+  const question = openQuestions(context.memory.sections)[0];
+  if (!question) return null;
+  const askedRecently = context.thread.some((row) =>
+    row.role === "coach" && typeof row.payload?.asks === "string" &&
+    context.now.getTime() - Date.parse(row.deliver_at) < ASK_COOLDOWN_MS
+  );
+  if (askedRecently) return null;
+  for (const key of ASK_SLOT_PREFERENCE) {
+    const slot = slots.find((item) =>
+      item.day === "today" && item.slot_key === key
+    );
+    if (slot) return { slotKey: key, day: "today", question };
   }
   return null;
 }
@@ -538,7 +679,7 @@ function reactionMessage(
       ...(notify ? { push_body: push } : {}),
     },
     deliver_at: context.now.toISOString(),
-    local_day: context.localDay,
+    local_day: reaction.localDay,
     notify,
     entry_id: reaction.entryId,
     activity_id: reaction.activityId,
@@ -546,9 +687,16 @@ function reactionMessage(
 }
 
 function pushFor(bubbles: string[], proposed: string | null): string | null {
-  if (proposed && !/[\r\n]/u.test(proposed)) return proposed;
+  if (proposed && !/[\r\n]/u.test(proposed)) return stripPreamble(proposed);
   const first = bubbles.length === 1 ? bubbles[0] : null;
   return first && Array.from(first).length <= 150 ? first : null;
+}
+
+/// Bubbles with any assistant throat-clearing dropped from the first one.
+function cleanBubbles(body: string, max: number): string[] {
+  const bubbles = splitBubbles(body, max);
+  if (bubbles.length) bubbles[0] = stripPreamble(bubbles[0]);
+  return bubbles.filter(Boolean);
 }
 
 type ModelCopy = {
@@ -634,10 +782,14 @@ export async function writePlanCopy(
     seed: string;
     client?: Anthropic;
     onUsage?: (usage: ClaudeUsage) => void;
+    /// The slot that asks the next open question, if any.
+    ask?: ReturnType<typeof pickAskSlot>;
   },
 ): Promise<ModelCopy> {
   const allowedFigures = allowedFiguresFor(context, reaction?.subject ?? null);
   const usedOpeners: string[] = [];
+  const isAskSlot = (slot: { slot_key: string; day: string }) =>
+    options.ask?.slotKey === slot.slot_key && options.ask.day === slot.day;
   const requestSlots = slots.map((slot) => {
     const shape = pickShape(
       `${options.seed}:${slot.day}:${slot.slot_key}`,
@@ -653,6 +805,7 @@ export async function writePlanCopy(
       mode: slot.mode,
       push: slot.notify,
       shape,
+      ...(isAskSlot(slot) ? { ask: options.ask!.question } : {}),
     };
   });
   const pack = buildStatePack(context, {
@@ -678,7 +831,10 @@ export async function writePlanCopy(
     COACH_DAY_PLAN_INSTRUCTIONS,
     renderMemoryBlock(context),
   );
-  const userContent = `<context_pack>\n${
+  const brief = buildCoachBrief(context, {
+    includeTomorrow: slots.some((slot) => slot.day === "tomorrow"),
+  });
+  const userContent = `<brief>\n${brief}\n</brief>\n\n<context_pack>\n${
     JSON.stringify(pack)
   }\n</context_pack>\n\nWrite the batch described in request: the reaction (if requested) and one entry per requested slot, in the same order.`;
 
@@ -719,7 +875,7 @@ export async function writePlanCopy(
   const collect = (candidateOutput: PlanOutput) => {
     const candidates = new Map<string, CopyCandidate>();
     if (reaction && candidateOutput.reaction) {
-      const bubbles = splitBubbles(candidateOutput.reaction.body, 1);
+      const bubbles = cleanBubbles(candidateOutput.reaction.body, 1);
       candidates.set("reaction", {
         key: "reaction",
         mode: reaction.mode,
@@ -735,7 +891,8 @@ export async function writePlanCopy(
         item.slot_key === slot.slot_key && item.day === slot.day
       );
       if (!written || written.skip || !written.body.trim()) continue;
-      const bubbles = splitBubbles(written.body, 2);
+      const bubbles = cleanBubbles(written.body, 2);
+      if (bubbles.length === 0) continue;
       candidates.set(`${slot.day}:${slot.slot_key}`, {
         key: `${slot.day}:${slot.slot_key}`,
         mode: slot.mode,
@@ -747,14 +904,23 @@ export async function writePlanCopy(
     return candidates;
   };
 
+  /// Safety problems drop a slot; voice problems (machinery, preamble, too
+  /// long, tics) get one repair, and a safe original is kept if it fails.
+  const review = (candidate: CopyCandidate) =>
+    coachCopyReview(
+      candidateOutput(candidate),
+      copyPolicy(
+        context,
+        candidate.mode,
+        allowedFigures,
+        candidate.push !== null,
+      ),
+    );
   const validate = (candidates: Map<string, CopyCandidate>) => {
     const failures = new Map<string, string>();
     for (const candidate of candidates.values()) {
-      const pushCapable = candidate.push !== null;
-      const violation = coachCopyViolation(
-        candidateOutput(candidate),
-        copyPolicy(context, candidate.mode, allowedFigures, pushCapable),
-      );
+      const result = review(candidate);
+      const violation = result.safety ?? result.voice;
       if (violation) failures.set(candidate.key, violation.message);
     }
     return failures;
@@ -788,12 +954,29 @@ export async function writePlanCopy(
       const repaired = collect(parsePlanOutput(repair.output));
       for (const key of failures.keys()) {
         const replacement = repaired.get(key);
-        if (replacement) candidates.set(key, replacement);
+        if (!replacement) continue;
+        // Keep the original when the rewrite is less safe than it was.
+        const original = candidates.get(key);
+        if (
+          original && !review(original).safety && review(replacement).safety
+        ) continue;
+        candidates.set(key, replacement);
       }
-      failures = validate(candidates);
     } catch (error) {
       console.warn("coach_plan_repair_failed", {
         message: String((error as Error)?.message ?? error),
+      });
+    }
+  }
+  // Only safety failures block copy now; voice-only misses ship as written.
+  failures = new Map();
+  for (const candidate of candidates.values()) {
+    const result = review(candidate);
+    if (result.safety) failures.set(candidate.key, result.safety.message);
+    else if (result.voice) {
+      console.info("coach_plan_voice_kept", {
+        key: candidate.key,
+        code: result.voice.code,
       });
     }
   }
@@ -857,6 +1040,7 @@ export async function writePlanCopy(
           shape: requestSlots.find((item) =>
             item.slot_key === slot.slot_key && item.day === slot.day
           )?.shape,
+          ...(isAskSlot(slot) ? { asks: options.ask!.question } : {}),
         },
       ),
     });
@@ -959,6 +1143,7 @@ export async function runCoachPlan(
         seed: fingerprint,
         client: dependencies.client,
         onUsage: (usage) => usageEvents.push(usage),
+        ask: pickAskSlot(context, slots),
       });
     for (const usage of usageEvents) {
       await recordCoachUsage(
