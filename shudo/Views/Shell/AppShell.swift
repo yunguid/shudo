@@ -183,6 +183,8 @@ struct AppShell: View {
             send: { text, mode, engine in
                 sendToCoach(text, mode: mode, engine: engine, hint: capture.context.contextHint)
             },
+            logMeal: { openComposer(autoStartRecording: false) },
+            logWorkout: { sheet = .workoutLog(WorkoutLogContext()) },
             mealPhoto: {
                 if CameraAvailability.hasCamera {
                     cover = .camera(.meal)

@@ -278,11 +278,14 @@ final class shudoUITests: XCTestCase {
         return app
     }
 
-    /// The bar's camera: a tap takes a meal photo (the Simulator has no
-    /// camera, so it's the photo picker) and opens the composer with it.
+    /// The bar's "+" → Meal photo (the Simulator has no camera, so it's the
+    /// photo picker) opens the composer with it.
     @MainActor
     private func openComposerWithPhoto(in app: XCUIApplication) {
-        app.buttons["capture.camera"].tap()
+        app.buttons["capture.log"].tap()
+        let mealPhoto = app.buttons["Meal photo"]
+        XCTAssertTrue(mealPhoto.waitForExistence(timeout: 3))
+        mealPhoto.tap()
         let photos = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'"))
         XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 8))
         photos.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -292,11 +295,11 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Remove photo 1"].waitForExistence(timeout: 8))
     }
 
-    /// Hold the bar's camera → Scan barcode → close the scanner: the
-    /// composer is left with whatever the shell seeded.
+    /// The bar's "+" → Scan barcode → close the scanner: the composer is
+    /// left with whatever the shell seeded.
     @MainActor
     private func openComposerFromBarcode(in app: XCUIApplication) {
-        app.buttons["capture.camera"].press(forDuration: 1.0)
+        app.buttons["capture.log"].tap()
         let scan = app.buttons["Scan barcode"]
         XCTAssertTrue(scan.waitForExistence(timeout: 3))
         scan.tap()

@@ -5,6 +5,10 @@ import UIKit
 struct CaptureBarActions {
     /// Send a message to Shudo (the coach routes meals/workouts via tools).
     var send: (_ text: String, _ mode: CoachInputMode, _ speechEngine: String?) -> Void
+    /// The meal logger (photo, barcode, typed or spoken meal).
+    var logMeal: () -> Void = {}
+    /// The typed workout logger.
+    var logWorkout: () -> Void = {}
     var mealPhoto: () -> Void
     var scanBarcode: () -> Void
     var workoutPhoto: () -> Void
@@ -60,9 +64,9 @@ struct CaptureDraft: Equatable {
 /// record (the field becomes a timer and meter, no live words), tap the
 /// same spot to send (it transcribes, then goes to Shudo); hold to talk and
 /// release to send. A failed transcription keeps the recording and the same
-/// spot retries. The field opens the keyboard. Trailing: the camera — a tap
-/// takes the tab's photo (meal, workout, check-in), a hold offers the rest —
-/// or ✕ to discard while recording. The placeholder and `context_hint`
+/// spot retries. The field opens the keyboard. Trailing: "+" — a labeled
+/// menu to log a meal, photo, barcode, workout or check-in, the tab's own
+/// first — or ✕ to discard while recording. The placeholder and `context_hint`
 /// follow `context`.
 struct CaptureBar: View {
     @ObservedObject var voice: VoiceTranscriber
@@ -110,7 +114,7 @@ struct CaptureBar: View {
                         .accessibilityLabel("Send to Shudo")
                         .accessibilityIdentifier("capture.send")
                 } else if context != .bio {
-                    cameraButton
+                    logButton
                 }
             }
         }
@@ -272,48 +276,48 @@ struct CaptureBar: View {
         .accessibilityIdentifier("capture.field")
     }
 
-    // MARK: Camera
+    // MARK: Log
 
-    private struct CameraOption {
+    private struct LogOption {
         let title: String
         let symbol: String
         let action: () -> Void
     }
 
-    /// The tab's photo first; a tap takes it, a hold offers the rest.
-    private var cameraOptions: [CameraOption] {
-        let meal = CameraOption(title: "Meal photo", symbol: "fork.knife", action: actions.mealPhoto)
-        let barcode = CameraOption(title: "Scan barcode", symbol: "barcode.viewfinder", action: actions.scanBarcode)
-        let workout = CameraOption(title: "Workout photo", symbol: "dumbbell.fill", action: actions.workoutPhoto)
-        let checkIn = CameraOption(title: "Check-in photo", symbol: "figure.arms.open", action: actions.checkIn)
+    /// Everything Luke can log, the tab's own kind first.
+    private var logOptions: [LogOption] {
+        let meal = LogOption(title: "Log a meal", symbol: "fork.knife", action: actions.logMeal)
+        let mealPhoto = LogOption(title: "Meal photo", symbol: "camera", action: actions.mealPhoto)
+        let barcode = LogOption(title: "Scan barcode", symbol: "barcode.viewfinder", action: actions.scanBarcode)
+        let workout = LogOption(title: "Log a workout", symbol: "dumbbell", action: actions.logWorkout)
+        let workoutPhoto = LogOption(title: "Workout photo", symbol: "camera", action: actions.workoutPhoto)
+        let checkIn = LogOption(title: "Daily check-in", symbol: "figure.arms.open", action: actions.checkIn)
         switch context {
-        case .train: return [workout, meal, barcode, checkIn]
-        case .body: return [checkIn, meal, barcode, workout]
-        case .today, .bio: return [meal, barcode, workout, checkIn]
+        case .train: return [workout, workoutPhoto, meal, checkIn]
+        case .body: return [checkIn, meal, workout]
+        case .today, .bio: return [meal, mealPhoto, barcode, workout, checkIn]
         }
     }
 
-    private var cameraButton: some View {
-        let options = cameraOptions
-        let primary = options[0]
-        return Menu {
-            ForEach(options, id: \.title) { option in
+    /// A tap opens the labeled menu, so every way to log is findable.
+    private var logButton: some View {
+        Menu {
+            ForEach(logOptions, id: \.title) { option in
                 Button(option.title, systemImage: option.symbol, action: option.action)
             }
         } label: {
-            Image(systemName: "camera.fill")
-                .font(.system(size: isInline ? 15 : 16, weight: .semibold))
-                .foregroundStyle(Design.Color.textSecondary)
+            Image(systemName: "plus")
+                .font(.system(size: isInline ? 16 : 18, weight: .semibold))
+                .foregroundStyle(Design.Color.textPrimary)
                 .frame(width: 36, height: 36)
+                .background(Design.Color.textPrimary.opacity(0.1), in: Circle())
                 .contentShape(Circle())
-        } primaryAction: {
-            primary.action()
         }
-        .menuStyle(.button)
+        .menuOrder(.priority)
         .buttonStyle(.plain)
-        .accessibilityLabel(primary.title)
-        .accessibilityHint("Touch and hold for barcode, workout or check-in photos.")
-        .accessibilityIdentifier("capture.camera")
+        .accessibilityLabel("Log")
+        .accessibilityHint("A meal, photo, barcode, workout or check-in")
+        .accessibilityIdentifier("capture.log")
     }
 
     // MARK: Actions
