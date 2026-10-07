@@ -29,12 +29,24 @@ export type CoachCopyCode =
   | "url"
   | "contact"
   | "format"
-  | "length";
+  | "length"
+  | "machinery"
+  | "preamble"
+  | "verbose";
 
 /// Codes that only shape the voice. Everything else is a safety failure that
 /// must never reach the thread.
 export const SOFT_COACH_COPY_CODES: ReadonlySet<CoachCopyCode> = new Set([
   "tic",
+]);
+
+/// Voice codes: worth one rewrite, but copy that fails only these is still
+/// safe to show, so a failed rewrite keeps it instead of going silent.
+export const VOICE_COACH_COPY_CODES: ReadonlySet<CoachCopyCode> = new Set([
+  "tic",
+  "machinery",
+  "preamble",
+  "verbose",
 ]);
 
 export class CoachCopyViolation extends Error {
@@ -64,6 +76,8 @@ export type CoachCopyPolicy = {
   verifyFigures?: boolean;
   /// Genuine milestones may carry one exclamation point.
   milestone?: boolean;
+  /// False checks safety and hard limits only (voice codes are skipped).
+  voice?: boolean;
 };
 
 export type CoachRenderOutput = {
@@ -75,7 +89,10 @@ export type CoachRenderOutput = {
 };
 
 export const COACH_BUBBLE_MAX_CHARS = 280;
-export const COACH_PUSH_TARGET_CHARS = 110;
+/// Lock-screen line: aim for 90, past 110 earns one rewrite, 150 is the
+/// hard stop.
+export const COACH_PUSH_TARGET_CHARS = 90;
+export const COACH_PUSH_VOICE_CHARS = 110;
 export const COACH_PUSH_MAX_CHARS = 150;
 
 const MODE_LIMITS: Record<CoachMode, { total: number; bubbles: number }> = {
@@ -88,6 +105,20 @@ const MODE_LIMITS: Record<CoachMode, { total: number; bubbles: number }> = {
   snack_recommendation: { total: 350, bubbles: 2 },
   workout_ack: { total: 200, bubbles: 1 },
   meal_ack: { total: 200, bubbles: 1 },
+};
+
+/// Text-message length per mode. Past this it reads like an essay and gets
+/// one rewrite; the hard limits above still bind.
+export const MODE_VOICE_LIMITS: Record<CoachMode, number> = {
+  chat_reply: 360,
+  checkpoint_nudge: 220,
+  morning_plan: 300,
+  nightly_closeout: 300,
+  checkin_ack: 260,
+  profile_update: 260,
+  snack_recommendation: 260,
+  workout_ack: 160,
+  meal_ack: 160,
 };
 
 const SLUR_PATTERN =
@@ -140,6 +171,37 @@ const STALE_TIME_PATTERN = /\b(?:right now|just now|just logged)\b/iu;
 const TIC_PATTERN =
   /\b(?:let['’]?s go|you got this|crush(?:ed|ing)? it|beast mode|grind(?:ing)?|no excuses|journey|fuel your body|great job|don['’]?t forget|bro|king|champ|buddy|my guy)\b/iu;
 const URL_PATTERN = /(?:https?:\/\/|www\.)/iu;
+/// The coach reacts; he never narrates the machinery: tools, models, saving
+/// and logging mechanics, estimates in flight, IDs, or confidence scores.
+/// A bare "Logged." is a reaction, not narration, and stays allowed.
+const MACHINERY_PATTERNS = [
+  /\bI(?:['’]ve| have| just| already|['’]ll| will| went ahead and)?\s+(?:logged|log|recorded|record|saved|save|stored|store|noted|note|filed|file|queued|queue|updated|update)\b/iu,
+  /\b(?:logged|saved|stored|noted|filed|recorded)\s+(?:it|that|this|them)\s+for you\b/iu,
+  /\b(?:saved|stored|added|noted|filed|logged|put)\s+(?:it\s+|that\s+|this\s+)?(?:to|in|into|under)\s+(?:your|my|the)\s+(?:bio|memory|notes|profile|file|records?|database|system)\b/iu,
+  /\bmy\s+(?:memory|notes|database|records|context|system|tools?)\b/iu,
+  /\b(?:tool calls?|function calls?|language model|context pack|live state|system (?:note|prompt|message))\b/iu,
+  /\b(?:Claude|Sonnet|Anthropic|OpenAI|ChatGPT|GPT|LLM|API|JSON)\b/u,
+  /\b(?:estimat(?:e|es)\s+(?:lands?|comes? in|will|is (?:still )?(?:coming|pending|in progress))|(?:still |currently |now )(?:estimating|analy[sz]ing|processing|crunching)|in the background|once (?:the )?(?:analysis|estimate) (?:is )?(?:done|finishes|lands|comes in))\b/iu,
+  /\bconfidence\s+(?:score|level|rating)\b|\b\d{1,3}\s?%\s+(?:confiden\w*|sure|certain)\b/iu,
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/iu,
+  /\b(?:entry|activity|message|meal|request|run)[_ ]id\b/iu,
+];
+/// Assistant throat-clearing at the start of a text.
+const PREAMBLE_PATTERN =
+  /^(?:(?:great|good|fair|nice)\s+question\b|(?:sure|of course|absolutely|certainly|definitely|happy to help|no problem)\s*[,.!:—–-]|(?:sure thing|understood|will do)\b|(?:thanks|thank you) for (?:sharing|letting me know|the update|telling me)\b|here(?:['’]s| is) (?:the|your|a) (?:plan|breakdown|rundown|summary|update)\b|(?:ok|okay|alright),? so\b)/iu;
+
+/// Drops assistant throat-clearing from the start of a text ("Great
+/// question! Eat at 3." → "Eat at 3."). Text that is only a preamble stays.
+export function stripPreamble(text: string): string {
+  const trimmed = text.trim();
+  const match =
+    /^(?:(?:great|good|fair|nice)\s+question|sure thing|sure|of course|absolutely|certainly|definitely|happy to help|no problem|understood|will do|(?:ok|okay|alright),? so)\s*[.!,:—–-]*\s*/iu
+      .exec(trimmed);
+  if (!match || !PREAMBLE_PATTERN.test(trimmed)) return trimmed;
+  const rest = trimmed.slice(match[0].length).trim();
+  if (rest.length < 2) return trimmed;
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
 const PHONE_PATTERN = /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/u;
 const FORMAT_PATTERNS = [
   /\*\*|__/u,
@@ -287,6 +349,13 @@ function checkText(
   if (push && STALE_TIME_PATTERN.test(text)) {
     return new CoachCopyViolation("stale_time", field);
   }
+  if (policy.voice === false) return null;
+  if (MACHINERY_PATTERNS.some((pattern) => pattern.test(text))) {
+    return new CoachCopyViolation("machinery", field);
+  }
+  if (PREAMBLE_PATTERN.test(text.trim())) {
+    return new CoachCopyViolation("preamble", field);
+  }
   const exclamations = [...text.matchAll(/!/gu)].length;
   const allowedExclamations = policy.milestone || policy.mode === "chat_reply"
     ? 1
@@ -355,7 +424,43 @@ export function coachCopyViolation(
     const violation = checkText(output.day_theme, "day_theme", policy, false);
     if (violation) return violation;
   }
+  if (policy.voice !== false) {
+    const voiceLimit = policy.mode === "chat_reply" && policy.longForm
+      ? total
+      : MODE_VOICE_LIMITS[policy.mode];
+    if (characters > voiceLimit) {
+      return new CoachCopyViolation(
+        "verbose",
+        "bubbles",
+        `${characters} > ${voiceLimit}`,
+      );
+    }
+    if (
+      output.push_body !== null &&
+      Array.from(output.push_body).length > COACH_PUSH_VOICE_CHARS
+    ) {
+      return new CoachCopyViolation(
+        "verbose",
+        "push_body",
+        `${Array.from(output.push_body).length} > ${COACH_PUSH_VOICE_CHARS}`,
+      );
+    }
+  }
   return null;
+}
+
+/**
+ * Safety first, voice second: null when clean, the safety violation when
+ * there is one, otherwise the voice violation (safe to show if a rewrite
+ * can't fix it).
+ */
+export function coachCopyReview(
+  output: CoachRenderOutput,
+  policy: CoachCopyPolicy,
+): { safety: CoachCopyViolation | null; voice: CoachCopyViolation | null } {
+  const safety = coachCopyViolation(output, { ...policy, voice: false });
+  if (safety) return { safety, voice: null };
+  return { safety: null, voice: coachCopyViolation(output, policy) };
 }
 
 /** Throws CoachCopyViolation unless the message passes every rule. */

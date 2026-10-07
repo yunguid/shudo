@@ -292,10 +292,7 @@ Deno.test("a refusal falls back to template copy instead of going silent", async
   assertEquals((completion.p_result as Row).fallback, true);
   const messages = completion.p_messages as Row[];
   assertEquals(messages[0].kind, "meal_ack");
-  assertEquals(
-    messages[0].body,
-    "Got it. 1,260 cal and 77g protein left today.",
-  );
+  assertEquals(messages[0].body, "1,260 cal and 77g protein to go.");
   // In the foreground the reaction lands in the thread without a push.
   assertEquals(messages[0].notify, false);
   // Silence wins where the templates have nothing useful to say.

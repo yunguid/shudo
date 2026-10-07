@@ -40,24 +40,30 @@ export function weeklyRecapCopy(
 ): { body: string; push_body: string } {
   const label = weekLabel(weekStart);
   if (metrics.days_logged <= 0) {
-    return {
-      body:
-        `Week of ${label} is in. Quiet week on the log, so there's nothing to grade. Fresh week: log every meal and we'll have real numbers.`,
-      push_body: `Week of ${label} is in. Fresh week: log every meal.`,
-    };
+    const text = "Last week's log was empty, so nothing to grade. Fresh week.";
+    return { body: text, push_body: text };
   }
-  const days = metrics.days_logged === 1
-    ? "1 day"
-    : `${metrics.days_logged} days`;
+  // The recap card carries the numbers; the text says what they mean.
+  const average = calories(metrics.average_calories_kcal);
+  const target = metrics.target_calories_kcal;
+  const ratio = target > 0 ? metrics.average_calories_kcal / target : 1;
+  const verdict = ratio < 0.9
+    ? `${average} cal a day against ${
+      calories(target)
+    }. Closing that gap is the week.`
+    : ratio > 1.1
+    ? `${average} cal a day, over the ${
+      calories(target)
+    } mark. Ease back to the number.`
+    : `${average} cal a day, right on the number. Same again.`;
+  const thin = metrics.days_logged < 5
+    ? ` Only ${metrics.days_logged} of 7 days logged, so it's a partial read.`
+    : "";
   return {
-    body: `Week of ${label} is in: ${days} logged, averaging ${
-      calories(metrics.average_calories_kcal)
-    } cal and ${
-      Math.round(metrics.average_protein_g)
-    }g protein. The full recap is on the Body tab.`,
-    push_body: `Week of ${label} recap is in: ${days} logged, ${
-      calories(metrics.average_calories_kcal)
-    } cal a day.`,
+    body: `Week of ${label}: ${verdict}${thin} Full recap's on the Body tab.`,
+    push_body: `Week of ${label}: ${average} cal a day${
+      target > 0 ? ` against ${calories(target)}` : ""
+    }.`,
   };
 }
 
@@ -117,6 +123,7 @@ export async function postWeeklyRecapMessage(
       args.metrics.days_logged,
       Math.round(args.metrics.average_calories_kcal / 10) * 10,
       Math.round(args.metrics.average_protein_g),
+      Math.round(args.metrics.target_calories_kcal / 10) * 10,
     ],
     pushCapable: true,
   };
