@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct OnboardingView: View {
-    private enum Field: Hashable {
+    fileprivate enum Field: Hashable {
         case context
         case displayName
         case height
@@ -10,7 +10,6 @@ struct OnboardingView: View {
         case heightInches
         case weight
         case targetWeight
-        case goalNotes
         case calories
         case protein
         case carbs
@@ -21,12 +20,9 @@ struct OnboardingView: View {
     private let initialProfile: Profile?
     private let onCompleted: (Profile) -> Void
 
-    /// Held unobserved: the voice card observes it, and this screen mirrors
-    /// only what it needs, so meter and transcript updates never re-render
-    /// the description editor.
+    /// Held unobserved: only the mic button and its recording strip observe
+    /// it, so meter updates never re-render the rest of the screen.
     @StateObject private var voiceHolder = UnobservedHolder(VoiceTranscriber(profile: .onboarding))
-    @State private var hasLiveDictation = false
-    @State private var lastDictation: DictationMergePolicy.AppendRecord?
     @State private var dictatedTakeCount = 0
     @State private var dictatedEngine: SpeechEngineID?
     @State private var context = ""
@@ -70,9 +66,9 @@ struct OnboardingView: View {
         .safeAreaInset(edge: .bottom) {
             bottomAction
         }
-        .onReceive(voice.$transcript) { transcript in
-            let hasText = !transcript.isEmpty
-            if hasLiveDictation != hasText { hasLiveDictation = hasText }
+        .onChange(of: context) { _, value in
+            guard value.count > OnboardingCapturePolicy.maximumTextCharacters else { return }
+            context = OnboardingCapturePolicy.normalizedText(value)
         }
         .onDisappear {
             voice.cancel()
@@ -80,130 +76,65 @@ struct OnboardingView: View {
     }
 
     private var captureContent: some View {
-        VStack(alignment: .leading, spacing: 26) {
-            VStack(alignment: .leading, spacing: 9) {
-                Text("Set your daily targets")
-                    .font(.system(.largeTitle, design: .default, weight: .bold))
-                    .foregroundStyle(Design.Color.ink)
-
-                Text("Describe your height, weight, activity, diet, and goal.")
-                    .font(.title3)
-                    .foregroundStyle(Design.Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            voiceCard
+        VStack(alignment: .leading, spacing: 22) {
+            CoachAvatar(size: 52, isThinking: isPreparing)
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Or type a short description")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Design.Color.ink)
+                Text(isPreparing ? "Working out your numbers…" : "Tell me about you")
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .contentTransition(.opacity)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                ZStack(alignment: .topLeading) {
-                    if context.isEmpty {
-                        Text("Example: I’m 5'10\", 165 lb, fairly active, vegetarian, and want to gain muscle slowly.")
-                            .font(.body)
-                            .foregroundStyle(Design.Color.muted)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 15)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: $context)
-                        .font(.body)
-                        .foregroundStyle(Design.Color.ink)
-                        .accessibilityLabel("Profile description")
-                        .scrollContentBackground(.hidden)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 8)
-                        .frame(minHeight: 120, maxHeight: 190)
-                        .focused($focusedField, equals: .context)
-                        .onChange(of: context) { _, value in
-                            guard value.count > OnboardingCapturePolicy.maximumTextCharacters else {
-                                return
-                            }
-                            context = OnboardingCapturePolicy.normalizedText(value)
-                        }
+                if !isPreparing {
+                    Text("Height, weight, how active you are, and what you’re after. Tap the mic and talk.")
+                        .font(.title3)
+                        .foregroundStyle(Design.Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .background(
-                    Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
-                )
-            }
-
-            if isPreparing {
-                preparingCard
             }
 
             errorView
         }
+        .animation(Design.Motion.snap, value: isPreparing)
     }
 
     private var voice: VoiceTranscriber { voiceHolder.value }
 
-    private var voiceCard: some View {
-        VoiceCaptureCard(
-            voice: voice,
-            style: .onboarding,
-            isDisabled: isPreparing,
-            canUndo: !isPreparing && DictationMergePolicy.canUndo(lastDictation, in: context),
-            onUndo: undoLastDictation,
-            onWillStart: {
-                errorMessage = nil
-                focusedField = nil
-            },
-            onTake: appendTake
-        )
-    }
-
-    private var preparingCard: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(spacing: 10) {
-                ProgressView()
-                    .tint(Design.Color.accentSecondary)
-                Text("Building your targets…")
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.ink)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                shimmerLine(width: 0.92)
-                shimmerLine(width: 0.72)
-                shimmerLine(width: 0.84)
-            }
-        }
-        .padding(20)
-        .background(
-            Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Building your daily targets")
-    }
-
-    private func shimmerLine(width: CGFloat) -> some View {
-        GeometryReader { geometry in
-            Capsule()
-                .fill(Design.Color.subtle.opacity(0.45))
-                .frame(width: geometry.size.width * width, height: 10)
-                .shimmering()
-        }
-        .frame(height: 10)
-    }
-
     private func reviewContent(_ result: OnboardingProposalResult) -> some View {
-        VStack(alignment: .leading, spacing: 26) {
-            VStack(alignment: .leading, spacing: 9) {
-                Text("Review your targets")
-                    .font(.system(.largeTitle, design: .default, weight: .bold))
-                    .foregroundStyle(Design.Color.ink)
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Your targets")
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(Design.Color.textPrimary)
 
                 Text(result.proposal.summary)
-                    .font(.title3)
-                    .foregroundStyle(Design.Color.muted)
+                    .font(.body)
+                    .foregroundStyle(Design.Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            sectionCard(title: "About you") {
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 12),
+                    GridItem(.flexible(), spacing: 12)
+                ],
+                spacing: 12
+            ) {
+                macroField(title: "Calories", unit: "kcal", keyPath: \.caloriesKcal, field: .calories)
+                macroField(title: "Protein", unit: "g", keyPath: \.proteinG, field: .protein)
+                macroField(title: "Carbs", unit: "g", keyPath: \.carbsG, field: .carbs)
+                macroField(title: "Fat", unit: "g", keyPath: \.fatG, field: .fat)
+            }
+
+            Picker("Goal", selection: goalSelection) {
+                ForEach(NutritionGoalType.allCases, id: \.self) { goal in
+                    Text(goal.onboardingTitle).tag(goal)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            sectionCard {
                 editableRow(title: "Name", unit: nil) {
                     TextField(
                         "Optional",
@@ -225,7 +156,7 @@ struct OnboardingView: View {
 
                 rowDivider
 
-                editableRow(title: "Target", unit: reviewWeightUnit) {
+                editableRow(title: "Goal weight", unit: reviewWeightUnit) {
                     numericField(\.targetWeight, prompt: "—", field: .targetWeight)
                 }
 
@@ -233,7 +164,7 @@ struct OnboardingView: View {
 
                 HStack {
                     Text("Activity")
-                        .foregroundStyle(Design.Color.ink)
+                        .foregroundStyle(Design.Color.textPrimary)
                     Spacer()
                     Picker("Activity", selection: binding(\.activityLevel, fallback: .moderate)) {
                         ForEach(ProfileActivityLevel.allCases, id: \.self) { activity in
@@ -242,109 +173,16 @@ struct OnboardingView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
-                    .tint(Design.Color.accentSecondary)
+                    .tint(Design.Color.textSecondary)
                 }
-                .frame(minHeight: 44)
-            }
-
-            sectionCard(title: "Goal, diet & preferences") {
-                Picker("Goal", selection: goalSelection) {
-                    ForEach(NutritionGoalType.allCases, id: \.self) { goal in
-                        Text(goal.onboardingTitle).tag(goal)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                ZStack(alignment: .topLeading) {
-                    if draft?.goalNotes.isEmpty != false {
-                        Text("Diet, allergies, routine, or goal details")
-                            .foregroundStyle(Design.Color.muted)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 9)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: binding(\.goalNotes, fallback: ""))
-                        .foregroundStyle(Design.Color.ink)
-                        .accessibilityLabel("Diet, allergies, routine, or goal details")
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 88, maxHeight: 140)
-                        .focused($focusedField, equals: .goalNotes)
-                }
-                .padding(.horizontal, 9)
-                .background(
-                    Design.Color.glassFill,
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                )
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Daily targets")
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.ink)
-
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: 12),
-                        GridItem(.flexible(), spacing: 12)
-                    ],
-                    spacing: 12
-                ) {
-                    macroField(
-                        title: "Calories",
-                        unit: "kcal",
-                        keyPath: \.caloriesKcal,
-                        field: .calories
-                    )
-                    macroField(
-                        title: "Protein",
-                        unit: "g",
-                        keyPath: \.proteinG,
-                        field: .protein
-                    )
-                    macroField(
-                        title: "Carbs",
-                        unit: "g",
-                        keyPath: \.carbsG,
-                        field: .carbs
-                    )
-                    macroField(
-                        title: "Fat",
-                        unit: "g",
-                        keyPath: \.fatG,
-                        field: .fat
-                    )
-                }
-            }
-
-            if !result.proposal.assumptions.isEmpty {
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(result.proposal.assumptions, id: \.self) { assumption in
-                            Label(assumption, systemImage: "circle.fill")
-                                .labelStyle(OnboardingBulletLabelStyle())
-                                .font(.footnote)
-                                .foregroundStyle(Design.Color.muted)
-                        }
-                    }
-                    .padding(.top, 12)
-                } label: {
-                    Text("How these were estimated")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.ink)
-                }
-                .tint(Design.Color.accentSecondary)
-                .padding(18)
-                .background(
-                    Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
-                )
+                .frame(minHeight: 48)
             }
 
             Button("Start over") {
                 startOver()
             }
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Design.Color.muted)
+            .foregroundStyle(Design.Color.textSecondary)
             .frame(maxWidth: .infinity, minHeight: 44)
             .buttonStyle(.plain)
             .disabled(isApplying)
@@ -353,21 +191,14 @@ struct OnboardingView: View {
         }
     }
 
-    private func sectionCard<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(Design.Color.ink)
-            content()
-        }
-        .padding(18)
-        .background(
-            Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
-        )
+    private func sectionCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) { content() }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+            .background(
+                Design.Color.surface1,
+                in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
+            )
     }
 
     private func editableRow<Content: View>(
@@ -377,18 +208,18 @@ struct OnboardingView: View {
     ) -> some View {
         HStack(spacing: 10) {
             Text(title)
-                .foregroundStyle(Design.Color.ink)
+                .foregroundStyle(Design.Color.textPrimary)
             Spacer(minLength: 14)
             content()
                 .multilineTextAlignment(.trailing)
-                .foregroundStyle(Design.Color.accentSecondary)
+                .foregroundStyle(Design.Color.textPrimary)
             if let unit {
                 Text(unit)
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.textTertiary)
             }
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: 48)
     }
 
     private var rowDivider: some View { HairlineRule() }
@@ -461,24 +292,27 @@ struct OnboardingView: View {
         keyPath: WritableKeyPath<OnboardingDraft, String>,
         field: Field
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Design.Color.muted)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Design.Color.textTertiary)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 TextField("0", text: binding(keyPath, fallback: ""))
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Design.Color.ink)
+                    .font(Design.Typeface.numeral(field == .calories ? .title : .title2))
+                    .monospacedDigit()
+                    .foregroundStyle(Design.Color.textPrimary)
                     .keyboardType(.decimalPad)
                     .focused($focusedField, equals: field)
+                    .accessibilityLabel("\(title), \(unit)")
                 Text(unit)
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.textTertiary)
             }
         }
         .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Design.Color.elevated,
+            Design.Color.surface1,
             in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
         )
     }
@@ -501,9 +335,9 @@ struct OnboardingView: View {
             } label: {
                 HStack(spacing: 9) {
                     if isApplying {
-                        ProgressView().tint(.white)
+                        ProgressView().tint(Design.Color.onEmber)
                     }
-                    Text(isApplying ? "Saving…" : "Apply targets")
+                    Text(isApplying ? "Saving…" : "Use these targets")
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -511,36 +345,35 @@ struct OnboardingView: View {
             .disabled(isApplying)
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial)
         } else {
-            Button {
-                Task { await prepareProposal() }
-            } label: {
-                HStack(spacing: 9) {
-                    if isPreparing {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: "gauge.with.dots.needle.67percent")
-                    }
-                    Text(isPreparing ? "Preparing…" : "Create my targets")
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(!canPrepare)
-            .opacity(canPrepare ? 1 : 0.48)
-            .padding(.horizontal, 20)
+            OnboardingCaptureBar(
+                voice: voice,
+                text: $context,
+                isSubmitting: isPreparing,
+                textFocus: $focusedField,
+                onMic: micTapped,
+                onSend: { Task { await prepareProposal() } }
+            )
+            .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial)
         }
     }
 
-    private var canPrepare: Bool {
-        OnboardingCapturePolicy.canSubmit(
-            text: context,
-            hasLiveDictation: hasLiveDictation,
-            isSubmitting: isPreparing
-        )
+    /// The one mic: the first tap starts listening, the second sends
+    /// everything (typed words plus the take) for targets.
+    private func micTapped() {
+        if voice.isListening {
+            Task { await prepareProposal() }
+            return
+        }
+        guard !voice.isBusy, !isPreparing else { return }
+        errorMessage = nil
+        focusedField = nil
+        Task {
+            if !(await voice.start()), let message = voice.errorMessage {
+                errorMessage = message
+            }
+        }
     }
 
     private func appendTake(_ take: VoiceTake) {
@@ -550,21 +383,10 @@ struct OnboardingView: View {
             limit: OnboardingCapturePolicy.maximumTextCharacters
         )
         if result.wasTruncated { errorMessage = VoiceCopy.reachedLengthLimit }
-        guard let record = result.record else { return }
+        guard result.record != nil else { return }
         context = result.note
-        lastDictation = record
         dictatedTakeCount += 1
         dictatedEngine = take.engine
-    }
-
-    private func undoLastDictation() {
-        guard let record = lastDictation,
-              let restored = DictationMergePolicy.undoing(record, in: context) else { return }
-        context = restored
-        lastDictation = nil
-        dictatedTakeCount = max(0, dictatedTakeCount - 1)
-        if dictatedTakeCount == 0 { dictatedEngine = nil }
-        errorMessage = nil
     }
 
     private func binding<Value>(
@@ -688,7 +510,6 @@ struct OnboardingView: View {
         proposalResult = nil
         draft = nil
         context = ""
-        lastDictation = nil
         dictatedTakeCount = 0
         dictatedEngine = nil
         clientRequestID = UUID()
@@ -697,14 +518,112 @@ struct OnboardingView: View {
 
 }
 
-private struct OnboardingBulletLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            configuration.icon
-                .font(.system(size: 5))
-                .foregroundStyle(Design.Color.accentSecondary)
-            configuration.title
+/// Onboarding's input, shaped like the capture bar: the ember mic sits at
+/// the bottom-left (tap to talk, tap again to send), then the field, then
+/// send for typed words. No live words on screen while recording.
+private struct OnboardingCaptureBar: View {
+    @ObservedObject var voice: VoiceTranscriber
+    @Binding var text: String
+    let isSubmitting: Bool
+    var textFocus: FocusState<OnboardingView.Field?>.Binding
+    let onMic: () -> Void
+    let onSend: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var canSend: Bool {
+        !isSubmitting && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            micButton
+            if voice.isBusy {
+                recordingStrip
+                    .transition(.opacity)
+            } else {
+                TextField("Or type it", text: $text, axis: .vertical)
+                    .lineLimit(1...6)
+                    .focused(textFocus, equals: .context)
+                    .font(.body)
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 13)
+                    .frame(minHeight: 52)
+                    .background(Design.Color.surface2, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .disabled(isSubmitting)
+                    .accessibilityLabel("Describe yourself")
+                    .transition(.opacity)
+                if canSend {
+                    Button(action: onSend) {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(Design.Color.onEmber)
+                            .frame(width: 52, height: 52)
+                            .background(Design.Color.ember, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Create my targets")
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+            }
         }
+        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: voice.isBusy)
+        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: canSend)
+        .sensoryFeedback(trigger: voice.isListening) { _, listening in listening ? .start : .stop }
+    }
+
+    private var micButton: some View {
+        Button(action: onMic) {
+            ZStack {
+                Circle()
+                    .fill(Design.Color.emberFill)
+                    .frame(width: 52, height: 52)
+                    .shadow(
+                        color: Design.Color.ember.opacity(voice.isListening ? 0.5 : 0.2),
+                        radius: voice.isListening ? 12 : 6
+                    )
+                if voice.isStarting || voice.isFinishing || isSubmitting {
+                    ProgressView().tint(Design.Color.onEmber)
+                } else {
+                    Image(systemName: voice.isListening ? "arrow.up" : "mic.fill")
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundStyle(Design.Color.onEmber)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isSubmitting || voice.isFinishing || voice.isPreparingModel)
+        .accessibilityLabel(voice.isListening ? "Send" : "Talk")
+        .accessibilityHint(voice.isListening ? "Stops recording and builds your targets" : "Records what you say")
+        .accessibilityIdentifier("Voice recording control")
+    }
+
+    private var recordingStrip: some View {
+        HStack(spacing: 12) {
+            VoiceMeterView(levels: voice.meterLevels, isActive: voice.isListening, tint: Design.Color.ember)
+                .frame(height: 24)
+            Text(VoiceCopy.clock(voice.elapsedTime))
+                .font(Design.Typeface.numeral(.subheadline))
+                .monospacedDigit()
+                .foregroundStyle(Design.Color.textSecondary)
+            Button {
+                voice.cancel()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Design.Color.textTertiary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Cancel recording")
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .frame(minHeight: 52)
+        .background(Design.Color.surface2, in: Capsule())
     }
 }
 

@@ -74,9 +74,14 @@ struct AuthView: View {
                 VStack(spacing: 30) {
                     Spacer(minLength: 62)
 
-                    Text("Shudo")
-                        .font(.system(.largeTitle, design: .default, weight: .bold))
-                        .foregroundStyle(Design.Color.ink)
+                    VStack(spacing: 14) {
+                        CoachAvatar(size: 64)
+                        Text("Shudo")
+                            .font(Design.Typeface.screenTitle)
+                            .foregroundStyle(Design.Color.textPrimary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
 
                     VStack(spacing: 12) {
                         VStack(spacing: 0) {
@@ -130,7 +135,7 @@ struct AuthView: View {
                                         .controlSize(.small)
                                         .tint(Design.Color.accentSecondary)
                                 }
-                                Text(isRecoveryLoading ? "Sending reset link…" : "Forgot password?")
+                                Text(isRecoveryLoading ? "Sending…" : "Forgot password?")
                             }
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Design.Color.accentSecondary)
@@ -201,7 +206,7 @@ struct AuthView: View {
                             }
                             Text(isLoading
                                  ? (isCreatingAccount ? "Creating…" : "Opening…")
-                                 : (isCreatingAccount ? "Create account" : "Open Shudo"))
+                                 : (isCreatingAccount ? "Create account" : "Sign in"))
                         }
                         .frame(maxWidth: .infinity)
                     }
@@ -215,9 +220,7 @@ struct AuthView: View {
                         recoveryMessage = nil
                         canResendConfirmation = false
                     } label: {
-                        Text(isCreatingAccount
-                             ? "Already have an account? Sign in"
-                             : "New to Shudo? Create account")
+                        Text(isCreatingAccount ? "I have an account" : "Create an account")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Design.Color.accentSecondary)
                             .frame(minHeight: 44)
@@ -312,17 +315,11 @@ struct AuthView: View {
     private var oauthProviderDiscoveryContent: some View {
         switch oauthProviderDiscovery {
         case .loading:
-            HStack(spacing: 9) {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(Design.Color.accentSecondary)
-                Text("Checking sign-in options…")
-            }
-            .font(.footnote)
-            .foregroundStyle(Design.Color.muted)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("oauth-provider-discovery-loading")
+            // Quiet until the providers arrive; holds the row's height.
+            Color.clear
+                .frame(height: 48)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("oauth-provider-discovery-loading")
         case .loaded(let providers):
             if !providers.isEmpty {
                 HStack(spacing: 10) {
@@ -336,28 +333,15 @@ struct AuthView: View {
                 }
             }
         case .failed:
-            HStack(spacing: 10) {
-                Label("Social sign-in couldn’t load.", systemImage: "wifi.exclamationmark")
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Button("Retry") {
-                    Task { await loadOAuthProviders() }
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Design.Color.accentSecondary)
-                .frame(minHeight: 44)
-                .buttonStyle(.plain)
-                .disabled(isBusy)
-                .accessibilityIdentifier("oauth-provider-discovery-retry")
+            Button("Apple and Google sign-in didn’t load · Retry") {
+                Task { await loadOAuthProviders() }
             }
-            .padding(.horizontal, 14)
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            .accessibilityIdentifier("oauth-provider-discovery-error")
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(Design.Color.textTertiary)
+            .frame(minHeight: 44)
+            .buttonStyle(.plain)
+            .disabled(isBusy)
+            .accessibilityIdentifier("oauth-provider-discovery-retry")
         }
     }
 
@@ -522,7 +506,7 @@ struct AuthView: View {
             try await SupabaseAuthService().requestPasswordRecovery(
                 email: AuthEmailInput.normalized(email)
             )
-            recoveryMessage = "If an account exists for this email, you’ll receive a reset link shortly."
+            recoveryMessage = "If that email has an account, a reset link is on its way."
         } catch {
             errorMessage = "We couldn’t send a reset link right now. Please try again."
         }

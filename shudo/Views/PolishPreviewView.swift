@@ -16,6 +16,10 @@ enum PolishPreviewScreen: String {
     case heatmap
     case train
     case body
+    /// First run: the "tell me about you" capture screen.
+    case onboarding
+    /// Signed-out sign-in screen.
+    case auth
 
     static var launchValue: Self? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -115,8 +119,12 @@ struct PolishPreviewView: View {
                 BioView(
                     coachService: ShellPreviewFixtures.coachService(cards: false),
                     loadRevisions: { ShellPreviewFixtures.revisions },
-                    onSend: { _, _ in }
+                    onSend: { _, _ in },
+                    onTalkToUpdate: {}
                 )
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) { Button("Done") {} }
+                }
             }
         case .insights:
             NavigationStack {
@@ -141,6 +149,10 @@ struct PolishPreviewView: View {
             TrainPreviewFixtures.screen()
         case .body:
             BodyFixtures.previewScreen()
+        case .onboarding:
+            OnboardingView(initialProfile: ShellPreviewFixtures.profile) { _ in }
+        case .auth:
+            AuthView()
         }
     }
 
