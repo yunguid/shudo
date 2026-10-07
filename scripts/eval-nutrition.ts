@@ -1,5 +1,5 @@
 /** Live synthetic eval; no Supabase reads/writes or personal meal data.
- * OPENAI_API_KEY=... deno run --allow-env --allow-net=api.openai.com scripts/eval-nutrition.ts
+ * ANTHROPIC_API_KEY=... deno run --allow-env --allow-net=api.anthropic.com scripts/eval-nutrition.ts
  * Prints only synthetic case IDs, numeric scores, and research flags.
  */
 import { analyzeMeal } from "../supabase/functions/_shared/entry_processor.ts";
@@ -79,11 +79,7 @@ for (const test of cases) {
       null,
       async () => {},
       async () => {},
-      {
-        apiKey: Deno.env.get("OPENAI_API_KEY"),
-        safetyIdentifier: async () => "shudo-synthetic-nutrition-eval",
-        observeResearch: () => {},
-      },
+      { observeResearch: () => {} },
     );
     const totals = result.analysis.totals;
     const values = [
