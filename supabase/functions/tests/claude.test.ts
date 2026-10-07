@@ -350,3 +350,48 @@ Deno.test("haiku requests omit effort and fallbacks", async () => {
   assertEquals(request.output_config.effort, undefined);
   assertEquals(request.fallbacks, undefined);
 });
+
+Deno.test("an empty Anthropic balance becomes an actionable billing message", async () => {
+  const { CLAUDE_BILLING_MESSAGE, describeClaudeError, isClaudeBillingError } =
+    await import("../_shared/claude.ts");
+  const client = new Anthropic({
+    apiKey: "test-key",
+    maxRetries: 0,
+    fetch: (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message:
+                "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+      )) as unknown as ClaudeFetch,
+  });
+  let caught: unknown = null;
+  try {
+    await callClaudeStructured({
+      workload: "test",
+      model: CLAUDE_MODELS.sonnet,
+      effort: "low",
+      system: [],
+      messages: [{ role: "user", content: "x" }],
+      schema: SCHEMA,
+      schemaName: "submit_test",
+      timeoutMs: 5_000,
+      client,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert(isClaudeBillingError(caught), "billing error recognized");
+  assertEquals(
+    describeClaudeError(caught, "Meal analysis").message,
+    CLAUDE_BILLING_MESSAGE,
+  );
+  assert(!isClaudeBillingError(new Error("Meal analysis failed (500)")));
+});

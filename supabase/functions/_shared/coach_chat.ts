@@ -6,11 +6,13 @@ import {
   type BetaContentBlockParam,
   type BetaMessageParam,
   callClaudeStructured,
+  CLAUDE_BILLING_MESSAGE,
   CLAUDE_MODELS,
   claudeClient,
   type ClaudeEffort,
   type ClaudeUsage,
   imageFromUrl,
+  isClaudeBillingError,
   usageOf,
   webSearchTool,
 } from "./claude.ts";
@@ -916,11 +918,16 @@ export async function runCoachTurn(
       lost,
       message: message.slice(0, 300),
     });
+    // An empty Anthropic balance is not a hiccup; say what's wrong instead
+    // of inviting retries that can't succeed.
+    const failureText = isClaudeBillingError(error)
+      ? CLAUDE_BILLING_MESSAGE
+      : CHAT_FAILURE_FALLBACK;
     if (!lost) {
       await reply.finish(
         reply.body.trim()
-          ? `${sanitizeCoachText(reply.body)}\n\n${CHAT_FAILURE_FALLBACK}`
-          : CHAT_FAILURE_FALLBACK,
+          ? `${sanitizeCoachText(reply.body)}\n\n${failureText}`
+          : failureText,
         { persona_version: COACH_PERSONA_VERSION, fallback: "failed" },
       ).catch(() => undefined);
       await failCoachRun(admin, input.runId, input.claimToken, message).catch(
@@ -929,8 +936,12 @@ export async function runCoachTurn(
     }
     emit({
       type: "error",
-      code: lost ? "superseded" : "turn_failed",
-      message: CHAT_FAILURE_FALLBACK,
+      code: lost
+        ? "superseded"
+        : isClaudeBillingError(error)
+        ? "ai_credits"
+        : "turn_failed",
+      message: failureText,
       retryable: !lost,
     });
     return {

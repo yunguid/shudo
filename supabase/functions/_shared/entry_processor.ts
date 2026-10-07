@@ -11,6 +11,7 @@ import {
   type Anthropic,
   type BetaContentBlockParam,
   callClaudeStructured,
+  CLAUDE_BILLING_MESSAGE,
   CLAUDE_MODELS,
   type ClaudeEffort,
   describeClaudeError,
@@ -558,7 +559,9 @@ export async function processStoredEntry(
       if (processingAttempt === null) return;
       await updateEntry(admin, entryId, userId, processingAttempt, {
         status: "failed",
-        status_message: "Could not finish this meal",
+        status_message: message === CLAUDE_BILLING_MESSAGE
+          ? "Claude is out of API credits — top up, then retry"
+          : "Could not finish this meal",
         analysis_preview: null,
         error_message: message,
         lease_expires_at: null,

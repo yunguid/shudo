@@ -51,6 +51,23 @@ export class ClaudeRefusalError extends Error {
 
 export class ClaudeOutputError extends Error {}
 
+/// Shown verbatim to Luke when the Anthropic account can't pay for a call.
+export const CLAUDE_BILLING_MESSAGE =
+  "Claude is out of API credits. Add credits at console.anthropic.com (Settings → Billing), then try again.";
+
+/** True when the API refused because the account has no usable credit. */
+export function isClaudeBillingError(error: unknown): boolean {
+  if (!(error instanceof Anthropic.APIError)) {
+    return error instanceof Error && error.message === CLAUDE_BILLING_MESSAGE;
+  }
+  if (error.status === 402) return true;
+  const body = error.error as { error?: { message?: unknown } } | undefined;
+  const message = typeof body?.error?.message === "string"
+    ? body.error.message
+    : error.message;
+  return /credit balance|purchase credits|billing/i.test(message);
+}
+
 /** Turns SDK failures into short, log-safe messages (status codes only). */
 export function describeClaudeError(error: unknown, label: string): Error {
   if (
@@ -58,6 +75,7 @@ export function describeClaudeError(error: unknown, label: string): Error {
   ) {
     return error;
   }
+  if (isClaudeBillingError(error)) return new Error(CLAUDE_BILLING_MESSAGE);
   if (error instanceof Anthropic.RateLimitError) {
     return new Error(`${label} is rate limited (429)`);
   }
