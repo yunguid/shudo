@@ -22,6 +22,12 @@ shudo_beta_signup_migration="$shudo_repo_root/supabase/migrations/20260722015329
 shudo_beta_signup_migration_sha="9ca9a33afc91e370a2f1a469b8291fdc637a4ddd79b9f56aeb8e636c628decf2"
 shudo_profile_photos_migration="$shudo_repo_root/supabase/migrations/20260722224247_add_private_profile_photos.sql"
 shudo_profile_photos_migration_sha="8049c69efd841cf00c1fa1588f76281bc98eeaaf063159c24bf27d1a07b6a595"
+shudo_meal_photos_migration="$shudo_repo_root/supabase/migrations/20260730011301_add_existing_meal_photos.sql"
+shudo_meal_photos_migration_sha="6532384219785ab7cdffd3f7d186340043fecbae0a374aa89f63bc1a8cbc8de7"
+shudo_weight_checkins_migration="$shudo_repo_root/supabase/migrations/20260730041117_weight_checkins_and_micronutrient_reports.sql"
+shudo_weight_checkins_migration_sha="9077a9d3c2f320b2085552f693e18619df60a60110e981a283dac1f08a73eadf"
+shudo_two_migration="$shudo_repo_root/supabase/migrations/20261006200000_shudo_two.sql"
+shudo_two_migration_sha="b8986c30ef07a96a8919207ad55889bfd6b386d9dce19d06d94b89bd404a1a66"
 shudo_node24_dir="/Users/luke/.nvm/versions/node/v24.16.0/bin"
 shudo_node24_sha="1ee75375e33b94fc34b3b19aede049e11dae90efb63b374dc96d6bdace70c4b8"
 shudo_supabase_cli="/opt/homebrew/Cellar/supabase/2.109.1/bin/supabase"
@@ -60,6 +66,9 @@ verify_migration_sha "$shudo_voice_correction_migration" "$shudo_voice_correctio
 verify_migration_sha "$shudo_budget_migration" "$shudo_budget_migration_sha"
 verify_migration_sha "$shudo_beta_signup_migration" "$shudo_beta_signup_migration_sha"
 verify_migration_sha "$shudo_profile_photos_migration" "$shudo_profile_photos_migration_sha"
+verify_migration_sha "$shudo_meal_photos_migration" "$shudo_meal_photos_migration_sha"
+verify_migration_sha "$shudo_weight_checkins_migration" "$shudo_weight_checkins_migration_sha"
+verify_migration_sha "$shudo_two_migration" "$shudo_two_migration_sha"
 
 cd "$shudo_repo_root"
 git diff --check
