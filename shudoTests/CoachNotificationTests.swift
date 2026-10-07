@@ -9,10 +9,12 @@ final class RecordingCoachNotificationCenter: CoachNotificationCenter, @unchecke
     private var _delivered: [PlannedCoachNotification] = []
     private var _removedPending: [String] = []
     private var _removedDelivered: [String] = []
-    private var _snoozes: [(UUID, Date)] = []
     private var _badge: Int?
     private var _addCount = 0
+    private var _authorizationRequests = 0
     var status: CoachSyncRequest.NotificationStatus = .authorized
+    /// What the next authorization prompt answers.
+    var grantsAuthorization = true
 
     var pending: [String: PlannedCoachNotification] { lock.withLock { _pending } }
     var delivered: [PlannedCoachNotification] { lock.withLock { _delivered } }
@@ -20,7 +22,12 @@ final class RecordingCoachNotificationCenter: CoachNotificationCenter, @unchecke
     var removedDelivered: [String] { lock.withLock { _removedDelivered } }
     var badge: Int? { lock.withLock { _badge } }
     var addCount: Int { lock.withLock { _addCount } }
-    var snoozeCount: Int { lock.withLock { _snoozes.count } }
+    var authorizationRequests: Int { lock.withLock { _authorizationRequests } }
+    var snoozes: [PlannedCoachNotification] {
+        pending.values
+            .filter { $0.identifier.hasPrefix(CoachNotificationIdentifiers.snoozePrefix) }
+            .sorted { $0.identifier < $1.identifier }
+    }
 
     func seedPending(_ notifications: [PlannedCoachNotification]) {
         lock.withLock { for n in notifications { _pending[n.identifier] = n } }
@@ -28,7 +35,9 @@ final class RecordingCoachNotificationCenter: CoachNotificationCenter, @unchecke
 
     func pendingCoachRequests() async -> [CoachPendingRequest] {
         lock.withLock {
-            _pending.values.map { CoachPendingRequest(identifier: $0.identifier, contentHash: $0.contentHash) }
+            _pending.values.map {
+                CoachPendingRequest(identifier: $0.identifier, contentHash: $0.contentHash, fireAt: $0.fireAt)
+            }
         }
     }
 
@@ -41,10 +50,6 @@ final class RecordingCoachNotificationCenter: CoachNotificationCenter, @unchecke
                 _pending[notification.identifier] = notification
             }
         }
-    }
-
-    func addSnooze(of payload: CoachNotificationPayload, messageId: UUID, fireAt: Date) async {
-        lock.withLock { _snoozes.append((messageId, fireAt)) }
     }
 
     func removePending(identifiers: [String]) async {
@@ -62,7 +67,15 @@ final class RecordingCoachNotificationCenter: CoachNotificationCenter, @unchecke
         lock.withLock { _badge = count }
     }
 
-    func authorizationStatus() async -> CoachSyncRequest.NotificationStatus { status }
+    func authorizationStatus() async -> CoachSyncRequest.NotificationStatus { lock.withLock { status } }
+
+    func requestAuthorization() async -> Bool {
+        lock.withLock {
+            _authorizationRequests += 1
+            status = grantsAuthorization ? .authorized : .denied
+            return grantsAuthorization
+        }
+    }
 }
 
 struct CoachNotificationPolicyTests {
@@ -221,11 +234,12 @@ struct CoachNotificationPolicyTests {
 
     // MARK: Cancel-on-log
 
-    @Test func cancelOnLogTakesOnlyTheNextSixtyMinutes() {
+    @Test func cancelOnLogTakesOnlyTheServersPostLogWindow() {
+        #expect(CoachNotificationPolicy.cancelOnLogWindow == 45 * 60)
         let atNow = row(0)
         let soon = row(1)
-        let edge = row(60)
-        let justOutside = row(61)
+        let edge = row(45)
+        let justOutside = row(46)
         let quiet = row(30, notify: false)
         let superseded = row(30, status: .superseded)
         let past = row(-10)
@@ -420,7 +434,7 @@ struct CoachSyncTests {
         #expect(changes.days == [["2026-10-06"]])
     }
 
-    @Test func loggingCancelsTextsDueWithinTheHourAndKeepsThemSuppressed() async throws {
+    @Test func loggingCancelsTextsDueWithinTheWindowAndKeepsThemSuppressed() async throws {
         let soon = scheduled(minutes: 25)
         let later = scheduled(minutes: 180)
         let service = FakeCoachService(messages: [soon, later], now: { [now] in now })

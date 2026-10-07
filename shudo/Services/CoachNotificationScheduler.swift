@@ -16,6 +16,8 @@ enum CoachNotificationIdentifiers {
     static let ownedPrefix = "shudo.coach."
     static let threadIdentifier = "shudo.coach"
     static let title = "Shudo"
+    /// Bundled two-note text tone (`scripts/make-coach-chime.py`).
+    static let soundName = "coach_text.caf"
 
     static let textCategory = "COACH_TEXT"
     static let snackCategory = "COACH_SNACK"
@@ -114,6 +116,8 @@ struct PlannedCoachNotification: Equatable, Sendable {
 struct CoachPendingRequest: Equatable, Sendable {
     let identifier: String
     let contentHash: String?
+    /// When the request will fire (nil when unknown).
+    var fireAt: Date? = nil
 }
 
 struct CoachNotificationDiff: Equatable, Sendable {
@@ -192,13 +196,26 @@ enum CoachNotificationPolicy {
     /// Rows due sooner than this are treated as past: a calendar trigger in
     /// the past never fires, and the thread shows them anyway.
     static let minimumLeadTime: TimeInterval = 5
-    static let cancelOnLogWindow: TimeInterval = 60 * 60
+    /// Texts written before a log go stale for this long after it. Mirrors
+    /// the server's post-log quiet (`POST_LOG_QUIET_MINUTES` in
+    /// `_shared/coach_policy.ts`), so the client never mutes a text the
+    /// server deliberately kept.
+    static let cancelOnLogWindow: TimeInterval = 45 * 60
+    static let snoozeInterval: TimeInterval = 60 * 60
+    /// A log also drops snoozed texts due within this window (a snooze is an
+    /// hour out; one pushed past quiet hours to the morning survives).
+    static let snoozeCancelOnLogWindow: TimeInterval = 90 * 60
 
+    /// - Parameter quietHours: when given, rows due inside quiet hours are
+    ///   not notified (the server already marks them `notify=false`; this is
+    ///   the client-side safety net). They still appear in the thread.
     static func plan(
         rows: [CoachScheduledRow],
         now: Date,
         unreadCount: Int,
-        suppressed: Set<UUID> = []
+        suppressed: Set<UUID> = [],
+        quietHours settings: CoachSettings? = nil,
+        timeZone: TimeZone = .autoupdatingCurrent
     ) -> [PlannedCoachNotification] {
         let candidates = rows
             .filter { row in
@@ -208,6 +225,7 @@ enum CoachNotificationPolicy {
                     && row.deliverAt > now.addingTimeInterval(minimumLeadTime)
                     && !suppressed.contains(row.id)
                     && !row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !(settings?.isQuietHour(row.deliverAt, timeZone: timeZone) ?? false)
             }
             .sorted { ($0.deliverAt, $0.id.uuidString) < ($1.deliverAt, $1.id.uuidString) }
             .prefix(maximumPendingMessages)
@@ -238,26 +256,78 @@ enum CoachNotificationPolicy {
         )
     }
 
+    /// Texts that ask something of Luke ring (`.active`); confirmations and
+    /// read-later messages land quietly in the list (`.passive`).
     static func interruption(for kind: String) -> PlannedCoachNotification.Interruption {
         switch CoachMessageKind(rawValue: kind) {
-        case .mealAck?, .workoutAck?, .weighInAck?: return .passive
-        default: return .active
+        case .mealAck?, .workoutAck?, .weighInAck?, .recap?, .photoFeedback?, .profileUpdate?:
+            return .passive
+        default:
+            return .active
         }
     }
 
+    /// Which text iOS features when it summarizes Shudo's stack.
     static func relevance(for kind: String) -> Double {
         switch CoachMessageKind(rawValue: kind) {
         case .snackRec?: return 0.9
-        case .plan?, .checkpoint?, .goalChange?, .trainingPlan?: return 0.7
-        case .recap?, .photoFeedback?: return 0.5
-        default: return 0.3
+        case .checkpoint?: return 0.8
+        case .plan?, .text?: return 0.7
+        case .trainingPlan?, .goalChange?: return 0.6
+        case .recap?, .photoFeedback?, .profileUpdate?: return 0.4
+        default: return 0.2
         }
     }
 
-    /// Deterministic across launches (unlike `hashValue`).
+    /// The same text re-posted an hour later under `shudo.coach.snooze.<id>`.
+    static func snoozed(
+        _ payload: CoachNotificationPayload,
+        messageId: UUID,
+        fireAt: Date
+    ) -> PlannedCoachNotification {
+        let kind = payload.kind ?? CoachMessageKind.text.rawValue
+        let category = payload.categoryIdentifier.isEmpty
+            ? CoachNotificationIdentifiers.textCategory : payload.categoryIdentifier
+        let body = payload.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PlannedCoachNotification(
+            messageId: messageId,
+            identifier: CoachNotificationIdentifiers.snooze(messageId),
+            fireAt: fireAt,
+            title: CoachNotificationIdentifiers.title,
+            body: body,
+            badge: nil,
+            categoryIdentifier: category,
+            kind: kind,
+            localDay: payload.localDay ?? "",
+            mapsQuery: payload.mapsQuery,
+            interruption: .active,
+            relevance: relevance(for: kind),
+            contentHash: contentHash(body: body, fireAt: fireAt, badge: nil, category: category)
+        )
+    }
+
+    /// Pending snoozes a fresh log makes stale.
+    static func snoozesToCancelOnLog(
+        pending: [CoachPendingRequest],
+        now: Date,
+        window: TimeInterval = snoozeCancelOnLogWindow
+    ) -> [String] {
+        pending
+            .filter { request in
+                guard request.identifier.hasPrefix(CoachNotificationIdentifiers.snoozePrefix),
+                      let fireAt = request.fireAt else { return false }
+                return fireAt <= now.addingTimeInterval(window)
+            }
+            .map(\.identifier)
+            .sorted()
+    }
+
+    /// Deterministic across launches (unlike `hashValue`). The version
+    /// prefix changes whenever the content builder does, so a new build
+    /// re-posts pending requests with the new styling exactly once.
     static func contentHash(body: String, fireAt: Date?, badge: Int?, category: String) -> String {
         let fire = fireAt.map { String(Int64($0.timeIntervalSince1970.rounded())) } ?? "now"
-        let input = "v1|\(category)|\(fire)|\(badge.map(String.init) ?? "-")|\(body)"
+        let input = "v2|\(category)|\(fire)|\(badge.map(String.init) ?? "-")|\(body)"
         let digest = SHA256.hash(data: Data(input.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
@@ -349,12 +419,42 @@ enum CoachNotificationPolicy {
 
 protocol CoachNotificationCenter: Sendable {
     func pendingCoachRequests() async -> [CoachPendingRequest]
+    /// Adds (or, for an existing identifier, replaces) a request. A nil
+    /// `fireAt` delivers immediately.
     func add(_ notification: PlannedCoachNotification) async
-    func addSnooze(of payload: CoachNotificationPayload, messageId: UUID, fireAt: Date) async
     func removePending(identifiers: [String]) async
     func removeDelivered(identifiers: [String]) async
     func setBadgeCount(_ count: Int) async
     func authorizationStatus() async -> CoachSyncRequest.NotificationStatus
+    /// Shows the system prompt (only ever once per install); true if granted.
+    func requestAuthorization() async -> Bool
+}
+
+/// How a coach text looks on the lock screen: one sender ("Shudo"), no
+/// subtitle, the text itself, one conversation thread, the soft two-note
+/// tone for texts that ask something of Luke and silence for the rest.
+enum CoachNotificationContent {
+    static func make(_ notification: PlannedCoachNotification) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = notification.title
+        content.body = notification.body
+        content.threadIdentifier = CoachNotificationIdentifiers.threadIdentifier
+        content.categoryIdentifier = notification.categoryIdentifier
+        content.userInfo = CoachNotificationPayload.userInfo(for: notification)
+        content.targetContentIdentifier = notification.messageId.uuidString.lowercased()
+        content.relevanceScore = notification.relevance
+        switch notification.interruption {
+        case .active:
+            content.interruptionLevel = .active
+            content.sound = UNNotificationSound(
+                named: UNNotificationSoundName(CoachNotificationIdentifiers.soundName)
+            )
+        case .passive:
+            content.interruptionLevel = .passive
+        }
+        if let badge = notification.badge { content.badge = NSNumber(value: badge) }
+        return content
+    }
 }
 
 struct LiveCoachNotificationCenter: CoachNotificationCenter {
@@ -363,23 +463,17 @@ struct LiveCoachNotificationCenter: CoachNotificationCenter {
         return pending.compactMap { request in
             guard request.identifier.hasPrefix(CoachNotificationIdentifiers.ownedPrefix) else { return nil }
             let payload = CoachNotificationPayload(userInfo: request.content.userInfo)
-            return CoachPendingRequest(identifier: request.identifier, contentHash: payload?.contentHash)
+            let fireAt = (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
+                ?? (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate()
+            return CoachPendingRequest(
+                identifier: request.identifier,
+                contentHash: payload?.contentHash,
+                fireAt: fireAt
+            )
         }
     }
 
     func add(_ notification: PlannedCoachNotification) async {
-        let content = UNMutableNotificationContent()
-        content.title = notification.title
-        content.body = notification.body
-        content.sound = .default
-        content.threadIdentifier = CoachNotificationIdentifiers.threadIdentifier
-        content.categoryIdentifier = notification.categoryIdentifier
-        content.userInfo = CoachNotificationPayload.userInfo(for: notification)
-        content.interruptionLevel = notification.interruption == .passive ? .passive : .active
-        content.relevanceScore = notification.relevance
-        if let badge = notification.badge { content.badge = NSNumber(value: badge) }
-        content.targetContentIdentifier = notification.messageId.uuidString.lowercased()
-
         let trigger: UNNotificationTrigger? = notification.fireAt.map {
             UNCalendarNotificationTrigger(
                 dateMatching: CoachNotificationPolicy.triggerComponents(
@@ -391,35 +485,8 @@ struct LiveCoachNotificationCenter: CoachNotificationCenter {
         }
         let request = UNNotificationRequest(
             identifier: notification.identifier,
-            content: content,
+            content: CoachNotificationContent.make(notification),
             trigger: trigger
-        )
-        try? await UNUserNotificationCenter.current().add(request)
-    }
-
-    func addSnooze(of payload: CoachNotificationPayload, messageId: UUID, fireAt: Date) async {
-        let content = UNMutableNotificationContent()
-        content.title = CoachNotificationIdentifiers.title
-        content.body = payload.body
-        content.sound = .default
-        content.threadIdentifier = CoachNotificationIdentifiers.threadIdentifier
-        content.categoryIdentifier = payload.categoryIdentifier.isEmpty
-            ? CoachNotificationIdentifiers.textCategory : payload.categoryIdentifier
-        var info: [String: Any] = [
-            "v": 1,
-            "message_id": messageId.uuidString.lowercased(),
-            "thread": "coach",
-        ]
-        if let kind = payload.kind { info["kind"] = kind }
-        if let localDay = payload.localDay { info["local_day"] = localDay }
-        if let link = payload.deepLink { info["deep_link"] = link.absoluteString }
-        if let mapsQuery = payload.mapsQuery { info["maps_query"] = mapsQuery }
-        content.userInfo = ["shudo": info]
-        let interval = max(1, fireAt.timeIntervalSinceNow)
-        let request = UNNotificationRequest(
-            identifier: CoachNotificationIdentifiers.snooze(messageId),
-            content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
         )
         try? await UNUserNotificationCenter.current().add(request)
     }
@@ -448,6 +515,14 @@ struct LiveCoachNotificationCenter: CoachNotificationCenter {
         @unknown default: return .notDetermined
         }
     }
+
+    func requestAuthorization() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let options: UNAuthorizationOptions = [.alert, .sound, .badge, .providesAppNotificationSettings]
+        let granted = (try? await center.requestAuthorization(options: options)) ?? false
+        if granted { CoachNotificationCategories.register(on: center) }
+        return granted
+    }
 }
 
 // MARK: - Scheduler
@@ -463,13 +538,17 @@ struct CoachNotificationScheduler: Sendable {
         rows: [CoachScheduledRow],
         unreadCount: Int,
         suppressed: Set<UUID>,
-        now: Date
+        now: Date,
+        quietHours settings: CoachSettings? = nil,
+        timeZone: TimeZone = .autoupdatingCurrent
     ) async -> CoachNotificationDiff {
         let plan = CoachNotificationPolicy.plan(
             rows: rows,
             now: now,
             unreadCount: unreadCount,
-            suppressed: suppressed
+            suppressed: suppressed,
+            quietHours: settings,
+            timeZone: timeZone
         )
         let pending = await center.pendingCoachRequests()
         let diff = CoachNotificationPolicy.diff(plan: plan, pending: pending)
@@ -486,6 +565,15 @@ struct CoachNotificationScheduler: Sendable {
         })
     }
 
+    /// Drops snoozed texts that a fresh log made stale; returns their ids.
+    @discardableResult
+    func cancelSnoozesAfterLog(now: Date) async -> [String] {
+        let pending = await center.pendingCoachRequests()
+        let identifiers = CoachNotificationPolicy.snoozesToCancelOnLog(pending: pending, now: now)
+        await center.removePending(identifiers: identifiers)
+        return identifiers
+    }
+
     /// Removes every pending coach request (coach disabled / signed out).
     func removeAllPending() async {
         let pending = await center.pendingCoachRequests()
@@ -500,22 +588,23 @@ struct CoachNotificationScheduler: Sendable {
 
     /// Posts coach replies right now (nil trigger), as if texted.
     func presentImmediately(_ messages: [CoachMessage], firstBadge: Int?) async {
-        for (index, message) in messages.enumerated() where message.role == .coach {
+        var badge = firstBadge
+        for message in messages where message.role == .coach {
             let text = message.notificationText
             guard !text.isEmpty else { continue }
             var row = CoachScheduledRow(message: message)
             row.text = text
-            let planned = CoachNotificationPolicy.planned(
-                row: row,
-                fireAt: nil,
-                badge: firstBadge.map { $0 + index }
-            )
+            let planned = CoachNotificationPolicy.planned(row: row, fireAt: nil, badge: badge)
             await center.add(planned)
+            badge = badge.map { $0 + 1 }
         }
     }
 
+    /// Re-posts the text an hour out and clears the original from
+    /// Notification Center so the stack never shows it twice.
     func snooze(_ payload: CoachNotificationPayload, messageId: UUID, fireAt: Date) async {
-        await center.addSnooze(of: payload, messageId: messageId, fireAt: fireAt)
+        await center.removeDelivered(identifiers: [CoachNotificationIdentifiers.message(messageId)])
+        await center.add(CoachNotificationPolicy.snoozed(payload, messageId: messageId, fireAt: fireAt))
     }
 
     func setBadge(_ count: Int) async {
@@ -524,6 +613,13 @@ struct CoachNotificationScheduler: Sendable {
 
     func authorizationStatus() async -> CoachSyncRequest.NotificationStatus {
         await center.authorizationStatus()
+    }
+
+    /// Prompts only while the answer is still undetermined.
+    func requestAuthorizationIfNeeded() async -> CoachSyncRequest.NotificationStatus {
+        let status = await center.authorizationStatus()
+        guard status == .notDetermined else { return status }
+        return await center.requestAuthorization() ? .authorized : .denied
     }
 }
 
@@ -537,23 +633,27 @@ enum CoachNotificationCategories {
             identifier: CoachNotificationIdentifiers.replyAction,
             title: "Reply",
             options: [],
+            icon: UNNotificationActionIcon(systemImageName: "arrowshape.turn.up.left"),
             textInputButtonTitle: "Send",
-            textInputPlaceholder: "Text Shudo…"
+            textInputPlaceholder: "Text Shudo"
         )
         let ack = UNNotificationAction(
             identifier: CoachNotificationIdentifiers.ackAction,
-            title: "👊 On it",
-            options: []
+            title: "On it",
+            options: [],
+            icon: UNNotificationActionIcon(systemImageName: "hand.thumbsup")
         )
         let snooze = UNNotificationAction(
             identifier: CoachNotificationIdentifiers.snoozeAction,
-            title: "Snooze 1h",
-            options: []
+            title: "Snooze 1 hour",
+            options: [],
+            icon: UNNotificationActionIcon(systemImageName: "clock")
         )
         let directions = UNNotificationAction(
             identifier: CoachNotificationIdentifiers.directionsAction,
             title: "Directions",
-            options: [.foreground]
+            options: [.foreground],
+            icon: UNNotificationActionIcon(systemImageName: "figure.walk")
         )
         let options: UNNotificationCategoryOptions = [.customDismissAction, .hiddenPreviewsShowTitle]
         return [
@@ -583,11 +683,7 @@ enum CoachNotificationAuthorization {
     /// Asks for alerts, sounds and badges (+ in-app notification settings).
     /// Returns whether coach texts can be delivered.
     static func request() async -> Bool {
-        let center = UNUserNotificationCenter.current()
-        let options: UNAuthorizationOptions = [.alert, .sound, .badge, .providesAppNotificationSettings]
-        let granted = (try? await center.requestAuthorization(options: options)) ?? false
-        if granted { CoachNotificationCategories.register(on: center) }
-        return granted
+        await LiveCoachNotificationCenter().requestAuthorization()
     }
 }
 
@@ -609,13 +705,18 @@ extension Notification.Name {
 }
 
 /// Bridges `CoachViewModel` to the notification center and app state.
+/// Unread changes go through `CoachSync` so the badges baked into pending
+/// requests are renumbered too — otherwise the next text would show the
+/// stale, higher count after Luke read the thread.
 @MainActor
 final class LiveCoachThreadNotifier: CoachThreadNotifying {
     static let shared = LiveCoachThreadNotifier()
     private let scheduler: CoachNotificationScheduler
+    private let sync: CoachSync
 
-    init(scheduler: CoachNotificationScheduler = .live) {
+    init(scheduler: CoachNotificationScheduler = .live, sync: CoachSync = .shared) {
         self.scheduler = scheduler
+        self.sync = sync
     }
 
     var isAppActive: Bool { UIApplication.shared.applicationState == .active }
@@ -626,12 +727,12 @@ final class LiveCoachThreadNotifier: CoachThreadNotifying {
     }
 
     func setBadge(_ count: Int) {
-        let scheduler = scheduler
-        Task { await scheduler.setBadge(count) }
+        let sync = sync
+        Task { await sync.updateUnreadCount(count) }
     }
 
     func presentReplies(_ messages: [CoachMessage], unreadCount: Int) {
-        let scheduler = scheduler
-        Task { await scheduler.presentImmediately(messages, firstBadge: unreadCount + 1) }
+        let sync = sync
+        Task { await sync.presentReplies(messages, unreadCount: unreadCount) }
     }
 }
