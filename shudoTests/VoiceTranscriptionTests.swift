@@ -199,7 +199,35 @@ struct SpeechEnginePolicyTests {
             "apple.speech_transcriber",
             "apple.dictation_transcriber",
             "apple.sf_speech_on_device",
+            "openai.gpt-4o-transcribe",
         ])
+        #expect(SpeechEngineID.openAITranscribe.transcribesAfterRecording)
+        #expect(!SpeechEngineID.speechTranscriber.transcribesAfterRecording)
+    }
+
+    /// Meals, corrections, onboarding, the coach and workouts record and
+    /// transcribe on the server whatever the on-device model is doing; the
+    /// weigh-in stays on-device (it stops itself on a spoken number).
+    @Test func serverProfilesUseOpenAITranscribeAndTheWeighInStaysOnDevice() {
+        let unsupported = snapshot(transcriber: .unsupported)
+        let downloading = snapshot(transcriber: .downloading(progress: 0.2))
+        for profile in [VoiceProfile.meal, .correction, .onboarding, .coach, .workout] {
+            for assets in [unsupported, downloading, snapshot(transcriber: .installed)] {
+                #expect(SpeechEnginePolicy.select(for: profile, snapshot: assets, speechAuthorization: .denied)
+                    == .engine(.openAITranscribe))
+            }
+            #expect(SpeechEnginePolicy.idleAvailability(for: profile, snapshot: downloading)
+                == .engine(.openAITranscribe))
+        }
+        #expect(SpeechEnginePolicy.select(
+            for: .weighIn,
+            snapshot: snapshot(transcriber: .installed),
+            speechAuthorization: .authorized
+        ) == .engine(.speechTranscriber))
+        #expect(SpeechEnginePolicy.select(for: .weighIn, snapshot: unsupported, speechAuthorization: .authorized)
+            == .unavailable)
+        #expect(SpeechEnginePolicy.idleAvailability(for: .weighIn, snapshot: downloading)
+            == .preparing(progress: 0.2))
     }
 }
 
@@ -216,6 +244,19 @@ struct VoiceProfileTests {
         #expect(VoiceProfile.weighIn.autoStopStableInterval == 1.2)
         #expect(VoiceProfile.coach.maximumCharacters == 4_000)
         #expect(VoiceProfile.meal.microphoneDeniedMessage == "Microphone access is required to record a meal.")
+    }
+
+    @Test func eachServerProfileSendsItsPurpose() {
+        #expect(VoiceProfile.meal.transcriptionPurpose == .meal)
+        #expect(VoiceProfile.coach.transcriptionPurpose == .coach)
+        #expect(VoiceProfile.correction.transcriptionPurpose == .correction)
+        #expect(VoiceProfile.onboarding.transcriptionPurpose == .onboarding)
+        #expect(VoiceProfile.workout.transcriptionPurpose == .workout)
+        #expect(VoiceProfile.weighIn.transcriptionPurpose == nil)
+        #expect(!VoiceProfile.weighIn.transcribesOnServer)
+        #expect(TranscriptionPurpose.allCases.map(\.rawValue)
+            == ["meal", "coach", "correction", "onboarding", "workout"])
+        #expect(VoiceProfile.serverTranscriptionTimeout == 45)
     }
 
     @Test func remainingTimeIsClamped() {
@@ -437,8 +478,13 @@ private struct VoiceHarness {
     let permissions = FakeVoicePermissions()
     let assets: FakeSpeechAssets
     let engines: [SpeechEngineID: FakeSpeechEngine] = Dictionary(
-        uniqueKeysWithValues: SpeechEngineID.allCases.map { ($0, FakeSpeechEngine(id: $0)) }
+        uniqueKeysWithValues: SpeechEngineID.allCases
+            .filter { !$0.transcribesAfterRecording }
+            .map { ($0, FakeSpeechEngine(id: $0)) }
     )
+    /// The server engines (meal, coach, … profiles).
+    let recorder = FakeUploadScript()
+    var serverTimeout: TimeInterval = 5
 
     init(snapshot: SpeechAssetSnapshot = VoiceHarness.installed) {
         assets = FakeSpeechAssets(snapshot)
@@ -457,17 +503,132 @@ private struct VoiceHarness {
     var environment: VoiceEnvironment {
         let capture = self.capture
         let engines = self.engines
+        let recorder = self.recorder
         return VoiceEnvironment(
             permissions: permissions,
             assets: assets,
             makeCapture: { capture },
-            makeEngine: { engines[$0]! },
-            vocabulary: { ["Fairlife"] }
+            makeEngine: { id -> any SpeechEngine in
+                if id.transcribesAfterRecording { return recorder.makeEngine() }
+                return engines[id]!
+            },
+            vocabulary: { ["Fairlife"] },
+            serverTranscriptionTimeout: serverTimeout
         )
     }
 
-    func makeTranscriber(profile: VoiceProfile = .meal) -> VoiceTranscriber {
+    /// Defaults to live on-device recognition (the weigh-in's stack) with
+    /// the meal's limits; pass a server profile for record-then-transcribe.
+    func makeTranscriber(profile: VoiceProfile = onDeviceMeal) -> VoiceTranscriber {
         VoiceTranscriber(profile: profile, environment: environment)
+    }
+}
+
+private let onDeviceMeal = VoiceProfile(
+    name: "meal_on_device",
+    maximumDuration: VoiceProfile.meal.maximumDuration,
+    maximumCharacters: VoiceProfile.meal.maximumCharacters,
+    prefersFastResults: false,
+    autoStopStableInterval: nil,
+    finalizationTimeout: VoiceProfile.meal.finalizationTimeout,
+    microphoneDeniedMessage: VoiceProfile.meal.microphoneDeniedMessage
+)
+
+/// The server engines' shared script: each take gets a fresh
+/// `FakeRecordingEngine` (like the live environment), which "uploads" after
+/// `delay` and returns `results` in order (the last repeats).
+private final class FakeUploadScript: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _results: [Result<String, TranscriptionError>] = [.success("Two eggs and toast.")]
+    private var _delay: TimeInterval = 0.05
+    private var _uploads = 0
+    private var _uploadWasCancelled = false
+    private var _purpose: TranscriptionPurpose?
+    private var _engines: [FakeRecordingEngine] = []
+
+    var results: [Result<String, TranscriptionError>] {
+        get { lock.withLock { _results } }
+        set { lock.withLock { _results = newValue } }
+    }
+    var delay: TimeInterval {
+        get { lock.withLock { _delay } }
+        set { lock.withLock { _delay = newValue } }
+    }
+    var uploads: Int { lock.withLock { _uploads } }
+    var uploadWasCancelled: Bool { lock.withLock { _uploadWasCancelled } }
+    var purpose: TranscriptionPurpose? { lock.withLock { _purpose } }
+    /// Whether the latest take's recording was discarded.
+    var canceled: Bool { lock.withLock { _engines.last?.canceled ?? false } }
+
+    func makeEngine() -> FakeRecordingEngine {
+        let engine = FakeRecordingEngine(script: self)
+        lock.withLock { _engines.append(engine) }
+        return engine
+    }
+
+    func started(purpose: TranscriptionPurpose?) {
+        lock.withLock { _purpose = purpose }
+    }
+
+    func nextUpload() -> (TimeInterval, Result<String, TranscriptionError>) {
+        lock.withLock {
+            _uploads += 1
+            let result = _results.count > 1 ? _results.removeFirst() : _results[0]
+            return (_delay, result)
+        }
+    }
+
+    func noteUploadCancelled() {
+        lock.withLock { _uploadWasCancelled = true }
+    }
+}
+
+private final class FakeRecordingEngine: RecordingTranscriptionEngine, @unchecked Sendable {
+    let id: SpeechEngineID = .openAITranscribe
+    private let script: FakeUploadScript
+    private let lock = NSLock()
+    private var continuation: AsyncThrowingStream<SpeechEvent, Error>.Continuation?
+    private var _canceled = false
+
+    init(script: FakeUploadScript) {
+        self.script = script
+    }
+
+    var canceled: Bool { lock.withLock { _canceled } }
+
+    func start(locale: Locale, profile: VoiceProfile, vocabulary: [String]) async throws -> SpeechRun {
+        let (events, continuation) = AsyncThrowingStream<SpeechEvent, Error>.makeStream()
+        lock.withLock { self.continuation = continuation }
+        script.started(purpose: profile.transcriptionPurpose)
+        return SpeechRun(format: nil, events: events)
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {}
+
+    func transcribeRecording() async throws -> String {
+        let (delay, result) = script.nextUpload()
+        do {
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        } catch {
+            script.noteUploadCancelled()
+            throw TranscriptionError.failed
+        }
+        return try result.get()
+    }
+
+    func finish() async throws {
+        let text = try await transcribeRecording()
+        let continuation = lock.withLock { self.continuation }
+        continuation?.yield(.finalized(text))
+        continuation?.finish()
+    }
+
+    func cancel() async {
+        let continuation = lock.withLock { () -> AsyncThrowingStream<SpeechEvent, Error>.Continuation? in
+            _canceled = true
+            return self.continuation
+        }
+        continuation?.finish()
     }
 }
 
@@ -890,5 +1051,205 @@ struct VoiceTranscriberTests {
         #expect(controller.isOwner(second))
         controller.release(second)
         #expect(!controller.isOwner(second))
+    }
+}
+
+// MARK: - Record → send → server transcription
+
+@MainActor
+struct ServerVoiceTranscriberTests {
+    @Test func aServerTakeRecordsWithoutLiveWordsThenTranscribesOnStop() async {
+        let harness = VoiceHarness()
+        harness.permissions.speech = .denied
+        let voice = harness.makeTranscriber(profile: .coach)
+        #expect(voice.transcribesOnServer)
+        #expect(voice.phase == .idle)
+
+        #expect(await voice.start())
+        #expect(voice.phase == .listening)
+        #expect(voice.activeEngine == .openAITranscribe)
+        #expect(harness.recorder.purpose == .coach)
+        // Speech permission isn't needed for a server take, and nothing is
+        // shown while recording.
+        #expect(voice.transcript.isEmpty)
+        #expect(voice.hasTakeInFlight)
+
+        harness.recorder.results = [.success("Had a protein bar at four.")]
+        harness.recorder.delay = 0.3
+        let stopping = Task { await voice.stop() }
+        #expect(await eventually { voice.isTranscribing })
+        #expect(voice.controlState == "finishing")
+        let take = await stopping.value
+        #expect(take?.text == "Had a protein bar at four.")
+        #expect(take?.engine == .openAITranscribe)
+        #expect(take?.engine.rawValue == "openai.gpt-4o-transcribe")
+        #expect(harness.recorder.uploads == 1)
+        #expect(harness.capture.stopCount >= 1)
+        #expect(voice.phase == .idle)
+        #expect(!voice.hasTakeInFlight)
+        #expect(await voice.stop() == nil)
+    }
+
+    @Test func aModelDownloadNeverDisablesAServerMic() async {
+        let harness = VoiceHarness(snapshot: SpeechAssetSnapshot(
+            transcriber: .downloading(progress: 0.3),
+            dictation: .unsupported,
+            supportsOnDeviceRecognizer: false,
+            transcriberLocale: nil,
+            dictationLocale: nil
+        ))
+        let voice = harness.makeTranscriber(profile: .meal)
+        #expect(voice.phase == .idle)
+        #expect(await voice.start())
+        voice.cancel()
+    }
+
+    /// Submit paths pass a short on-device cap; a server take waits for
+    /// the upload anyway instead of returning nothing.
+    @Test func stopWaitsForTheUploadPastTheOnDeviceCap() async {
+        let harness = VoiceHarness()
+        harness.recorder.delay = 0.4
+        let voice = harness.makeTranscriber(profile: .meal)
+        #expect(await voice.start())
+        let take = await voice.stop(finalizationTimeout: 0.05)
+        #expect(take?.text == "Two eggs and toast.")
+    }
+
+    @Test func aRetryableFailureKeepsTheRecordingAndRetrySendsItAgain() async {
+        let harness = VoiceHarness()
+        harness.recorder.results = [
+            .failure(.server(status: 502, message: "Transcription failed. Try again.")),
+            .success("Chicken burrito bowl"),
+        ]
+        let voice = harness.makeTranscriber(profile: .meal)
+        #expect(await voice.start())
+
+        #expect(await voice.stop() == nil)
+        #expect(voice.phase == .transcriptionFailed("Transcription failed. Try again."))
+        #expect(voice.errorMessage == "Transcription failed. Try again.")
+        #expect(voice.canRetryTranscription)
+        #expect(voice.hasTakeInFlight)
+        #expect(voice.controlState == "upload_failed")
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(!harness.recorder.canceled, "the kept recording must not be discarded")
+        // A new take can't silently drop the kept recording.
+        #expect(await voice.start() == false)
+
+        let take = await voice.retryTranscription()
+        #expect(take?.text == "Chicken burrito bowl")
+        #expect(take?.engine == .openAITranscribe)
+        #expect(harness.recorder.uploads == 2)
+        #expect(voice.phase == .idle)
+        #expect(!voice.canRetryTranscription)
+        #expect(await voice.retryTranscription() == nil)
+    }
+
+    @Test func discardingAFailedRecordingDeletesIt() async {
+        let harness = VoiceHarness()
+        harness.recorder.results = [.failure(.offline)]
+        let voice = harness.makeTranscriber(profile: .coach)
+        #expect(await voice.start())
+        #expect(await voice.stop() == nil)
+        #expect(voice.phase == .transcriptionFailed(VoiceCopy.transcriptionOffline))
+
+        voice.cancel()
+        #expect(voice.phase == .idle)
+        #expect(!voice.canRetryTranscription)
+        #expect(await eventually { harness.recorder.canceled })
+        #expect(await voice.start())
+        voice.cancel()
+    }
+
+    @Test func aFinalFailureSaysWhyAndDropsTheRecording() async {
+        let harness = VoiceHarness()
+        harness.recorder.results = [.failure(.server(status: 422, message: "Didn’t catch anything. Try again."))]
+        let voice = harness.makeTranscriber(profile: .meal)
+        #expect(await voice.start())
+        #expect(await voice.stop() == nil)
+        #expect(voice.phase == .failed("Didn’t catch anything. Try again."))
+        #expect(!voice.canRetryTranscription)
+        #expect(await eventually { harness.recorder.canceled })
+        // Free to record again.
+        #expect(await voice.start())
+        voice.cancel()
+    }
+
+    @Test func anInstantStopWithNothingRecordedIsDidNotCatchThat() async {
+        let harness = VoiceHarness()
+        harness.recorder.results = [.failure(.nothingRecorded)]
+        let voice = harness.makeTranscriber(profile: .meal)
+        #expect(await voice.start())
+        #expect(await voice.stop() == nil)
+        #expect(voice.phase == .idle)
+        #expect(voice.notice == .didNotCatchThat)
+    }
+
+    @Test func aSlowUploadTimesOutIsCancelledAndCanBeRetried() async {
+        var harness = VoiceHarness()
+        harness.serverTimeout = 0.2
+        harness.recorder.delay = 5
+        let voice = harness.makeTranscriber(profile: .correction)
+        #expect(await voice.start())
+        let clock = ContinuousClock()
+        let began = clock.now
+        #expect(await voice.stop() == nil)
+        #expect(clock.now - began < .seconds(2))
+        #expect(voice.phase == .transcriptionFailed(VoiceCopy.transcriptionTimedOut))
+        #expect(await eventually { harness.recorder.uploadWasCancelled })
+
+        harness.recorder.delay = 0.01
+        #expect(await voice.retryTranscription()?.text == "Two eggs and toast.")
+    }
+
+    @Test func finishPendingTakeStopsRetriesOrCollects() async {
+        let harness = VoiceHarness()
+        let voice = harness.makeTranscriber(profile: .meal)
+        // Recording → stop → transcribe.
+        #expect(await voice.start())
+        #expect(await voice.finishPendingTake(finalizationTimeout: 1.5)?.text == "Two eggs and toast.")
+
+        // Failed upload → one retry.
+        harness.recorder.results = [.failure(.timedOut), .success("Oatmeal")]
+        #expect(await voice.start())
+        #expect(await voice.stop() == nil)
+        #expect(voice.canRetryTranscription)
+        #expect(await voice.finishPendingTake()?.text == "Oatmeal")
+
+        // Nothing in flight.
+        #expect(await voice.finishPendingTake() == nil)
+    }
+
+    @Test func cancellingWhileTranscribingStopsTheUpload() async {
+        let harness = VoiceHarness()
+        harness.recorder.delay = 5
+        let voice = harness.makeTranscriber(profile: .coach)
+        #expect(await voice.start())
+        let stopping = Task { await voice.stop() }
+        #expect(await eventually { voice.isTranscribing && harness.recorder.uploads == 1 })
+        voice.cancel()
+        #expect(await stopping.value == nil)
+        #expect(voice.phase == .idle)
+        #expect(await eventually { harness.recorder.uploadWasCancelled })
+        #expect(await eventually { harness.recorder.canceled })
+    }
+
+    @Test func aTakeEndedInTheBackgroundTranscribesAndParks() async {
+        let harness = VoiceHarness()
+        harness.recorder.results = [.success("Greek yogurt")]
+        let voice = harness.makeTranscriber(profile: .meal)
+        #expect(await voice.start())
+        voice.finishInBackground()
+        #expect(harness.capture.stopCount >= 1)
+        #expect(voice.phase == .finishing)
+        #expect(await eventually { voice.phase == .ready })
+        #expect(voice.collectReadyTake()?.text == "Greek yogurt")
+    }
+
+    @Test func serverTextIsBoundedToTheProfileLimit() async {
+        let harness = VoiceHarness()
+        harness.recorder.results = [.success(String(repeating: "a", count: 5_000))]
+        let voice = harness.makeTranscriber(profile: .coach)
+        #expect(await voice.start())
+        #expect(await voice.stop()?.text.count == VoiceProfile.coach.maximumCharacters)
     }
 }

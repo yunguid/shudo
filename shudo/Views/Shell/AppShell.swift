@@ -72,7 +72,9 @@ struct AppShell: View {
                 NavigationStack {
                     TrainScreen(
                         viewModel: dependencies.makeTrainViewModel(currentProfile, logging),
-                        onAskCoach: { sendToCoach($0, mode: .typed, engine: nil) }
+                        onAskCoach: { sendToCoach($0, mode: .typed, engine: nil) },
+                        // One mic: "Log session" records in the bottom-left bar.
+                        onLogByVoice: { CaptureController.shared.startRecording(context: .train) }
                     )
                 }
             }
@@ -316,7 +318,9 @@ struct AppShell: View {
                     loadRevisions: dependencies.bioRevisions,
                     onSend: { text, engine in
                         sendToCoach(text, mode: engine == nil ? .typed : .dictated, engine: engine, hint: .bio)
-                    }
+                    },
+                    // One mic: closes settings, jumps to Today, records in the bar.
+                    onTalkToUpdate: { CaptureController.shared.startRecording(context: .bio) }
                 )
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -394,7 +398,9 @@ struct AppShell: View {
                     loadRevisions: dependencies.bioRevisions,
                     onSend: { text, engine in
                         sendToCoach(text, mode: engine == nil ? .typed : .dictated, engine: engine, hint: .bio)
-                    }
+                    },
+                    // One mic: closes settings, jumps to Today, records in the bar.
+                    onTalkToUpdate: { CaptureController.shared.startRecording(context: .bio) }
                 ))
             },
             onSignOut: {

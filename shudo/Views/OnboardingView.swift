@@ -423,12 +423,16 @@ struct OnboardingView: View {
         errorMessage = nil
         defer { isPreparing = false }
 
-        // A take still in flight lands in the description first (capped
-        // wait); a warm-up with nothing heard yet is simply dropped.
-        if voice.isBusy {
-            if let take = await voice.stop(finalizationTimeout: 1.5) { appendTake(take) }
-        } else if let take = voice.collectReadyTake() {
+        // A recording still in flight is stopped and transcribed (or a
+        // failed upload retried once) and lands in the description first;
+        // a warm-up with nothing heard yet is simply dropped.
+        let hadTake = voice.hasTakeInFlight
+        if let take = await voice.finishPendingTake(finalizationTimeout: 1.5) {
             appendTake(take)
+        } else if hadTake, voice.errorMessage != nil {
+            // The card shows the failure (and Retry / Discard for a kept
+            // recording); don't build targets without Luke's words.
+            return
         }
         guard OnboardingCapturePolicy.canSubmit(text: context, isSubmitting: false) else {
             errorMessage = voice.notice == .didNotCatchThat

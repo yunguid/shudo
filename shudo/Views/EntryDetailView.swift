@@ -1019,6 +1019,7 @@ private struct EntryCorrectionSheet: View {
     /// the note editor.
     @StateObject private var voiceHolder = UnobservedHolder(VoiceTranscriber(profile: .correction))
     @State private var hasLiveDictation = false
+    @State private var voicePhase: VoiceTranscriber.Phase = .idle
     @State private var lastDictation: DictationMergePolicy.AppendRecord?
     @State private var dictatedTakeCount = 0
     @State private var dictatedEngine: SpeechEngineID?
@@ -1247,9 +1248,9 @@ private struct EntryCorrectionSheet: View {
         )
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
-        .onReceive(voice.$transcript) { transcript in
-            let hasText = !transcript.isEmpty
-            if hasLiveDictation != hasText { hasLiveDictation = hasText }
+        .onReceive(voice.$phase) { phase in
+            if voicePhase != phase { voicePhase = phase }
+            if hasLiveDictation != phase.holdsTake { hasLiveDictation = phase.holdsTake }
         }
         .onDisappear {
             // Camera and Photos temporarily cover this sheet. Keep the whole
@@ -1263,7 +1264,7 @@ private struct EntryCorrectionSheet: View {
     }
 
     private var submitTitle: String {
-        if hasSubmitted { return "Sending…" }
+        if hasSubmitted { return voicePhase == .finishing ? VoiceCopy.transcribing : "Sending…" }
         if isPreparingImage { return "Preparing photos…" }
         return updatesEstimate ? "Update estimate" : "Save photos"
     }
@@ -1533,11 +1534,18 @@ private struct EntryCorrectionSheet: View {
         let selectedImages = images
         let encodeTask = uploadEncodeTask
         Task {
-            // A take still in flight lands in the note first (capped wait).
-            if voice.isBusy {
-                if let take = await voice.stop(finalizationTimeout: 1.5) { appendTake(take) }
-            } else if let take = voice.collectReadyTake() {
+            // A recording still in flight is stopped and transcribed (or a
+            // failed upload retried once) and lands in the note first —
+            // Update while recording is stop → transcribe → send.
+            let hadTake = voice.hasTakeInFlight
+            if let take = await voice.finishPendingTake(finalizationTimeout: 1.5) {
                 appendTake(take)
+            } else if hadTake, voice.errorMessage != nil {
+                // Transcription failed: stay, so the card can retry or
+                // discard the kept recording.
+                hasSubmitted = false
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
             }
             let normalized = EntryCorrectionPolicy.normalized(
                 ClarificationPolicy.submittableText(context, prefill: initialNote)

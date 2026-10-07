@@ -126,26 +126,23 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Remove photo 1"].exists)
     }
 
+    /// `shudo://capture` (quick voice) goes through the one voice entry
+    /// point: the capture bar records on Today, and the bottom-left button
+    /// that started it sends it.
     @MainActor
-    func testStandaloneQuickVoiceStillAutoStarts() throws {
+    func testCaptureDeepLinkRecordsInTheBar() throws {
         let app = launchPreview(scriptedSpeech: "overnight oats with whey")
+        app.open(try XCTUnwrap(URL(string: "shudo://capture")))
 
-        // 2.0: the capture bar's "+" opens the composer; holding it offers
-        // the quick voice meal (mic warm-up still starts at the tap).
-        app.buttons["Log meal"].press(forDuration: 1.0)
-        let quickVoice = app.buttons["Quick voice meal"]
-        XCTAssertTrue(quickVoice.waitForExistence(timeout: 3))
-        quickVoice.tap()
-
-        let activeRecording = app.buttons["Voice recording control"]
-        XCTAssertTrue(waitForRecording(activeRecording, timeout: 15))
-        activeRecording.tap()
-        XCTAssertTrue(app.buttons["Undo last dictation"].waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForValue(
-            of: app.textViews.firstMatch,
-            toEqual: "overnight oats with whey",
-            timeout: 3
-        ))
+        let send = app.buttons["capture.send"]
+        let recording = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == 'Send to Shudo' AND isEnabled == true"),
+            object: send
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [recording], timeout: 8), .completed)
+        XCTAssertFalse(app.navigationBars["Log meal"].exists, "no second voice surface")
+        send.tap()
+        XCTAssertTrue(app.staticTexts["overnight oats with whey"].waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -176,11 +173,11 @@ final class shudoUITests: XCTestCase {
         XCTAssertEqual(note.value as? String, "Permission recovery draft")
     }
 
-    /// The headline flow: words show up while speaking, the take lands in
-    /// the editable note, an edit sticks, and Log sends text — the timeline
-    /// card is titled with the real words immediately.
+    /// The headline flow: record (no live words), stop, "Transcribing…",
+    /// the text lands in the editable note, an edit sticks, and Log sends
+    /// text — the timeline card is titled with the real words immediately.
     @MainActor
-    func testDictationStreamsIntoEditableNoteAndSendsText() throws {
+    func testRecordingTranscribesIntoEditableNoteAndSendsText() throws {
         let app = launchPreview(scriptedSpeech: "Greek yogurt with honey and granola")
 
         app.buttons["Log meal"].tap()
@@ -189,25 +186,27 @@ final class shudoUITests: XCTestCase {
         let recordingControl = app.buttons["Voice recording control"]
         recordingControl.tap()
         XCTAssertTrue(waitForRecording(recordingControl, timeout: 15))
+        XCTAssertTrue(app.buttons["Discard recording"].exists)
 
-        let live = app.descendants(matching: .any)["Live transcript"]
-        XCTAssertTrue(live.waitForExistence(timeout: 5))
-        let streaming = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value CONTAINS 'Greek yogurt'"),
-            object: live
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [streaming], timeout: 5), .completed)
-
-        recordingControl.tap()
+        // Recording shows time and level, never the words.
         let note = app.textViews.firstMatch
+        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        XCTAssertFalse(app.descendants(matching: .any)["Live transcript"].exists)
+        XCTAssertFalse(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS 'Greek yogurt'")
+        ).firstMatch.exists)
+        XCTAssertEqual(note.value as? String ?? "", "")
+
+        // Stop → "Transcribing…" (brief in the scripted stack, so not
+        // asserted here; unit tests pin that state) → text in the note.
+        recordingControl.tap()
         XCTAssertTrue(waitForValue(
             of: note,
             toEqual: "Greek yogurt with honey and granola",
             timeout: 5
         ))
-        XCTAssertFalse(live.exists)
 
-        // The dictated words are ordinary editable text. (Where the caret
+        // The transcribed words are ordinary editable text. (Where the caret
         // lands is UIKit's call; the edit sticking is what matters.)
         note.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.9)).tap()
         note.typeText(" and berries")
@@ -227,9 +226,38 @@ final class shudoUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Voice note"].exists)
     }
 
-    /// A take still being heard can be sent straight from Log meal.
+    /// A failed upload keeps the recording: Retry re-sends it and the text
+    /// lands in the note; nothing is lost.
     @MainActor
-    func testLogMealWhileListeningSendsTheLiveWords() throws {
+    func testAFailedTranscriptionKeepsTheRecordingForRetry() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-shudoPolishPreview", "main",
+            "-shudoScriptedSpeech", "salmon and sweet potato",
+            "-shudoScriptedSpeechMode", "uploadFailsOnce",
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 5))
+        app.buttons["Log meal"].tap()
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 3))
+
+        let recordingControl = app.buttons["Voice recording control"]
+        recordingControl.tap()
+        XCTAssertTrue(waitForRecording(recordingControl, timeout: 15))
+        recordingControl.tap()
+
+        let retry = app.buttons["Retry transcription"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Transcription failed. Try again."].exists)
+        XCTAssertTrue(app.buttons["Discard recording"].exists)
+        retry.tap()
+        XCTAssertTrue(waitForValue(of: app.textViews.firstMatch, toEqual: "salmon and sweet potato", timeout: 5))
+        XCTAssertFalse(retry.exists)
+    }
+
+    /// Log meal while recording: stop → transcribe → send in one go.
+    @MainActor
+    func testLogMealWhileRecordingTranscribesAndSends() throws {
         let app = launchPreview(scriptedSpeech: "two bananas")
         app.buttons["Log meal"].tap()
         XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 3))
@@ -243,14 +271,14 @@ final class shudoUITests: XCTestCase {
             predicate: NSPredicate(format: "isEnabled == true"),
             object: submit
         )
-        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed)
         submit.tap()
 
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForNonExistence(timeout: 10))
         let card = app.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS %@", "two bananas")
         ).firstMatch
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
     }
 
     /// One smoke test against the real recognizer stack. The Simulator can't

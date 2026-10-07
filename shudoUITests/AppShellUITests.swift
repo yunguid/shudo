@@ -49,6 +49,96 @@ final class AppShellUITests: XCTestCase {
         XCTAssertTrue(reply.waitForExistence(timeout: 8))
     }
 
+    /// Left-handed, one spot: the bottom-left mic starts recording and
+    /// becomes the send arrow in place; ✕ sits on the trailing edge. No live
+    /// words while recording; the transcript goes to the coach.
+    @MainActor
+    func testRecordThenSendFromTheSameButton() throws {
+        let app = launch(extra: ["-shudoScriptedSpeech", "had a protein bar at four"])
+        let mic = app.buttons["capture.mic"]
+        let micFrame = mic.frame
+        mic.tap()
+
+        let send = app.buttons["capture.send"]
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == 'Send to Shudo' AND isEnabled == true"),
+            object: send
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
+        XCTAssertEqual(send.frame.midX, micFrame.midX, accuracy: 6, "send replaces the mic in place")
+        let discard = app.buttons["capture.discard"]
+        XCTAssertTrue(discard.exists)
+        XCTAssertGreaterThan(discard.frame.minX, send.frame.maxX + 100, "✕ sits away from the thumb")
+        XCTAssertTrue(app.descendants(matching: .any)["capture.recording"].exists)
+        XCTAssertFalse(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS 'protein bar'")
+        ).firstMatch.exists, "no live words while recording")
+
+        send.tap()
+        XCTAssertTrue(app.staticTexts["had a protein bar at four"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 3))
+    }
+
+    /// Hold the mic to talk; letting go sends.
+    @MainActor
+    func testHoldToTalkSendsOnRelease() throws {
+        let app = launch(extra: ["-shudoScriptedSpeech", "what should I eat tonight"])
+        app.buttons["capture.mic"].press(forDuration: 1.6)
+        XCTAssertTrue(app.staticTexts["what should I eat tonight"].waitForExistence(timeout: 10))
+    }
+
+    /// The trailing ✕ throws a recording away without sending anything.
+    @MainActor
+    func testDiscardingARecordingSendsNothing() throws {
+        let app = launch(extra: ["-shudoScriptedSpeech", "never send this"])
+        app.buttons["capture.mic"].tap()
+        let discard = app.buttons["capture.discard"]
+        XCTAssertTrue(discard.waitForExistence(timeout: 8))
+        discard.tap()
+        XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["never send this"].waitForExistence(timeout: 2))
+    }
+
+    /// A failed upload keeps the recording; the same bottom-left button
+    /// retries and sends.
+    @MainActor
+    func testAFailedTranscriptionInTheBarRetriesAndSends() throws {
+        let app = launch(extra: [
+            "-shudoScriptedSpeech", "log two eggs",
+            "-shudoScriptedSpeechMode", "uploadFailsOnce",
+        ])
+        app.buttons["capture.mic"].tap()
+        let send = app.buttons["capture.send"]
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == 'Send to Shudo' AND isEnabled == true"),
+            object: send
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
+        send.tap()
+
+        let retry = app.buttons["capture.retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["capture.error"].exists)
+        XCTAssertTrue(app.buttons["capture.discard"].exists)
+        XCTAssertFalse(app.staticTexts["log two eggs"].exists)
+        retry.tap()
+        XCTAssertTrue(app.staticTexts["log two eggs"].waitForExistence(timeout: 8))
+    }
+
+    /// The bar's hint follows the tab.
+    @MainActor
+    func testTheBarHintFollowsTheTab() {
+        let app = launch()
+        let field = app.buttons["capture.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        app.tabBars.buttons["Train"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Log a workout…"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Body"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Weight, check-in notes…"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Today"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Tell Shudo anything…"].waitForExistence(timeout: 3))
+    }
+
     @MainActor
     func testCaptureBarRidesAlongOnEveryTab() {
         let app = launch()

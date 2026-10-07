@@ -40,9 +40,13 @@ struct VoiceEnvironment {
     var makeCapture: @MainActor () -> any AudioCapturing
     var makeEngine: @MainActor (SpeechEngineID) -> any SpeechEngine
     var vocabulary: @MainActor () -> [String]
+    /// How long a server take may spend transcribing before the upload is
+    /// cancelled and a retry offered.
+    var serverTranscriptionTimeout: TimeInterval = VoiceProfile.serverTranscriptionTimeout
 
     static var live: VoiceEnvironment {
-        VoiceEnvironment(
+        _ = staleRecordingSweep
+        return VoiceEnvironment(
             permissions: LiveVoicePermissions.shared,
             assets: SpeechAssetPreparer.shared,
             makeCapture: { MicrophoneCapture() },
@@ -51,11 +55,17 @@ struct VoiceEnvironment {
                 case .speechTranscriber: return AnalyzerSpeechEngine(module: .transcriber)
                 case .dictationTranscriber: return AnalyzerSpeechEngine(module: .dictation)
                 case .sfSpeechOnDevice: return OnDeviceRecognizerEngine()
+                case .openAITranscribe: return ServerTranscriptionEngine(uploader: ServerTranscriptionClient())
                 }
             },
             vocabulary: { VoiceVocabularyStore.shared.terms }
         )
     }
+
+    /// Once per launch: delete recordings a crash or kill left in tmp.
+    private static let staleRecordingSweep: Void = {
+        Task.detached(priority: .utility) { ServerTranscriptionEngine.sweepStaleRecordings() }
+    }()
 
     /// The live environment, or — in DEBUG builds launched with
     /// `-shudoScriptedSpeech "<text>"` / `-shudoScriptedSpeechMode …` — the
@@ -70,10 +80,19 @@ struct VoiceEnvironment {
     }
 }
 
-/// Live, on-device dictation for one screen (meal composer, correction
-/// sheet, onboarding, weigh-in, coach). Shows words while Luke speaks and
-/// hands back a `VoiceTake` of plain text — audio never leaves the phone and
-/// is never written to disk.
+/// Voice for one screen (meal composer, correction sheet, onboarding,
+/// weigh-in, coach, workouts), handing back a `VoiceTake` of plain text.
+///
+/// Two kinds of engine (`SpeechEnginePolicy.select(for:)`):
+/// - Server (`profile.transcribesOnServer`: meals, corrections, onboarding,
+///   the coach, workouts): records the take to a temporary .m4a and, once
+///   it ends, uploads it to the `transcribe` function — no live words.
+///   `.finishing` is "Transcribing…" (up to
+///   `VoiceProfile.serverTranscriptionTimeout`). A failed upload keeps the
+///   recording: `phase` becomes `.transcriptionFailed`, and
+///   `retryTranscription()` re-uploads it or `cancel()` discards it.
+/// - On-device (the weigh-in): live words while Luke speaks; audio never
+///   leaves the phone.
 ///
 /// Lifecycle: `start()` → `.listening` as soon as the mic is live (the
 /// recognizer warms up in parallel; the unbounded capture stream keeps the
@@ -89,11 +108,26 @@ final class VoiceTranscriber: ObservableObject {
         case preparingModel(progress: Double?)
         case starting
         case listening
+        /// The take ended; its text is being finalized (on-device) or
+        /// transcribed (server: "Transcribing…").
         case finishing
         /// A take ended by itself and is waiting to be collected.
         case ready
+        /// The server transcription failed in a way a retry could fix; the
+        /// recording is kept for `retryTranscription()` or `cancel()`.
+        case transcriptionFailed(String)
         case unavailable(VoiceUnavailableReason)
         case failed(String)
+
+        /// A take is recording, being finalized, parked, or waiting on a
+        /// retry. (`@Published` sinks see the new phase before `phase`
+        /// itself changes, so views read this off the emitted value.)
+        var holdsTake: Bool {
+            switch self {
+            case .listening, .finishing, .ready, .transcriptionFailed: return true
+            default: return false
+            }
+        }
     }
 
     enum Notice: Equatable {
@@ -138,6 +172,14 @@ final class VoiceTranscriber: ObservableObject {
         let events: Task<Void, Never>
     }
 
+    /// A recorded take whose server transcription is running or failed.
+    private struct Recording {
+        let engine: any RecordingTranscriptionEngine
+        let engineID: SpeechEngineID
+        let reason: FinishReason
+        let duration: TimeInterval
+    }
+
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var transcript: LiveTranscript
     @Published private(set) var meterLevels: [CGFloat] = VoiceMeterPolicy.restingLevels
@@ -150,6 +192,10 @@ final class VoiceTranscriber: ObservableObject {
     /// `profile.autoStopStableInterval` with no new recognizer output, the
     /// take ends by itself.
     var autoStopCondition: ((LiveTranscript) -> Bool)?
+    /// For a server profile shared by several contexts (the capture bar):
+    /// the `purpose` the next take is transcribed for (e.g. `.workout` on
+    /// Train). Nil uses the profile's own.
+    var transcriptionPurposeOverride: TranscriptionPurpose?
 
     private let environment: VoiceEnvironment
     private var generation = 0
@@ -161,6 +207,8 @@ final class VoiceTranscriber: ObservableObject {
     private var autoStopTask: Task<Void, Never>?
     private var finishTask: Task<Void, Never>?
     private var parkedTake: VoiceTake?
+    /// Kept across a failed upload so a retry re-sends the same audio.
+    private var pendingRecording: Recording?
     private var startedAt: Date?
     private var sawFirstResult = false
     private var assetSubscription: AnyCancellable?
@@ -170,7 +218,7 @@ final class VoiceTranscriber: ObservableObject {
         self.environment = environment ?? .current
         transcript = LiveTranscript(characterLimit: profile.maximumCharacters)
         self.environment.assets.prepare()
-        phase = Self.idlePhase(for: self.environment.assets.snapshot)
+        phase = Self.idlePhase(for: self.environment.assets.snapshot, profile: profile)
         // Asset providers publish from the main actor.
         assetSubscription = self.environment.assets.snapshotUpdates
             .sink { [weak self] snapshot in
@@ -196,11 +244,30 @@ final class VoiceTranscriber: ObservableObject {
     }
     var remainingTime: TimeInterval { profile.remainingTime(after: elapsedTime) }
 
+    /// Records now, transcribes on the server after the take (no live words).
+    var transcribesOnServer: Bool { profile.transcribesOnServer }
+
+    /// The server transcription is running ("Transcribing…").
+    var isTranscribing: Bool { phase == .finishing && transcribesOnServer }
+
+    /// A failed upload left a recording that `retryTranscription()` can
+    /// re-send (or `cancel()` discards).
+    var canRetryTranscription: Bool {
+        if case .transcriptionFailed = phase { return pendingRecording != nil }
+        return false
+    }
+
+    /// A take is recording, being transcribed, parked, or waiting on a
+    /// retry — a submit button should finish it (`finishPendingTake()`)
+    /// rather than send without it.
+    var hasTakeInFlight: Bool { phase.holdsTake || !transcript.isEmpty }
+
     var errorMessage: String? {
         switch phase {
         case .unavailable(.microphoneDenied): return profile.microphoneDeniedMessage
         case .unavailable(.speechDenied): return VoiceCopy.speechDenied
         case .unavailable(.unsupported): return VoiceCopy.unsupported
+        case .transcriptionFailed(let message): return message
         case .failed(let message): return message
         default: return nil
         }
@@ -220,6 +287,7 @@ final class VoiceTranscriber: ObservableObject {
         case .listening: return "recording"
         case .finishing: return "finishing"
         case .ready: return "ready"
+        case .transcriptionFailed: return "upload_failed"
         case .unavailable, .failed: return "error"
         }
     }
@@ -227,10 +295,12 @@ final class VoiceTranscriber: ObservableObject {
     // MARK: Start
 
     /// Starts a take. Returns false when it couldn't (permission, no
-    /// recognizer, model still downloading, aborted, already running).
+    /// recognizer, model still downloading, aborted, already running, or a
+    /// failed recording still waiting on retry/discard — never dropped by a
+    /// new take).
     @discardableResult
     func start() async -> Bool {
-        guard !Task.isCancelled, !isBusy else {
+        guard !Task.isCancelled, !isBusy, pendingRecording == nil else {
             CaptureDiagnostics.record(.recorderStartRejected, state: controlState)
             return false
         }
@@ -251,13 +321,22 @@ final class VoiceTranscriber: ObservableObject {
         Perf.mark("mic.permission.ok")
         CaptureDiagnostics.record(.microphonePermissionGranted, state: controlState)
 
-        let authorization = await environment.permissions.speechAuthorization(requestIfNeeded: true)
-        guard stillStarting(token) else { return false }
-        let snapshot = await environment.assets.resolvedSnapshot()
-        guard stillStarting(token) else { return false }
+        // A server take needs neither speech recognition permission nor the
+        // on-device model.
+        let authorization: SpeechAuthorizationState
+        let snapshot: SpeechAssetSnapshot
+        if profile.transcribesOnServer {
+            authorization = .notDetermined
+            snapshot = environment.assets.snapshot
+        } else {
+            authorization = await environment.permissions.speechAuthorization(requestIfNeeded: true)
+            guard stillStarting(token) else { return false }
+            snapshot = await environment.assets.resolvedSnapshot()
+            guard stillStarting(token) else { return false }
+        }
 
         let engineID: SpeechEngineID
-        switch SpeechEnginePolicy.select(snapshot, speechAuthorization: authorization) {
+        switch SpeechEnginePolicy.select(for: profile, snapshot: snapshot, speechAuthorization: authorization) {
         case .engine(let id):
             engineID = id
         case .preparing(let progress):
@@ -275,7 +354,11 @@ final class VoiceTranscriber: ObservableObject {
         // The recognizer warms up while the microphone activates.
         let primary = environment.makeEngine(engineID)
         engines = [primary]
-        let profile = self.profile
+        var takeProfile = self.profile
+        if takeProfile.transcribesOnServer, let purpose = transcriptionPurposeOverride {
+            takeProfile.transcriptionPurpose = purpose
+        }
+        let profile = takeProfile
         let locale = Self.locale(for: engineID, in: snapshot)
         let vocabulary = engineID == .speechTranscriber ? [] : environment.vocabulary()
         let primaryStart = Task {
@@ -351,8 +434,12 @@ final class VoiceTranscriber: ObservableObject {
             run = try await primaryStart.value
         } catch {
             CaptureDiagnostics.record(.speechEngineFailed, state: primaryID.diagnosticName)
-            let fallbacks = SpeechEnginePolicy.candidates(snapshot, speechAuthorization: authorization)
-                .filter { $0 != primaryID }
+            // A recording engine has no fallback: a server profile never
+            // silently switches to live on-device words.
+            let fallbacks = primaryID.transcribesAfterRecording
+                ? []
+                : SpeechEnginePolicy.candidates(snapshot, speechAuthorization: authorization)
+                    .filter { $0 != primaryID }
             for fallbackID in fallbacks where generation == token {
                 engine = environment.makeEngine(fallbackID)
                 engines.append(engine)
@@ -416,8 +503,11 @@ final class VoiceTranscriber: ObservableObject {
 
     /// Ends the take and returns its text, waiting up to
     /// `finalizationTimeout` (default: the profile's) for the recognizer's
-    /// final pass before keeping what it already heard. Also collects a
-    /// parked `.ready` take. Returns nil for an empty take (with a
+    /// final pass before keeping what it already heard. A server take
+    /// ignores that cap and waits for the transcription (up to
+    /// `VoiceProfile.serverTranscriptionTimeout`); if it fails, this returns
+    /// nil with `phase == .transcriptionFailed` and the recording kept. Also
+    /// collects a parked `.ready` take. Returns nil for an empty take (with a
     /// "Didn't catch that" notice) or when another caller already collected
     /// it.
     @discardableResult
@@ -434,6 +524,37 @@ final class VoiceTranscriber: ObservableObject {
             return nil
         }
         if let finishTask { await finishTask.value }
+        return collectReadyTake()
+    }
+
+    /// Re-uploads a recording whose transcription failed. Returns the take
+    /// (also collected), or nil when it failed again (`phase` is
+    /// `.transcriptionFailed` again for a retryable failure, `.failed` for
+    /// a final one) or there was nothing to retry.
+    @discardableResult
+    func retryTranscription() async -> VoiceTake? {
+        guard case .transcriptionFailed = phase, let recording = pendingRecording else { return nil }
+        CaptureDiagnostics.record(.speechRetryRequested, state: controlState)
+        generation += 1
+        let token = generation
+        notice = nil
+        phase = .finishing
+        let task = Task { [weak self] () -> Void in
+            await self?.transcribe(recording, token: token)
+        }
+        finishTask = task
+        await task.value
+        return collectReadyTake()
+    }
+
+    /// For submit buttons: finishes whatever take is in flight — stops a
+    /// recording (and waits for its transcription), retries a failed
+    /// upload once, or collects a parked take. Afterwards
+    /// `canRetryTranscription` says whether a recording is still waiting
+    /// (the submit should stop and let Luke retry or discard it).
+    func finishPendingTake(finalizationTimeout: TimeInterval? = nil) async -> VoiceTake? {
+        if isBusy { return await stop(finalizationTimeout: finalizationTimeout) }
+        if canRetryTranscription { return await retryTranscription() }
         return collectReadyTake()
     }
 
@@ -456,10 +577,13 @@ final class VoiceTranscriber: ObservableObject {
         return take
     }
 
-    /// Drops the take in flight (and any parked text) and releases the mic.
+    /// Drops the take in flight (and any parked text), releases the mic,
+    /// stops an in-flight upload and deletes a kept recording.
     func cancel() {
         let wasActive = phase != idlePhase()
         generation += 1
+        finishTask?.cancel()
+        discardPendingRecording()
         tearDownInFlight()
         finishTask = nil
         resetTakeState()
@@ -572,6 +696,27 @@ final class VoiceTranscriber: ObservableObject {
         CaptureDiagnostics.record(.recorderStopped, state: controlState)
 
         let attach = pipelineTask
+        if let engineID = activeEngine, engineID.transcribesAfterRecording {
+            finishTask = Task { [weak self] in
+                // Every buffer heard is in the file before it is closed.
+                guard let pipeline = await attach?.value else {
+                    guard let self, self.generation == token else { return }
+                    self.completeTake(reason: reason, text: "", duration: duration)
+                    return
+                }
+                await pipeline.pump.value
+                guard let self, self.generation == token else { return }
+                guard let engine = pipeline.engine as? any RecordingTranscriptionEngine else {
+                    self.completeTake(reason: reason, text: "", duration: duration)
+                    return
+                }
+                await self.transcribe(
+                    Recording(engine: engine, engineID: engineID, reason: reason, duration: duration),
+                    token: token
+                )
+            }
+            return
+        }
         let limit = timeout ?? profile.finalizationTimeout
         finishTask = Task { [weak self] in
             let finalized = await VoiceTiming.race(timeout: limit) {
@@ -611,6 +756,63 @@ final class VoiceTranscriber: ObservableObject {
         notice = reason.notice
         parkedTake = VoiceTake(text: cleaned, engine: engineID, duration: duration)
         phase = .ready
+    }
+
+    /// Uploads a recorded take (bounded by the server timeout, which cancels
+    /// the upload) and lands it like any other take. A retryable failure
+    /// keeps the recording for `retryTranscription()`; a final one (nothing
+    /// heard, too long, bad format) discards it and says why.
+    private func transcribe(_ recording: Recording, token: Int) async {
+        let result: Result<String, TranscriptionError>
+        do {
+            let engine = recording.engine
+            let text = try await VoiceTiming.deadline(environment.serverTranscriptionTimeout) {
+                try await engine.transcribeRecording()
+            }
+            result = .success(text)
+        } catch {
+            result = .failure(TranscriptionError.from(error))
+        }
+        guard generation == token else { return }
+        switch result {
+        case .success(let text):
+            pendingRecording = nil
+            completeTake(
+                reason: recording.reason,
+                text: LiveTranscript.bounded(text, limit: profile.maximumCharacters),
+                duration: recording.duration
+            )
+            Task { await recording.engine.cancel() }
+        case .failure(let failure) where failure.isRetryable:
+            // Keep the engine (and its file) out of the teardown.
+            pendingRecording = recording
+            engines.removeAll { $0 === recording.engine }
+            generation += 1
+            tearDownInFlight()
+            finishTask = nil
+            notice = nil
+            phase = .transcriptionFailed(failure.message)
+        case .failure(let failure):
+            pendingRecording = nil
+            generation += 1
+            tearDownInFlight()
+            Task { await recording.engine.cancel() }
+            finishTask = nil
+            if failure == .nothingRecorded {
+                notice = .didNotCatchThat
+                phase = idlePhase()
+                CaptureDiagnostics.record(.speechTakeEmpty, state: controlState)
+            } else {
+                notice = nil
+                phase = .failed(failure.message)
+            }
+        }
+    }
+
+    private func discardPendingRecording() {
+        guard let recording = pendingRecording else { return }
+        pendingRecording = nil
+        Task { await recording.engine.cancel() }
     }
 
     private func failAfterEngineError(authorization: SpeechAuthorizationState) {
@@ -680,18 +882,18 @@ final class VoiceTranscriber: ObservableObject {
     private func assetsChanged(_ snapshot: SpeechAssetSnapshot) {
         switch phase {
         case .idle, .preparingModel:
-            phase = Self.idlePhase(for: snapshot)
+            phase = Self.idlePhase(for: snapshot, profile: profile)
         default:
             break
         }
     }
 
     private func idlePhase() -> Phase {
-        Self.idlePhase(for: environment.assets.snapshot)
+        Self.idlePhase(for: environment.assets.snapshot, profile: profile)
     }
 
-    private static func idlePhase(for snapshot: SpeechAssetSnapshot) -> Phase {
-        if case .preparing(let progress) = SpeechEnginePolicy.idleAvailability(snapshot) {
+    private static func idlePhase(for snapshot: SpeechAssetSnapshot, profile: VoiceProfile) -> Phase {
+        if case .preparing(let progress) = SpeechEnginePolicy.idleAvailability(for: profile, snapshot: snapshot) {
             return .preparingModel(progress: progress)
         }
         return .idle
@@ -704,7 +906,7 @@ final class VoiceTranscriber: ObservableObject {
         case .dictationTranscriber:
             return snapshot.dictationLocale ?? snapshot.transcriberLocale
                 ?? SpeechAssetPreparer.fallbackLocale
-        case .sfSpeechOnDevice:
+        case .sfSpeechOnDevice, .openAITranscribe:
             return Locale.current
         }
     }

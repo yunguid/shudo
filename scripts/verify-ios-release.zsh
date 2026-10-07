@@ -49,7 +49,8 @@ if plutil -extract NSPhotoLibraryUsageDescription raw "$shudo_info" >/dev/null 2
   fail "PhotosPicker does not need full-library permission; remove NSPhotoLibraryUsageDescription"
 fi
 
-# Coach: background refresh, When-In-Use location only, on-device voice.
+# Coach: background refresh, When-In-Use location only. Voice: recordings
+# are uploaded for transcription (and not kept); weigh-ins stay on-device.
 shudo_info_json="$(plutil -convert json -o - "$shudo_info")"
 print -r -- "$shudo_info_json" | jq -e '.UIBackgroundModes | index("fetch") != null' >/dev/null || \
   fail "the coach background-refresh mode (fetch) is missing"
@@ -65,10 +66,11 @@ print -r -- "$shudo_info_json" | \
 if plutil -extract NSLocationAlwaysAndWhenInUseUsageDescription raw "$shudo_info" >/dev/null 2>&1; then
   fail "Shudo must not request Always location"
 fi
-for shudo_voice_key in NSMicrophoneUsageDescription NSSpeechRecognitionUsageDescription; do
-  [[ "$(plutil -extract "$shudo_voice_key" raw "$shudo_info")" == *"never uploaded"* ]] || \
-    fail "$shudo_voice_key must say audio is never uploaded"
-done
+shudo_microphone_text="$(plutil -extract NSMicrophoneUsageDescription raw "$shudo_info")"
+[[ "$shudo_microphone_text" == *"sent for transcription"* && "$shudo_microphone_text" == *"not kept"* ]] || \
+  fail "NSMicrophoneUsageDescription must say recordings are sent for transcription and not kept"
+[[ "$(plutil -extract NSSpeechRecognitionUsageDescription raw "$shudo_info")" == *"never uploaded"* ]] || \
+  fail "NSSpeechRecognitionUsageDescription must say on-device weigh-in audio is never uploaded"
 
 [[ "$(plutil -extract NSPrivacyTracking raw "$shudo_privacy")" == "false" ]] || \
   fail "the privacy manifest unexpectedly enables tracking"
@@ -82,13 +84,11 @@ for shudo_required_type in \
   NSPrivacyCollectedDataTypePreciseLocation \
   NSPrivacyCollectedDataTypeFitness \
   NSPrivacyCollectedDataTypeHealth \
-  NSPrivacyCollectedDataTypePhotosorVideos; do
+  NSPrivacyCollectedDataTypePhotosorVideos \
+  NSPrivacyCollectedDataTypeAudioData; do
   print -r -- "$shudo_privacy_types" | grep -qx "$shudo_required_type" || \
     fail "the privacy manifest must declare $shudo_required_type"
 done
-if print -r -- "$shudo_privacy_types" | grep -qx NSPrivacyCollectedDataTypeAudioData; then
-  fail "voice is transcribed on the device; the privacy manifest must not declare AudioData"
-fi
 [[ "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw "$shudo_privacy")" == \
   "NSPrivacyAccessedAPICategoryUserDefaults" ]] || fail "UserDefaults required-reason API is missing"
 [[ "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw "$shudo_privacy")" == \

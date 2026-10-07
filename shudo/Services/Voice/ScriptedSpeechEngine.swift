@@ -7,17 +7,22 @@ import Foundation
 /// run SpeechTranscriber). Launch arguments:
 ///
 ///     -shudoScriptedSpeech "two scrambled eggs and toast"
-///     -shudoScriptedSpeechMode denied|unavailable|downloading
+///     -shudoScriptedSpeechMode denied|unavailable|downloading|uploadFailsOnce
 ///
 /// The scripted capture never touches AVAudioSession, so tests don't depend
-/// on the simulator's microphone permission. The engine streams the script
-/// word by word as volatile results and finalizes the whole script on stop.
+/// on the simulator's microphone permission. Like the real stack, a server
+/// profile (meal, coach, …) shows no words while recording and gets the
+/// whole script only after stop, following a short "Transcribing…" beat;
+/// `uploadFailsOnce` fails that first upload (retryable) so the retry path
+/// can be driven. The on-device weigh-in engine streams the script word by
+/// word as volatile results and finalizes it on stop.
 struct ScriptedVoiceConfiguration: Equatable {
     enum Mode: String {
         case normal
         case denied
         case unavailable
         case downloading
+        case uploadFailsOnce
     }
 
     static let textFlag = "-shudoScriptedSpeech"
@@ -50,18 +55,20 @@ struct ScriptedVoiceConfiguration: Equatable {
     var environment: VoiceEnvironment {
         let text = self.text
         let mode = self.mode
+        let uploads = ScriptedUploads.shared
+        if mode == .uploadFailsOnce { uploads.armFailureOnce() }
         return VoiceEnvironment(
             permissions: ScriptedVoicePermissions(grantsMicrophone: mode != .denied),
             assets: ScriptedSpeechAssets(snapshot: Self.snapshot(for: mode)),
             makeCapture: { ScriptedAudioCapture() },
-            makeEngine: { id in ScriptedSpeechEngine(id: id, script: text) },
+            makeEngine: { id in ScriptedSpeechEngine(id: id, script: text, uploads: uploads) },
             vocabulary: { [] }
         )
     }
 
     static func snapshot(for mode: Mode) -> SpeechAssetSnapshot {
         switch mode {
-        case .normal, .denied:
+        case .normal, .denied, .uploadFailsOnce:
             return SpeechAssetSnapshot(
                 transcriber: .installed,
                 dictation: .installed,
@@ -148,24 +155,67 @@ final class ScriptedAudioCapture: AudioCapturing {
     }
 }
 
-/// Streams the script word by word as volatile results; `finish()`
+/// One shared "the next upload fails" switch for every scripted engine in
+/// the process (each take makes a fresh engine).
+final class ScriptedUploads: @unchecked Sendable {
+    static let shared = ScriptedUploads()
+    private let lock = NSLock()
+    private var failuresRemaining = 0
+    private var armed = false
+
+    func armFailureOnce() {
+        lock.withLock {
+            guard !armed else { return }
+            armed = true
+            failuresRemaining = 1
+        }
+    }
+
+    func consumeFailure() -> Bool {
+        lock.withLock {
+            guard failuresRemaining > 0 else { return false }
+            failuresRemaining -= 1
+            return true
+        }
+    }
+}
+
+/// A server engine (`.openAITranscribe`) records silently and hands back
+/// the whole script only after stop, like the real upload. An on-device
+/// engine streams the script word by word as volatile results; `finish()`
 /// finalizes the whole script.
-final class ScriptedSpeechEngine: SpeechEngine, @unchecked Sendable {
+final class ScriptedSpeechEngine: RecordingTranscriptionEngine, @unchecked Sendable {
+    static let uploadFailureMessage = "Transcription failed. Try again."
+
     let id: SpeechEngineID
     private let script: String
     private let wordInterval: UInt64
+    private let uploadDelay: UInt64
+    private let uploads: ScriptedUploads
     private let lock = NSLock()
     private var continuation: AsyncThrowingStream<SpeechEvent, Error>.Continuation?
     private var feeder: Task<Void, Never>?
 
-    init(id: SpeechEngineID, script: String, wordInterval: TimeInterval = 0.18) {
+    init(
+        id: SpeechEngineID,
+        script: String,
+        wordInterval: TimeInterval = 0.18,
+        uploadDelay: TimeInterval = 0.9,
+        uploads: ScriptedUploads = ScriptedUploads()
+    ) {
         self.id = id
         self.script = script
         self.wordInterval = UInt64(wordInterval * 1_000_000_000)
+        self.uploadDelay = UInt64(uploadDelay * 1_000_000_000)
+        self.uploads = uploads
     }
 
     func start(locale: Locale, profile: VoiceProfile, vocabulary: [String]) async throws -> SpeechRun {
         let (events, continuation) = AsyncThrowingStream<SpeechEvent, Error>.makeStream()
+        guard !id.transcribesAfterRecording else {
+            lock.withLock { self.continuation = continuation }
+            return SpeechRun(format: nil, events: events)
+        }
         let words = script.split(separator: " ").map(String.init)
         let interval = wordInterval
         let feeder = Task {
@@ -184,7 +234,26 @@ final class ScriptedSpeechEngine: SpeechEngine, @unchecked Sendable {
 
     func append(_ buffer: AVAudioPCMBuffer) {}
 
+    /// The "upload": a short beat, then the whole script.
+    func transcribeRecording() async throws -> String {
+        try await Task.sleep(nanoseconds: uploadDelay)
+        if uploads.consumeFailure() {
+            throw TranscriptionError.server(status: 502, message: Self.uploadFailureMessage)
+        }
+        return script
+    }
+
     func finish() async throws {
+        if id.transcribesAfterRecording {
+            let text = try await transcribeRecording()
+            let continuation = lock.withLock { () -> AsyncThrowingStream<SpeechEvent, Error>.Continuation? in
+                defer { self.continuation = nil }
+                return self.continuation
+            }
+            continuation?.yield(.finalized(text))
+            continuation?.finish()
+            return
+        }
         let (continuation, feeder) = lock.withLock {
             defer {
                 self.continuation = nil
