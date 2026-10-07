@@ -1,3 +1,8 @@
+import {
+  assertCardCopy,
+  type CardCopyGuard,
+  CardCopyViolation,
+} from "./card_copy.ts";
 import type { CoachMode } from "./coach_persona.ts";
 
 /// Safety and voice guard for every string the coach writes (persona §9).
@@ -53,6 +58,8 @@ export type CoachCopyPolicy = {
   pushCapable: boolean;
   /// Chat "why" answers may run to 900 characters.
   longForm?: boolean;
+  /// Off only for server-grounded card text whose numbers come from data.
+  verifyFigures?: boolean;
   /// Genuine milestones may carry one exclamation point.
   milestone?: boolean;
 };
@@ -264,7 +271,9 @@ function checkText(
   if (FORMAT_PATTERNS.some((pattern) => pattern.test(text))) {
     return new CoachCopyViolation("format", field);
   }
-  const unverified = unverifiedFigures(text, policy.allowedFigures);
+  const unverified = policy.verifyFigures === false
+    ? []
+    : unverifiedFigures(text, policy.allowedFigures);
   if (unverified.length > 0) {
     return new CoachCopyViolation(
       "unverified_figure",
@@ -376,3 +385,21 @@ export function coachMemorySafetyViolation(text: string): CoachCopyCode | null {
   if (URL_PATTERN.test(text)) return "url";
   return null;
 }
+
+/// The one voice guard for card text written by the Train / Body / Nearby
+/// workloads (plan intro, physique note, snack headline): their structural
+/// card rules (length, body-fat guesses, body shaming) plus every coach copy
+/// rule. Numbers on cards are server-grounded, so figures aren't re-verified.
+export const coachCardCopyGuard: CardCopyGuard = (text, field, options) => {
+  const value = assertCardCopy(text, field, options);
+  const violation = checkText(value, field, {
+    mode: "snack_recommendation",
+    profanity: options.profanity ?? "off",
+    emojiAllowed: false,
+    allowedFigures: [],
+    pushCapable: false,
+    verifyFigures: false,
+  }, false);
+  if (violation) throw new CardCopyViolation(violation.code, field);
+  return value;
+};

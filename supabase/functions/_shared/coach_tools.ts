@@ -13,7 +13,7 @@ import {
   useImperial,
   weightTrendOf,
 } from "./coach_context.ts";
-import { assertCoachText } from "./coach_copy.ts";
+import { assertCoachText, coachCardCopyGuard } from "./coach_copy.ts";
 import type { CoachJobRequest } from "./coach_dispatch.ts";
 import {
   applyGoalSnapshot,
@@ -39,8 +39,11 @@ import {
 } from "./coach_policy.ts";
 import type { CoachMessageInput } from "./coach_rpc.ts";
 import { createTextEntry } from "./entry_capture.ts";
-import type { LocationContext, NearbyStore } from "./nearby_food.ts";
-import { researchNearbyFood } from "./nearby_food.ts";
+import {
+  type LocationContext,
+  locationContextFromDeviceSnapshot,
+  researchNearbyFood,
+} from "./nearby_food.ts";
 
 /// The coach's tools in chat. Each is strict (every field required, null
 /// for "not said"), validated again here, and grounded: numbers on cards
@@ -49,7 +52,7 @@ import { researchNearbyFood } from "./nearby_food.ts";
 export type CoachToolServices = {
   createActivityFromText: typeof createActivityFromText;
   researchNearbyFood: typeof researchNearbyFood;
-  dispatchCoachJob: (job: CoachJobRequest) => Promise<void>;
+  dispatchCoachJob: (job: CoachJobRequest) => Promise<boolean | void>;
   createTextEntry: typeof createTextEntry;
   mergeBioDictation: typeof mergeBioDictation;
 };
@@ -676,39 +679,20 @@ async function logWeight(
   return ok(result);
 }
 
-function locationFromDevice(environment: CoachToolEnvironment): LocationContext | null {
-  const device = environment.context.device;
-  if (!device || device.nearby.length === 0) return null;
-  const stores = device.nearby.filter((item): item is NearbyStore =>
-    Boolean(item) && typeof item === "object" &&
-    typeof (item as NearbyStore).name === "string" &&
-    typeof (item as NearbyStore).ref === "string"
-  ).slice(0, 12);
-  if (stores.length === 0) return null;
-  return {
-    captured_at: device.nearby_captured_at ?? environment.now.toISOString(),
-    quality: "approximate",
-    locality: {
-      city: device.city,
-      region: device.region,
-      country: device.country_code,
-      timezone: device.timezone ?? environment.timezone,
-    },
-    stores,
-  };
-}
-
 async function findNearbyFood(
   environment: CoachToolEnvironment,
   raw: Record<string, unknown>,
 ): Promise<CoachToolResult> {
-  if (!environment.context.settings.locationRecs) {
-    return ok({ status: "disabled", note: "Nearby recommendations are off in settings." });
-  }
-  const location = environment.location ?? locationFromDevice(environment);
-  if (!location || location.stores.length === 0) {
-    return ok({ status: "no_location", note: "No recent nearby places from his phone." });
-  }
+  // Without the nearby opt-in (or a fresh store list) the research step
+  // answers from his kitchen instead of a store.
+  const device = environment.context.device;
+  const location = environment.context.settings.locationRecs
+    ? environment.location ??
+      locationContextFromDeviceSnapshot(
+        device ? { ...device } : null,
+        environment.now.getTime(),
+      )
+    : null;
   const remaining = environment.context.remaining;
   const payload = await environment.services.researchNearbyFood(
     environment.admin,
@@ -725,7 +709,11 @@ async function findNearbyFood(
         carbs_g: Math.max(0, remaining.carbs_g),
         fat_g: Math.max(0, remaining.fat_g),
       },
+      requestId: await deterministicUuid(
+        `${environment.clientRequestId}:nearby:${optionalStr(raw.query, 200) ?? ""}`,
+      ),
     },
+    { client: environment.client, copyGuard: coachCardCopyGuard },
   );
   environment.facts.push(payload);
   let headline = "A few options nearby.";
@@ -747,6 +735,7 @@ async function findNearbyFood(
   });
   return ok({
     status: "ok",
+    location: location?.stores.length ? "nearby_stores" : "home_kitchen",
     verdict: payload.verdict,
     options: payload.options.map((option) => ({
       store_name: option.store_name,
@@ -777,7 +766,7 @@ async function draftTrainingPlanTool(
   environment: CoachToolEnvironment,
   raw: Record<string, unknown>,
 ): Promise<CoachToolResult> {
-  await environment.services.dispatchCoachJob({
+  const accepted = await environment.services.dispatchCoachJob({
     job: "training_plan",
     user_id: environment.userId,
     payload: {
@@ -785,6 +774,7 @@ async function draftTrainingPlanTool(
       reason: environment.context.trainingPlan ? "user_request" : "first_plan",
     },
   });
+  if (accepted === false) return fail("Couldn't start the plan right now. Try again in a bit.");
   return ok({ status: "started", note: "The plan arrives as a card in a minute or two." });
 }
 
@@ -798,11 +788,12 @@ async function requestPhysiqueReview(
   const day = raw.local_day === null || raw.local_day === undefined
     ? environment.localDay
     : dayInput(environment, raw.local_day);
-  await environment.services.dispatchCoachJob({
+  const accepted = await environment.services.dispatchCoachJob({
     job: "body_review",
     user_id: environment.userId,
     payload: { anchor_day: day, kind: "on_demand" },
   });
+  if (accepted === false) return fail("Couldn't queue the review right now. Try again in a bit.");
   return ok({ status: "started", note: "Feedback arrives as a card shortly." });
 }
 

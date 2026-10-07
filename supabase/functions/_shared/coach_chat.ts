@@ -68,8 +68,11 @@ import { addUsage, emptyUsage, recordCoachUsage } from "./coach_usage.ts";
 import { createTextEntry } from "./entry_capture.ts";
 import { HttpError } from "./errors.ts";
 import { CORS_HEADERS, isUuid, withTimeout } from "./http.ts";
-import type { LocationContext, NearbyStore } from "./nearby_food.ts";
-import { researchNearbyFood } from "./nearby_food.ts";
+import {
+  type LocationContext,
+  researchNearbyFood,
+  sanitizeLocationContext,
+} from "./nearby_food.ts";
 import { modelQuotaHttpError } from "./quotas.ts";
 
 /// coach_chat: a texting conversation with the coach. The user message is
@@ -191,53 +194,11 @@ function shortText(value: unknown, max: number): string | null {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
 }
 
-/// LocationContext arrives from the phone; it is rebuilt field by field so no
-/// coordinate (or anything else unexpected) can ride along.
+/// LocationContext arrives from the phone; lane B3's sanitizer rebuilds it
+/// field by field so no coordinate (or anything unexpected) rides along.
 export function parseLocationContext(value: unknown): LocationContext | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const object = value as Record<string, unknown>;
-  const locality = object.locality && typeof object.locality === "object"
-    ? object.locality as Record<string, unknown>
-    : {};
-  const timezone = shortText(locality.timezone, 64);
-  if (!timezone || !isValidTimezone(timezone)) return null;
-  const quality = object.quality === "precise" || object.quality === "approximate"
-    ? object.quality
-    : "none";
-  const stores = (Array.isArray(object.stores) ? object.stores : []).flatMap(
-    (item): NearbyStore[] => {
-      if (!item || typeof item !== "object") return [];
-      const store = item as Record<string, unknown>;
-      const ref = shortText(store.ref, 80);
-      const name = shortText(store.name, 120);
-      const distance = finiteNumber(store.distance_m);
-      const walk = finiteNumber(store.walk_minutes);
-      if (!ref || !name || distance === null || walk === null) return [];
-      return [{
-        ref,
-        name,
-        category: shortText(store.category, 40) ?? "other",
-        distance_m: Math.max(0, Math.round(distance)),
-        walk_minutes: Math.max(0, Math.round(walk)),
-        walk_minutes_source: store.walk_minutes_source === "mapkit_eta"
-          ? "mapkit_eta"
-          : "estimate",
-        address_short: shortText(store.address_short, 120),
-      }];
-    },
-  ).slice(0, 12);
-  return {
-    captured_at: shortText(object.captured_at, 40) ?? new Date().toISOString(),
-    quality,
-    locality: {
-      neighborhood: shortText(locality.neighborhood, 120),
-      city: shortText(locality.city, 120),
-      region: shortText(locality.region, 120),
-      country: shortText(locality.country, 120),
-      timezone,
-    },
-    stores,
-  };
+  if (!value || typeof value !== "object") return null;
+  return sanitizeLocationContext(value);
 }
 
 const SPEECH_ENGINES = new Set([
