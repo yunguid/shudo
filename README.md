@@ -1,13 +1,17 @@
 # Shudo
 
-Shudo is a lean, voice-first nutrition log for iPhone. Record what you ate,
-optionally add photos or text, and get a streamed meal breakdown with calories
-and macros. Pick any day, correct a meal later, adjust goals, and review progress
-without turning logging into a questionnaire.
+Shudo is a coach in your pocket for iPhone. Shudo — an old-school, witty strength
+coach — texts you through the day inside the app (and on the lock screen), reacts
+to everything you log, knows your bio and goals, finds snacks near you, builds and
+tracks your training plan, and keeps a daily physique-photo and weight log.
+Meal logging stays voice-first: say or snap what you ate and get a streamed
+breakdown with calories and macros.
 
-The initial release is intentionally small: one excellent capture flow, a clear
-daily view, editable targets, a 12-week adherence heatmap, and one useful weekly
-summary.
+The app has three tabs — **Today** (the day's coach thread under a pinned macro
+header, with meals, workouts and check-ins inline), **Body** (daily check-in,
+bulk meter, weight trend, physique log and compare, weekly recaps) and **Train**
+(training plan, today's session, PRs) — plus one "Tell Shudo anything" capture
+bar on every tab.
 
 ## Repository
 
@@ -45,19 +49,26 @@ the short onboarding flow.
 
 - Supabase Auth, PostgreSQL, private Storage, RLS, and Edge Functions provide the
   backend. The active hosted project is `shudo-2`.
-- OpenAI `gpt-4o-transcribe` transcribes voice. `gpt-6.1-sol` produces structured
-  meal estimates, onboarding proposals, and weekly summaries with `store: false`.
-  All five analysis workloads use low reasoning and a 32,000-token output ceiling
-  shared by reasoning and visible output; schemas, concise-output instructions,
-  and request timeouts remain in force.
-- OpenAI and Supabase service credentials stay server-side. The apps contain only
-  the public Supabase project URL and publishable key.
+- Every AI workload runs on Anthropic through one shared client
+  (`supabase/functions/_shared/claude.ts`): Claude Sonnet 5.5 for meal and
+  workout analysis, chat, checkpoint texts and nearby-food research; Claude Opus
+  5.5 for the weekly review, training plans and physique reviews; Claude Fable 5.1
+  for the nightly day digest and memory upkeep. Structured outputs are schema
+  constrained; web-search calls finish through a strict submit tool.
+- Voice is transcribed on the iPhone (iOS 26 SpeechAnalyzer); audio never leaves
+  the device and the server rejects uploaded audio.
+- The coach texts as local notifications scheduled from server-written
+  `coach_messages`; daily server work rides the existing daily cron through
+  `generate_weekly_summaries` → `coach_tick`.
+- Anthropic and Supabase service credentials stay server-side. The apps contain
+  only the public Supabase project URL and publishable key.
 - Every user-owned row is isolated by RLS. Server-only RPCs are revoked from
   browser roles and invoked by authenticated Edge Functions.
 - Capture, onboarding, correction, and weekly work use durable claims, leases,
   idempotency keys, bounded inputs, per-user quotas, and fenced retries.
-- Raw audio is detached and queued for deletion after transcription. Photos and
-  meal records remain until their meal or account is deleted.
+- Legacy raw audio is detached and queued for deletion. Photos and meal records
+  remain until their meal or account is deleted; physique photos stay in a private
+  bucket and are only sent to Claude when physique review is switched on.
 - Account deletion removes the user's private Storage objects first, then
   deletes the Auth user so owned database rows cascade in one transaction.
 
@@ -85,7 +96,7 @@ npm run dev
 ```
 
 Populate only the two public values in `.env.local` for browser development.
-Never place an OpenAI key, service-role key, OAuth secret, or maintenance secret
+Never place an Anthropic key, service-role key, OAuth secret, or maintenance secret
 in a `NEXT_PUBLIC_` variable.
 
 Native:
@@ -105,7 +116,7 @@ file and receive standard Supabase URL/keys from the local runtime.
 Supabase Edge Function secrets:
 
 ```dotenv
-OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
 SHUDO_CLEANUP_SECRET=...
 SHUDO_WEEKLY_SECRET=...
 ```
@@ -240,7 +251,8 @@ Vercel calls `/api/cron/keepalive` once daily. The route:
 The external request also keeps a legitimately used Supabase Free project from
 sitting completely idle. It is operational maintenance, not a guarantee against
 provider policy changes. The initial app should remain within the Free plan for
-a small friend group, but usage and OpenAI spend still need monitoring.
+a small friend group, but usage and Anthropic spend still need monitoring (`private.ai_provider_calls`
+records every call's tokens and cost).
 
 ## Release verification
 
