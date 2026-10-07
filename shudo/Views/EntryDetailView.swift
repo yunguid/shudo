@@ -26,6 +26,10 @@ struct EntryDetailView: View {
     /// runs the update and shows its progress on the meal card; this screen
     /// pops immediately after handing off.
     private let onCorrectionSubmit: (EntryCorrectionSubmission) -> Void
+    /// Re-logs this meal for today from its description text
+    /// (`LogAgainPolicy`). The owner runs the normal optimistic capture
+    /// path; this screen pops right after handing off. Hidden when nil.
+    private let onLogAgain: ((String) -> Void)?
     private let loadsRemotely: Bool
     /// What the timeline already knows about this meal (title, macros,
     /// photo). Rendered immediately so navigation never blocks on the
@@ -35,28 +39,40 @@ struct EntryDetailView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var expandedItemIndices: Set<Int> = []
-    @State private var isShowingCorrection = false
+    @State private var correctionRequest: CorrectionRequest?
+    @State private var pendingLogAgainText: String?
+
+    /// One presentation of the correction sheet; "Answer" prefills the note
+    /// with the estimator's question.
+    private struct CorrectionRequest: Identifiable {
+        let id = UUID()
+        var initialNote = ""
+    }
 
     init(
         entryId: UUID,
         seed: Entry? = nil,
-        onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void
+        onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void,
+        onLogAgain: ((String) -> Void)? = nil
     ) {
         self.entryId = entryId
         self.seed = seed
         loadsRemotely = true
         self.onCorrectionSubmit = onCorrectionSubmit
+        self.onLogAgain = onLogAgain
     }
 
     init(
         entryId: UUID,
         previewDetail: SupabaseService.EntryDetail,
-        onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void = { _ in }
+        onCorrectionSubmit: @escaping (EntryCorrectionSubmission) -> Void = { _ in },
+        onLogAgain: ((String) -> Void)? = nil
     ) {
         self.entryId = entryId
         seed = nil
         loadsRemotely = false
         self.onCorrectionSubmit = onCorrectionSubmit
+        self.onLogAgain = onLogAgain
         _detail = State(initialValue: previewDetail)
         _isLoading = State(initialValue: false)
     }
@@ -75,7 +91,11 @@ struct EntryDetailView: View {
                             titleHeader(detail.title, createdAt: detail.createdAt)
                             macroSummary(detail, research: research)
 
-                            correctionAction
+                            if let question = ClarificationPolicy.question(in: detail.analysisNotes) {
+                                clarificationRow(question)
+                            }
+
+                            mealActions(logAgainText: LogAgainPolicy.text(for: detail))
 
                             if !detail.items.isEmpty {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -138,7 +158,10 @@ struct EntryDetailView: View {
                             photo(seed.imageURL)
                             titleHeader(seed.summary, createdAt: seed.createdAt)
                             seedMacroSummary(seed)
-                            correctionAction
+                            if let question = ClarificationPolicy.question(in: seed.analysisNotes) {
+                                clarificationRow(question)
+                            }
+                            mealActions(logAgainText: nil)
                             if isLoading {
                                 breakdownSkeleton
                             } else {
@@ -167,15 +190,126 @@ struct EntryDetailView: View {
             guard loadsRemotely else { return }
             await load()
         }
-        .sheet(isPresented: $isShowingCorrection) {
+        .sheet(item: $correctionRequest) { request in
             EntryCorrectionSheet(
                 entryTitle: detail?.title ?? seed?.summary ?? "this meal",
+                initialNote: request.initialNote,
                 onSubmit: onCorrectionSubmit,
                 onAccepted: returnToSelectedDay
             )
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(Design.Radius.sheet)
         }
+        .confirmationDialog(
+            "Log this meal again for today?",
+            isPresented: Binding(
+                get: { pendingLogAgainText != nil },
+                set: { if !$0 { pendingLogAgainText = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingLogAgainText
+        ) { text in
+            Button("Log again") { logAgain(text) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Shudo adds it to today and estimates it from the original description.")
+        }
+    }
+
+    /// The estimator's one follow-up question, lifted out of the notes.
+    /// "Answer" opens the normal correction sheet (VM-owned submission)
+    /// with "Q: … A: " already in the note.
+    private func clarificationRow(_ question: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.bubble.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Design.Color.ember)
+                Text("Shudo needs one detail")
+                    .eyebrowStyle(Design.Color.ember)
+            }
+            .accessibilityElement(children: .combine)
+            Text(question)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Design.Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                correctionRequest = CorrectionRequest(
+                    initialNote: ClarificationPolicy.answerPrefill(for: question)
+                )
+            } label: {
+                Text("Answer")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Design.Color.onEmber)
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 40)
+                    .background(Design.Color.emberFill, in: Capsule())
+                    .contentShape(Capsule().inset(by: -4))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens Update meal with this question filled in")
+            .accessibilityIdentifier("entryDetail.clarification.answer")
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Design.Color.ember.opacity(0.10),
+            in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
+                .stroke(Design.Color.ember.opacity(0.45), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("entryDetail.clarification")
+    }
+
+    /// "Update meal", plus "Log again" when the owner wired it and the meal
+    /// has text to re-log.
+    @ViewBuilder
+    private func mealActions(logAgainText: String?) -> some View {
+        if let logAgainText, onLogAgain != nil {
+            if EntryDetailLayoutPolicy.stacksMacroCards(for: dynamicTypeSize) {
+                VStack(spacing: 10) {
+                    correctionAction
+                    logAgainButton(logAgainText, fillsWidth: true)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    correctionAction
+                    logAgainButton(logAgainText, fillsWidth: false)
+                }
+            }
+        } else {
+            correctionAction
+        }
+    }
+
+    private func logAgainButton(_ text: String, fillsWidth: Bool) -> some View {
+        Button { pendingLogAgainText = text } label: {
+            Label("Log again", systemImage: "arrow.counterclockwise")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.textPrimary)
+                .lineLimit(1)
+                .fixedSize(horizontal: !fillsWidth, vertical: false)
+                .frame(maxWidth: fillsWidth ? .infinity : nil)
+                .padding(.horizontal, 18)
+                .frame(height: 50)
+                .background(Design.Color.surface2, in: Capsule())
+                .overlay(Capsule().stroke(Design.Color.strokeStrong, lineWidth: Design.Stroke.hairline))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Logs this meal again for today")
+        .accessibilityIdentifier("entryDetail.logAgain")
+    }
+
+    private func logAgain(_ text: String) {
+        pendingLogAgainText = nil
+        guard let onLogAgain else { return }
+        onLogAgain(text)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        UIAccessibility.post(notification: .announcement, argument: "Logging this meal again for today")
+        returnToSelectedDay()
     }
 
     private func titleHeader(_ title: String, createdAt: Date) -> some View {
@@ -608,7 +742,7 @@ struct EntryDetailView: View {
     }
 
     private var correctionAction: some View {
-        Button { isShowingCorrection = true } label: {
+        Button { correctionRequest = CorrectionRequest() } label: {
             Text("Update meal")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
@@ -902,14 +1036,35 @@ private struct EntryCorrectionSheet: View {
     @State private var uploadEncodeTask: Task<Data?, Never>?
 
     let entryTitle: String
+    /// Prefilled note ("Q: … A: " from a clarification). Left untouched it
+    /// counts as empty, so a bare question is never sent.
+    let initialNote: String
     let onSubmit: (EntryCorrectionSubmission) -> Void
     let onAccepted: () -> Void
 
+    init(
+        entryTitle: String,
+        initialNote: String = "",
+        onSubmit: @escaping (EntryCorrectionSubmission) -> Void,
+        onAccepted: @escaping () -> Void
+    ) {
+        self.entryTitle = entryTitle
+        self.initialNote = initialNote
+        self.onSubmit = onSubmit
+        self.onAccepted = onAccepted
+        _context = State(initialValue: initialNote)
+    }
+
     private var voice: VoiceTranscriber { voiceHolder.value }
+
+    /// The note minus an untouched clarification prefill.
+    private var submittableContext: String {
+        ClarificationPolicy.submittableText(context, prefill: initialNote)
+    }
 
     private var canSubmit: Bool {
         EntryCorrectionPolicy.canSubmit(
-            text: context,
+            text: submittableContext,
             hasLiveDictation: hasLiveDictation,
             hasImage: !images.isEmpty,
             isPreparingImage: isPreparingImage,
@@ -932,7 +1087,9 @@ private struct EntryCorrectionSheet: View {
                             Text("What changed?")
                                 .font(.title2.weight(.bold))
                                 .foregroundStyle(Design.Color.ink)
-                            Text("Tell Shudo what to adjust for \(entryTitle).")
+                            Text(initialNote.isEmpty
+                                 ? "Tell Shudo what to adjust for \(entryTitle)."
+                                 : "Answer after “A:” by voice or typing, and Shudo updates \(entryTitle).")
                                 .font(.subheadline)
                                 .foregroundStyle(Design.Color.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1112,7 +1269,10 @@ private struct EntryCorrectionSheet: View {
     }
 
     private var updatesEstimate: Bool {
-        EntryCorrectionPolicy.usesPhotoForEstimate(text: context, hasLiveDictation: hasLiveDictation)
+        EntryCorrectionPolicy.usesPhotoForEstimate(
+            text: submittableContext,
+            hasLiveDictation: hasLiveDictation
+        )
     }
 
     private var photoAttachmentSection: some View {
@@ -1379,7 +1539,9 @@ private struct EntryCorrectionSheet: View {
             } else if let take = voice.collectReadyTake() {
                 appendTake(take)
             }
-            let normalized = EntryCorrectionPolicy.normalized(context)
+            let normalized = EntryCorrectionPolicy.normalized(
+                ClarificationPolicy.submittableText(context, prefill: initialNote)
+            )
             let text = normalized.isEmpty ? nil : normalized
             guard text != nil || !selectedImages.isEmpty else {
                 hasSubmitted = false
@@ -1418,7 +1580,7 @@ private struct EntryCorrectionSheet: View {
 
     private func resetCorrection() {
         voice.cancel()
-        context = ""
+        context = initialNote
         lastDictation = nil
         dictatedTakeCount = 0
         dictatedEngine = nil
