@@ -130,7 +130,12 @@ final class shudoUITests: XCTestCase {
     func testStandaloneQuickVoiceStillAutoStarts() throws {
         let app = launchPreview(scriptedSpeech: "overnight oats with whey")
 
-        app.buttons["Quick voice meal"].tap()
+        // 2.0: the capture bar's "+" opens the composer; holding it offers
+        // the quick voice meal (mic warm-up still starts at the tap).
+        app.buttons["Log meal"].press(forDuration: 1.0)
+        let quickVoice = app.buttons["Quick voice meal"]
+        XCTAssertTrue(quickVoice.waitForExistence(timeout: 3))
+        quickVoice.tap()
 
         let activeRecording = app.buttons["Voice recording control"]
         XCTAssertTrue(waitForRecording(activeRecording, timeout: 15))
@@ -282,16 +287,17 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(recordingControl.waitForExistence(timeout: 5))
     }
 
-    /// The combined notifications toggle must respond to a tap, request
-    /// authorization, and stick. Pins both the control's hittability (fill
-    /// overlays have silently eaten taps before) and the enable flow.
+    /// The coach toggle (Settings → Coach, which replaced the 1.x daily
+    /// nudges) must respond to a tap, request notification authorization,
+    /// and stick. Pins both the control's hittability (fill overlays have
+    /// silently eaten taps before) and the enable flow.
     @MainActor
-    func testNotificationsToggleEnablesAndPersists() throws {
+    func testCoachToggleEnablesAndPersists() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-shudoPolishPreview", "settings"]
         app.launch()
 
-        let toggle = app.switches.firstMatch
+        let toggle = app.switches["settings.coach.enabled"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         while !toggle.isHittable {
             app.swipeUp()

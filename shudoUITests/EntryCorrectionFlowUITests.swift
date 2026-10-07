@@ -36,12 +36,22 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         ).firstMatch
     }
 
+    /// Today's thread opens at the bottom (the evening); lunch is further
+    /// up, so scroll the thread until the meal receipt is on screen.
+    private func openLunch(in app: XCUIApplication) {
+        let mealCard = app.staticTexts["Chicken rice bowl"].firstMatch
+        XCTAssertTrue(mealCard.waitForExistence(timeout: 8))
+        for _ in 0..<8 where !mealCard.isHittable {
+            app.swipeDown()
+        }
+        XCTAssertTrue(mealCard.isHittable)
+        mealCard.tap()
+    }
+
     /// Walks from the timeline into the correction sheet and submits the
     /// given typed correction.
     private func submitCorrection(_ text: String, in app: XCUIApplication) {
-        let mealCard = app.staticTexts["Chicken rice bowl"].firstMatch
-        XCTAssertTrue(mealCard.waitForExistence(timeout: 5))
-        mealCard.tap()
+        openLunch(in: app)
 
         let updateMeal = app.buttons["Update meal"].firstMatch
         XCTAssertTrue(updateMeal.waitForExistence(timeout: 5))
@@ -64,9 +74,7 @@ final class EntryCorrectionFlowUITests: XCTestCase {
     @MainActor
     func testExistingMealUpdateOffersPhotoLibraryAndCameraWithoutChangingTheDraft() throws {
         let app = launchPreviewApp()
-        let mealCard = app.staticTexts["Chicken rice bowl"].firstMatch
-        XCTAssertTrue(mealCard.waitForExistence(timeout: 5))
-        mealCard.tap()
+        openLunch(in: app)
 
         let updateMeal = app.buttons["Update meal"].firstMatch
         XCTAssertTrue(updateMeal.waitForExistence(timeout: 5))
