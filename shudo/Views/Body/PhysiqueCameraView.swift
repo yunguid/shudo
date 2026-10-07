@@ -12,12 +12,12 @@ struct PhysiqueCapture {
 /// Custom physique camera: back camera by default (prop the phone up across
 /// the room), 1x wide lens, 4:3, flash off. Yesterday's photo floats over
 /// the preview as a 30% ghost so the pose and distance match; a 3/5/10 s
-/// timer counts down out loud; Vision watches the stance and says what to
-/// fix. The Simulator has no camera, so DEBUG builds shoot a fixture image.
+/// timer (tap to cycle) counts down out loud; Vision watches the stance and
+/// says what to fix. The Simulator has no camera, so DEBUG builds shoot a
+/// fixture image.
 struct PhysiqueCameraView: View {
     let ghost: UIImage?
     let onCapture: (PhysiqueCapture) -> Void
-    var onSkipPhoto: (() -> Void)? = nil
     let onCancel: () -> Void
 
     @StateObject private var camera = BodyCameraController()
@@ -68,6 +68,7 @@ struct PhysiqueCameraView: View {
         HStack(spacing: 10) {
             circleButton("xmark", label: "Close camera") { onCancel() }
             Spacer()
+            timerButton
             if ghost != nil {
                 circleButton(showsGhost ? "person.fill.viewfinder" : "person.crop.rectangle", label: showsGhost ? "Hide ghost" : "Show ghost", active: showsGhost) {
                     showsGhost.toggle()
@@ -85,6 +86,31 @@ struct PhysiqueCameraView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+
+    /// One tap cycles 3 → 5 → 10 s; the choice sticks across mornings.
+    private var timerButton: some View {
+        Button {
+            let all = BodyCameraTimer.allCases
+            let next = all[((all.firstIndex(of: timer) ?? 0) + 1) % all.count]
+            timerSeconds = next.rawValue
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "timer").font(.footnote.weight(.bold))
+                Text("\(timer.rawValue)s")
+                    .font(Design.Typeface.numeral(.subheadline, weight: .bold))
+                    .contentTransition(.numericText(value: Double(timer.rawValue)))
+            }
+            .foregroundStyle(Design.Color.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.4), interactive: true)
+        }
+        .buttonStyle(.plain)
+        .disabled(countdown != nil)
+        .sensoryFeedback(.selection, trigger: timerSeconds)
+        .accessibilityLabel("Timer, \(timer.rawValue) seconds")
+        .accessibilityHint("Changes the countdown")
     }
 
     private func circleButton(_ symbol: String, label: String, active: Bool = false, action: @escaping () -> Void) -> some View {
@@ -210,11 +236,10 @@ struct PhysiqueCameraView: View {
     }
 
     private var controls: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             if let errorMessage {
                 Text(errorMessage).font(.footnote).foregroundStyle(Design.Color.danger)
             }
-            timerPicker
             HStack {
                 PhotosPicker(selection: $libraryItem, matching: .images) {
                     Image(systemName: "photo.on.rectangle")
@@ -228,46 +253,11 @@ struct PhysiqueCameraView: View {
                 Spacer()
                 shutter
                 Spacer()
-                if let onSkipPhoto {
-                    Button(action: onSkipPhoto) {
-                        VStack(spacing: 2) {
-                            Image(systemName: "scalemass.fill").font(.body.weight(.semibold))
-                            Text("Weight").font(Design.Typeface.meta)
-                        }
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .frame(width: 52, height: 52)
-                        .background(Design.Color.surface2, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Skip the photo, log weight only")
-                    .disabled(countdown != nil || isCapturing)
-                } else {
-                    Color.clear.frame(width: 52, height: 52)
-                }
+                Color.clear.frame(width: 52, height: 52)
             }
             .padding(.horizontal, 28)
         }
         .padding(.bottom, 18)
-    }
-
-    private var timerPicker: some View {
-        HStack(spacing: 6) {
-            ForEach(BodyCameraTimer.allCases) { option in
-                Button {
-                    timerSeconds = option.rawValue
-                } label: {
-                    Text("\(option.rawValue)s")
-                        .font(Design.Typeface.numeral(.subheadline, weight: .bold))
-                        .foregroundStyle(option == timer ? Design.Color.onEmber : Design.Color.textPrimary)
-                        .frame(width: 52, height: 32)
-                        .background(option == timer ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.surface2), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(option.rawValue) second timer")
-                .accessibilityAddTraits(option == timer ? .isSelected : [])
-            }
-        }
-        .disabled(countdown != nil)
     }
 
     private var shutter: some View {
@@ -280,9 +270,9 @@ struct PhysiqueCameraView: View {
                     RoundedRectangle(cornerRadius: 6).fill(Design.Color.danger).frame(width: 28, height: 28)
                 } else {
                     Circle().fill(Design.Color.emberFill).frame(width: 64, height: 64)
-                    Image(systemName: "timer").font(.title3.weight(.bold)).foregroundStyle(Design.Color.onEmber)
                 }
             }
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .disabled(isCapturing || !canShoot)

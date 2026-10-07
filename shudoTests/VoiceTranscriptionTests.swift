@@ -787,49 +787,6 @@ struct VoiceTranscriberTests {
         #expect(voice.collectReadyTake()?.text == "172 pounds")
     }
 
-    /// The weigh-in sheet (BodyCheckInFlow) — replaces WeightVoiceCapture:
-    /// listens on the `.weighIn` profile and ends the take by itself once a
-    /// plausible weight has been heard and held.
-    @Test func theWeighInEndsByItselfOnceAPlausibleWeightHolds() async {
-        let harness = VoiceHarness()
-        let voice = BodyCheckInFlow.makeVoice(
-            units: "imperial",
-            environment: harness.environment
-        )
-        #expect(voice.profile == .weighIn)
-        #expect(await voice.start())
-        harness.transcriberEngine.emit(.volatile("I weigh"))
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        #expect(voice.phase == .listening)
-        // "4" alone is not a plausible weight in pounds: keep listening.
-        harness.transcriberEngine.emit(.volatile("4"))
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        #expect(voice.phase == .listening)
-        harness.transcriberEngine.emit(.volatile("one eighty two point four is 182 point 4"))
-        #expect(await eventually(timeout: 5) { voice.phase == .ready })
-        let take = voice.collectReadyTake()
-        #expect(take?.engine == .speechTranscriber)
-        #expect(
-            take.flatMap { WeightUtterancePolicy.parsedWeight(transcript: $0.text, units: "imperial") }
-                == 182.4
-        )
-        #expect(voice.phase == .idle)
-    }
-
-    @Test func theWeighInAutoStopConditionNeedsAPlausibleWeightInTheProfileUnits() {
-        func heard(_ text: String, _ units: String) -> Bool {
-            var transcript = LiveTranscript(characterLimit: VoiceProfile.weighIn.maximumCharacters)
-            transcript.apply(.volatile(text))
-            return BodyCheckInFlow.autoStopCondition(units: units)(transcript)
-        }
-        #expect(heard("182.4", "imperial"))
-        #expect(heard("one eighty two point four… 182 point 4", "imperial"))
-        #expect(heard("82,6", "metric"))
-        #expect(!heard("I weigh", "imperial"))
-        #expect(!heard("5", "imperial"))
-        #expect(!heard("1000", "metric"))
-    }
-
     @Test func aRecognizerErrorBeforeAnyWordsIsAFailureNotSilence() async {
         struct RecognizerBroke: Error {}
         let harness = VoiceHarness()
