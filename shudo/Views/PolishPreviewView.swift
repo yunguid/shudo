@@ -39,7 +39,7 @@ private final class PolishPreviewCorrectionService: EntryReanalysisServing {
     func correctEntry(
         id: UUID,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         usesImageForEstimate: Bool,
         clientRequestId: UUID

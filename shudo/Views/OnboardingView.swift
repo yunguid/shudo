@@ -21,7 +21,14 @@ struct OnboardingView: View {
     private let initialProfile: Profile?
     private let onCompleted: (Profile) -> Void
 
-    @StateObject private var audio = AudioRecorder()
+    /// Held unobserved: the voice card observes it, and this screen mirrors
+    /// only what it needs, so meter and transcript updates never re-render
+    /// the description editor.
+    @StateObject private var voiceHolder = UnobservedHolder(VoiceTranscriber(profile: .onboarding))
+    @State private var hasLiveDictation = false
+    @State private var lastDictation: DictationMergePolicy.AppendRecord?
+    @State private var dictatedTakeCount = 0
+    @State private var dictatedEngine: SpeechEngineID?
     @State private var context = ""
     @State private var clientRequestID = UUID()
     @State private var proposalResult: OnboardingProposalResult?
@@ -63,8 +70,12 @@ struct OnboardingView: View {
         .safeAreaInset(edge: .bottom) {
             bottomAction
         }
+        .onReceive(voice.$transcript) { transcript in
+            let hasText = !transcript.isEmpty
+            if hasLiveDictation != hasText { hasLiveDictation = hasText }
+        }
         .onDisappear {
-            audio.discardRecording()
+            voice.cancel()
         }
     }
 
@@ -127,92 +138,20 @@ struct OnboardingView: View {
         }
     }
 
+    private var voice: VoiceTranscriber { voiceHolder.value }
+
     private var voiceCard: some View {
-        VStack(spacing: 18) {
-            OnboardingAudioMeter(levels: audio.meterLevels, isActive: audio.isRecording)
-                .frame(height: 66)
-
-            VStack(spacing: 4) {
-                Text(voiceHeadline)
-                    .font(
-                        audio.isRecording
-                            ? .system(size: 25, weight: .medium)
-                            : .headline
-                    )
-                    .foregroundStyle(Design.Color.ink)
-                    .monospacedDigit()
-
-                Text(voiceDetail)
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.muted)
-                    .monospacedDigit()
-            }
-
-            HStack(spacing: 16) {
-                if hasAudio && !audio.isRecording {
-                    Button {
-                        audio.discardRecording()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Design.Color.muted)
-                            .frame(width: 48, height: 48)
-                            .background(Design.Color.glassFill, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Discard voice setup")
-                }
-
-                Button {
-                    Task { await toggleRecording() }
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                audio.isRecording
-                                    ? AnyShapeStyle(Design.Color.danger)
-                                    : AnyShapeStyle(
-                                        LinearGradient(
-                                            colors: [
-                                                Design.Color.accentPrimary,
-                                                Design.Color.accentSecondary
-                                            ],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                            )
-                            .frame(width: 76, height: 76)
-                            .shadow(
-                                color: Design.Color.accentPrimary.opacity(
-                                    audio.isRecording ? 0.12 : 0.28
-                                ),
-                                radius: 24
-                            )
-
-                        if audio.isStartingRecording {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: audio.isRecording ? "stop.fill" : "waveform")
-                                .font(.title2.weight(.semibold))
-                                .foregroundStyle(.white)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(isPreparing)
-                .accessibilityLabel(
-                    audio.isStartingRecording
-                        ? "Starting the microphone"
-                        : audio.isRecording ? "Stop recording" : "Start recording"
-                )
-            }
-        }
-        .padding(22)
-        .background(
-            Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
+        VoiceCaptureCard(
+            voice: voice,
+            style: .onboarding,
+            isDisabled: isPreparing,
+            canUndo: !isPreparing && DictationMergePolicy.canUndo(lastDictation, in: context),
+            onUndo: undoLastDictation,
+            onWillStart: {
+                errorMessage = nil
+                focusedField = nil
+            },
+            onTake: appendTake
         )
     }
 
@@ -596,26 +535,36 @@ struct OnboardingView: View {
         }
     }
 
-    private var hasAudio: Bool {
-        audio.recordedFileURL != nil
-    }
-
     private var canPrepare: Bool {
         OnboardingCapturePolicy.canSubmit(
             text: context,
-            hasAudio: hasAudio,
+            hasLiveDictation: hasLiveDictation,
             isSubmitting: isPreparing
         )
     }
 
-    private var voiceHeadline: String {
-        if audio.isRecording { return formatTime(audio.elapsedTime) }
-        return hasAudio ? "Voice setup ready" : "Describe your goals"
+    private func appendTake(_ take: VoiceTake) {
+        let result = DictationMergePolicy.appending(
+            take.text,
+            to: context,
+            limit: OnboardingCapturePolicy.maximumTextCharacters
+        )
+        if result.wasTruncated { errorMessage = VoiceCopy.reachedLengthLimit }
+        guard let record = result.record else { return }
+        context = result.note
+        lastDictation = record
+        dictatedTakeCount += 1
+        dictatedEngine = take.engine
     }
 
-    private var voiceDetail: String {
-        if audio.isRecording { return "Tap when you’re done" }
-        return hasAudio ? formatTime(audio.elapsedTime) : "Tap to record"
+    private func undoLastDictation() {
+        guard let record = lastDictation,
+              let restored = DictationMergePolicy.undoing(record, in: context) else { return }
+        context = restored
+        lastDictation = nil
+        dictatedTakeCount = max(0, dictatedTakeCount - 1)
+        if dictatedTakeCount == 0 { dictatedEngine = nil }
+        errorMessage = nil
     }
 
     private func binding<Value>(
@@ -646,40 +595,25 @@ struct OnboardingView: View {
     }
 
     @MainActor
-    private func toggleRecording() async {
-        guard !audio.isStartingRecording else { return }
-        errorMessage = nil
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        if audio.isRecording {
-            audio.stopRecording()
-        } else {
-            focusedField = nil
-            _ = await audio.startRecording()
-        }
-    }
-
-    @MainActor
     private func prepareProposal() async {
-        if audio.isRecording {
-            audio.stopRecording()
-        } else if audio.isStartingRecording {
-            // Nothing recorded yet; don't let the warm-up finish into a
-            // recording underneath the submission.
-            audio.abortStartingRecording()
-        }
-        guard OnboardingCapturePolicy.canSubmit(
-            text: context,
-            hasAudio: hasAudio,
-            isSubmitting: false
-        ) else {
-            errorMessage = OnboardingService.ServiceError.invalidCapture.localizedDescription
-            return
-        }
-
         focusedField = nil
         isPreparing = true
         errorMessage = nil
         defer { isPreparing = false }
+
+        // A take still in flight lands in the description first (capped
+        // wait); a warm-up with nothing heard yet is simply dropped.
+        if voice.isBusy {
+            if let take = await voice.stop(finalizationTimeout: 1.5) { appendTake(take) }
+        } else if let take = voice.collectReadyTake() {
+            appendTake(take)
+        }
+        guard OnboardingCapturePolicy.canSubmit(text: context, isSubmitting: false) else {
+            errorMessage = voice.notice == .didNotCatchThat
+                ? VoiceCopy.didNotCatchThat
+                : OnboardingService.ServiceError.invalidCapture.localizedDescription
+            return
+        }
 
         do {
             let result = try await service.createProposal(
@@ -687,7 +621,7 @@ struct OnboardingView: View {
                     userText: context,
                     preserving: initialProfile
                 ),
-                audioData: audio.recordedData(),
+                speechEngine: dictatedTakeCount > 0 ? dictatedEngine : nil,
                 timezone: TimeZone.autoupdatingCurrent.identifier,
                 clientRequestID: clientRequestID
             )
@@ -696,7 +630,6 @@ struct OnboardingView: View {
                 proposal: result.proposal,
                 profileUnits: initialProfile?.units
             )
-            audio.discardRecording()
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch OnboardingService.ServiceError.alreadyApplied {
             await finishWithAuthoritativeProfile()
@@ -751,46 +684,17 @@ struct OnboardingView: View {
     }
 
     private func startOver() {
+        voice.cancel()
         proposalResult = nil
         draft = nil
         context = ""
+        lastDictation = nil
+        dictatedTakeCount = 0
+        dictatedEngine = nil
         clientRequestID = UUID()
         errorMessage = nil
     }
 
-    private func formatTime(_ duration: TimeInterval) -> String {
-        let total = max(0, Int(duration.rounded(.down)))
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
-}
-
-private struct OnboardingAudioMeter: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let levels: [CGFloat]
-    let isActive: Bool
-
-    var body: some View {
-        GeometryReader { geometry in
-            let spacing: CGFloat = 4
-            let count = max(1, levels.count)
-            let available = geometry.size.width - spacing * CGFloat(count - 1)
-            let width = max(2, available / CGFloat(count))
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
-                    Capsule()
-                        .fill(
-                            isActive
-                                ? Design.Color.accentPrimary
-                                : Design.Color.subtle.opacity(0.55)
-                        )
-                        .frame(width: width, height: max(4, geometry.size.height * level))
-                        .animation(reduceMotion ? nil : .linear(duration: 0.055), value: level)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .accessibilityHidden(true)
-    }
 }
 
 private struct OnboardingBulletLabelStyle: LabelStyle {

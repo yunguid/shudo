@@ -6,47 +6,12 @@ import UIKit
 @testable import shudo
 
 struct CapturePipelineTests {
-    @MainActor
-    @Test func voiceCaptureHasAFifteenMinuteLimitAndClampedCountdown() {
-        #expect(AudioRecorder.maximumDuration == 15 * 60)
-        #expect(AudioRecorder.remainingTime(after: -1) == 15 * 60)
-        #expect(AudioRecorder.remainingTime(after: 60) == 14 * 60)
-        #expect(AudioRecorder.remainingTime(after: 15 * 60) == 0)
-        #expect(AudioRecorder.remainingTime(after: 16 * 60) == 0)
-    }
-
-    @MainActor
-    @Test func recorderControlStateMakesEveryTapOutcomeObservable() {
-        #expect(AudioRecorder.controlState(
-            isStarting: false,
-            isRecording: false,
-            hasRecording: false,
-            hasError: false
-        ) == .idle)
-        #expect(AudioRecorder.controlState(
-            isStarting: true,
-            isRecording: false,
-            hasRecording: false,
-            hasError: false
-        ) == .starting)
-        #expect(AudioRecorder.controlState(
-            isStarting: false,
-            isRecording: true,
-            hasRecording: true,
-            hasError: false
-        ) == .recording)
-        #expect(AudioRecorder.controlState(
-            isStarting: false,
-            isRecording: false,
-            hasRecording: true,
-            hasError: false
-        ) == .ready)
-        #expect(AudioRecorder.controlState(
-            isStarting: false,
-            isRecording: false,
-            hasRecording: false,
-            hasError: true
-        ) == .error)
+    @Test func mealDictationHasAFifteenMinuteLimitAndClampedCountdown() {
+        #expect(VoiceProfile.meal.maximumDuration == 15 * 60)
+        #expect(VoiceProfile.meal.remainingTime(after: -1) == 15 * 60)
+        #expect(VoiceProfile.meal.remainingTime(after: 60) == 14 * 60)
+        #expect(VoiceProfile.meal.remainingTime(after: 15 * 60) == 0)
+        #expect(VoiceProfile.meal.remainingTime(after: 16 * 60) == 0)
     }
 
     @Test func buildIdentityIsStableAndRejectsUnexpandedRevisions() throws {
@@ -76,17 +41,8 @@ struct CapturePipelineTests {
         #expect(!trace.contains("photo.jpg"))
     }
 
-    private static func makeIdleRecorder() throws -> (AVAudioRecorder, URL) {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("capture-test-\(UUID().uuidString)")
-            .appendingPathExtension("m4a")
-        let recorder = try AVAudioRecorder(url: url, settings: [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 24_000,
-            AVNumberOfChannelsKey: 1
-        ])
-        return (recorder, url)
-    }
+    /// Stand-in for a started microphone engine.
+    private final class StartedInput: @unchecked Sendable {}
 
     /// The post-camera handoff makes the first activation attempts fail
     /// transiently; the start must ride through them instead of reading as
@@ -94,23 +50,22 @@ struct CapturePipelineTests {
     @Test func microphoneStartRetriesTransientFailuresUntilOneSucceeds() async throws {
         struct TransientFailure: Error {}
         let attempts = OSAllocatedUnfairLock(initialState: 0)
+        let input = StartedInput()
 
-        let (recorder, url) = try Self.makeIdleRecorder()
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        let started = try await AudioRecorder.startRecorderRetryingWithinDeadline(
+        let started = try await AudioSessionController.startRetryingWithinDeadline(
             deadline: 5,
-            retryDelay: 0.02
-        ) {
-            let attempt = attempts.withLock { count -> Int in
-                count += 1
-                return count
+            retryDelay: 0.02,
+            attempt: {
+                let attempt = attempts.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                guard attempt >= 3 else { throw TransientFailure() }
+                return input
             }
-            guard attempt >= 3 else { throw TransientFailure() }
-            return recorder
-        }
+        )
 
-        #expect(started === recorder)
+        #expect(started === input)
         #expect(attempts.withLock { $0 } == 3)
     }
 
@@ -119,14 +74,15 @@ struct CapturePipelineTests {
         let attempts = OSAllocatedUnfairLock(initialState: 0)
 
         do {
-            _ = try await AudioRecorder.startRecorderRetryingWithinDeadline(
+            _ = try await AudioSessionController.startRetryingWithinDeadline(
                 deadline: 5,
                 retryDelay: 0.01,
-                maximumAttempts: 4
-            ) {
-                attempts.withLock { $0 += 1 }
-                throw PersistentFailure()
-            }
+                maximumAttempts: 4,
+                attempt: { () throws -> StartedInput in
+                    attempts.withLock { $0 += 1 }
+                    throw PersistentFailure()
+                }
+            )
             Issue.record("Expected the start to fail")
         } catch {
             #expect(error is PersistentFailure)
@@ -140,41 +96,47 @@ struct CapturePipelineTests {
         let started = clock.now
 
         do {
-            _ = try await AudioRecorder.startRecorderRetryingWithinDeadline(
+            _ = try await AudioSessionController.startRetryingWithinDeadline(
                 deadline: 0.3,
-                retryDelay: 0.01
-            ) {
-                Thread.sleep(forTimeInterval: 1.2)
-                throw WedgedFailure()
-            }
+                retryDelay: 0.01,
+                attempt: { () throws -> StartedInput in
+                    Thread.sleep(forTimeInterval: 1.2)
+                    throw WedgedFailure()
+                }
+            )
             Issue.record("Expected the deadline to fire")
         } catch {
             // The deadline's own error, not the wedged attempt's.
             #expect(!(error is WedgedFailure))
+            #expect(error is AudioSessionController.StartTimedOut)
+            #expect(error.localizedDescription == VoiceCopy.microphoneSlow)
             #expect(clock.now - started < .seconds(1))
         }
     }
 
-    @MainActor
-    @Test func abortingAWarmUpClearsTheStartingStateWithoutTouchingANote() {
-        let audio = AudioRecorder()
-        audio.abortStartingRecording()
-        #expect(!audio.isStartingRecording)
-        #expect(!audio.isRecording)
-        #expect(audio.recordedFileURL == nil)
-    }
-
-    @MainActor
-    @Test func audioRouteChangesDoNotDisableAnIdleRecorder() {
-        let audio = AudioRecorder()
-        NotificationCenter.default.post(
-            name: AVAudioSession.routeChangeNotification,
-            object: AVAudioSession.sharedInstance(),
-            userInfo: [
-                AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue
-            ]
-        )
-        #expect(audio.controlState == .idle)
+    /// A start that succeeds only after the deadline fired must be torn down,
+    /// never left live and invisible.
+    @Test func microphoneStartThatLandsAfterTheDeadlineIsDiscarded() async throws {
+        let discarded = OSAllocatedUnfairLock(initialState: false)
+        do {
+            _ = try await AudioSessionController.startRetryingWithinDeadline(
+                deadline: 0.1,
+                retryDelay: 0.01,
+                attempt: {
+                    Thread.sleep(forTimeInterval: 0.4)
+                    return StartedInput()
+                },
+                discardOrphan: { _ in discarded.withLock { $0 = true } }
+            )
+            Issue.record("Expected the deadline to fire")
+        } catch {
+            #expect(error is AudioSessionController.StartTimedOut)
+        }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !discarded.withLock({ $0 }), ContinuousClock.now < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        #expect(discarded.withLock { $0 })
     }
 
     @Test func resumeRequestUsesStableEntryIdAndSessionJWT() throws {
@@ -240,7 +202,7 @@ struct CapturePipelineTests {
         let body = service.makeMultipart(
             boundary: "test-boundary",
             text: "  salmon and rice  ",
-            audioData: Data([0x01, 0x02]),
+            speechEngine: .speechTranscriber,
             imageJPEG: Data([0xFF, 0xD8, 0xFF, 0xD9]),
             timezone: "America/New_York",
             localDay: "2026-07-19",
@@ -251,9 +213,43 @@ struct CapturePipelineTests {
         #expect(value.contains("name=\"timezone\"\r\n\r\nAmerica/New_York"))
         #expect(value.contains("name=\"local_day\"\r\n\r\n2026-07-19"))
         #expect(value.contains("name=\"client_request_id\"\r\n\r\naaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
-        #expect(value.contains("salmon and rice"))
-        #expect(value.contains("name=\"audio\"; filename=\"voice.m4a\""))
+        #expect(value.contains("name=\"text\"\r\n\r\nsalmon and rice\r\n"))
+        #expect(value.contains("name=\"speech_engine\"\r\n\r\napple.speech_transcriber\r\n"))
         #expect(value.contains("name=\"image\"; filename=\"photo.jpg\""))
+        // Voice is transcribed on the phone; no audio part is ever sent.
+        #expect(!value.contains("name=\"audio\""))
+        #expect(!value.contains("audio/"))
+    }
+
+    @Test func multipartOmitsTheSpeechEngineWithoutText() throws {
+        let service = APIService(
+            supabaseUrl: URL(string: "https://example.supabase.co")!,
+            supabaseAnonKey: "anon",
+            sessionJWTProvider: { "token" }
+        )
+        let photoOnly = String(decoding: service.makeMultipart(
+            boundary: "b",
+            text: "   ",
+            speechEngine: .speechTranscriber,
+            imageJPEG: Data([0xFF, 0xD8]),
+            timezone: "UTC",
+            localDay: "2026-07-19",
+            clientRequestId: UUID()
+        ), as: UTF8.self)
+        #expect(!photoOnly.contains("name=\"text\""))
+        #expect(!photoOnly.contains("name=\"speech_engine\""))
+
+        let typed = String(decoding: service.makeMultipart(
+            boundary: "b",
+            text: "Oatmeal",
+            speechEngine: nil,
+            imageJPEG: nil,
+            timezone: "UTC",
+            localDay: "2026-07-19",
+            clientRequestId: UUID()
+        ), as: UTF8.self)
+        #expect(typed.contains("name=\"text\"\r\n\r\nOatmeal"))
+        #expect(!typed.contains("name=\"speech_engine\""))
     }
 
     @Test func imageUploadIsBoundedTo1600Pixels() {
@@ -413,7 +409,6 @@ struct CapturePipelineTests {
         #expect(EntryComposerPolicy.canSubmit(
             isSubmitting: false,
             isPreparingImage: false,
-            hasAudio: false,
             hasImage: false,
             hasScannedFood: false,
             note: "salmon and rice"
@@ -421,7 +416,7 @@ struct CapturePipelineTests {
         #expect(!EntryComposerPolicy.canSubmit(
             isSubmitting: false,
             isPreparingImage: true,
-            hasAudio: true,
+            hasLiveDictation: true,
             hasImage: false,
             hasScannedFood: false,
             note: "salmon and rice"
@@ -430,10 +425,27 @@ struct CapturePipelineTests {
         #expect(EntryComposerPolicy.canSubmit(
             isSubmitting: false,
             isPreparingImage: false,
-            hasAudio: false,
             hasImage: false,
             hasScannedFood: true,
             note: ""
+        ))
+        // Words still being heard are submittable: Log meal finishes the
+        // take and sends them; silence alone is not.
+        #expect(EntryComposerPolicy.canSubmit(
+            isSubmitting: false,
+            isPreparingImage: false,
+            hasLiveDictation: true,
+            hasImage: false,
+            hasScannedFood: false,
+            note: ""
+        ))
+        #expect(!EntryComposerPolicy.canSubmit(
+            isSubmitting: false,
+            isPreparingImage: false,
+            hasLiveDictation: false,
+            hasImage: false,
+            hasScannedFood: false,
+            note: "  "
         ))
     }
 
@@ -450,7 +462,6 @@ struct CapturePipelineTests {
         #expect(!EntryComposerPolicy.canSubmit(
             isSubmitting: false,
             isPreparingImage: false,
-            hasAudio: false,
             hasImage: false,
             hasScannedFood: false,
             note: String(repeating: "b", count: EntryComposerPolicy.maximumNoteLength + 1)
@@ -460,8 +471,11 @@ struct CapturePipelineTests {
     @MainActor
     @Test func mealSubmissionSurfacesActionableServerErrors() {
         #expect(TodayViewModel.submissionErrorMessage(
-            APIService.APIError.server(statusCode: 413, message: "Voice note is too large")
-        ) == "Voice note is too large")
+            APIService.APIError.server(
+                statusCode: 415,
+                message: "Voice is transcribed on your iPhone now. Update Shudo and try again."
+            )
+        ) == "Voice is transcribed on your iPhone now. Update Shudo and try again.")
         #expect(TodayViewModel.submissionErrorMessage(
             URLError(.notConnectedToInternet)
         ) == "Couldn’t reach the server. Check your connection and try again.")

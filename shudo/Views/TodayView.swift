@@ -90,12 +90,13 @@ struct TodayView: View {
     @StateObject private var vm: TodayViewModel
     @ObservedObject private var router = AppRouter.shared
     @State private var formatterCache = DayFormatterCache()
-    /// The composer's recorder, owned here so a mic tap can start the audio
-    /// warm-up immediately — overlapping session activation with the sheet
-    /// presentation instead of waiting for the composer to appear. Held in a
-    /// non-observing box: the recorder's 16Hz meter updates must re-render
-    /// only the composer, never this whole screen.
-    @StateObject private var composerAudioHolder = UnobservedHolder(AudioRecorder())
+    /// The composer's on-device transcriber, owned here so a mic tap can
+    /// start the microphone warm-up immediately — overlapping session
+    /// activation with the sheet presentation instead of waiting for the
+    /// composer to appear. Held in a non-observing box: its 16Hz meter and
+    /// live-transcript updates must re-render only the composer's voice
+    /// card, never this whole screen.
+    @StateObject private var composerVoiceHolder = UnobservedHolder(VoiceTranscriber(profile: .meal))
 
     @State private var isShowingAccount = false
     @State private var isShowingDatePicker = false
@@ -208,24 +209,24 @@ struct TodayView: View {
             .safeAreaInset(edge: .bottom) { captureDock }
         }
         .sheet(isPresented: $vm.isPresentingComposer, onDismiss: {
-            let recorder = composerAudioHolder.value
-            CaptureDiagnostics.record(.composerDismissed, state: recorder.controlState.rawValue)
-            recorder.discardRecording()
+            let voice = composerVoiceHolder.value
+            CaptureDiagnostics.record(.composerDismissed, state: voice.controlState)
+            voice.cancel()
         }) {
             let capturedDay = vm.currentDay
             EntryComposerView(
                 selectedDay: capturedDay,
                 timezone: vm.profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier,
                 autoStartRecording: composerAutoStartsRecording,
-                audio: composerAudioHolder.value,
+                voice: composerVoiceHolder.value,
                 initialImages: composerSeedImages
-            ) { text, audio, imageJPEG, clientRequestId in
+            ) { draft in
                 vm.acceptEntrySubmission(
-                    text: text,
-                    audioData: audio,
-                    imageJPEG: imageJPEG,
+                    text: draft.text,
+                    speechEngine: draft.speechEngine,
+                    imageJPEG: draft.imageJPEG,
                     for: capturedDay,
-                    clientRequestId: clientRequestId
+                    clientRequestId: draft.clientRequestId
                 )
             }
             .presentationDragIndicator(.visible)
@@ -870,8 +871,8 @@ struct TodayView: View {
         // the composer's own fallback start covers that path, and a dismissal
         // mid-warm-up aborts through the composer's onDisappear discard.
         if autoStartRecording, !isShowingAccount, !isShowingDatePicker {
-            let recorder = composerAudioHolder.value
-            Task { _ = await recorder.startRecording() }
+            let voice = composerVoiceHolder.value
+            Task { await voice.start() }
         }
         vm.isPresentingComposer = true
     }

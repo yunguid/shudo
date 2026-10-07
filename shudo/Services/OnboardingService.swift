@@ -1,9 +1,11 @@
 import Foundation
 
 protocol OnboardingServing: Sendable {
+    /// `text` is typed and/or dictated (transcribed on this iPhone);
+    /// `speechEngine` names the recognizer when any of it was dictated.
     func createProposal(
         text: String,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         timezone: String,
         clientRequestID: UUID
     ) async throws -> OnboardingProposalResult
@@ -19,7 +21,6 @@ protocol OnboardingServing: Sendable {
 struct OnboardingService: OnboardingServing, Sendable {
     enum ServiceError: LocalizedError, Equatable {
         case invalidCapture
-        case audioTooLarge
         case invalidResponse
         case stillProcessing
         case alreadyApplied
@@ -29,9 +30,7 @@ struct OnboardingService: OnboardingServing, Sendable {
         var errorDescription: String? {
             switch self {
             case .invalidCapture:
-                return "Add a voice note or a short description."
-            case .audioTooLarge:
-                return "That voice note is too large. Record a shorter one and try again."
+                return "Say or type a short description."
             case .invalidResponse:
                 return "The server returned an unexpected response."
             case .stillProcessing:
@@ -45,8 +44,6 @@ struct OnboardingService: OnboardingServing, Sendable {
             }
         }
     }
-
-    static let maximumAudioBytes = 25 * 1_024 * 1_024
 
     private struct WireResponse: Decodable {
         let onboardingID: UUID
@@ -101,14 +98,14 @@ struct OnboardingService: OnboardingServing, Sendable {
 
     func createProposal(
         text: String,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         timezone: String,
         clientRequestID: UUID
     ) async throws -> OnboardingProposalResult {
         let jwt = try await sessionJWTProvider()
         let request = try Self.makeProposalRequest(
             text: text,
-            audioData: audioData,
+            speechEngine: speechEngine,
             timezone: timezone,
             clientRequestID: clientRequestID,
             jwt: jwt,
@@ -158,7 +155,7 @@ struct OnboardingService: OnboardingServing, Sendable {
 
     static func makeProposalRequest(
         text: String,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         timezone: String,
         clientRequestID: UUID,
         jwt: String,
@@ -166,15 +163,8 @@ struct OnboardingService: OnboardingServing, Sendable {
         publishableKey: String,
         boundary: String
     ) throws -> URLRequest {
-        guard OnboardingCapturePolicy.canSubmit(
-            text: text,
-            hasAudio: audioData?.isEmpty == false,
-            isSubmitting: false
-        ) else {
+        guard OnboardingCapturePolicy.canSubmit(text: text, isSubmitting: false) else {
             throw ServiceError.invalidCapture
-        }
-        if let audioData, audioData.count > maximumAudioBytes {
-            throw ServiceError.audioTooLarge
         }
 
         var request = URLRequest(url: endpointURL(supabaseURL: supabaseURL))
@@ -191,7 +181,7 @@ struct OnboardingService: OnboardingServing, Sendable {
             clientRequestID: clientRequestID,
             timezone: timezone,
             text: OnboardingCapturePolicy.normalizedText(text),
-            audioData: audioData
+            speechEngine: speechEngine
         )
         return request
     }
@@ -271,7 +261,7 @@ struct OnboardingService: OnboardingServing, Sendable {
         clientRequestID: UUID,
         timezone: String,
         text: String,
-        audioData: Data?
+        speechEngine: SpeechEngineID?
     ) -> Data {
         var body = Data()
 
@@ -289,12 +279,9 @@ struct OnboardingService: OnboardingServing, Sendable {
         appendField(name: "client_request_id", value: clientRequestID.uuidString.lowercased())
         appendField(name: "timezone", value: timezone)
         appendField(name: "text", value: text)
-        if let audioData, !audioData.isEmpty {
-            append("--\(boundary)\r\n")
-            append("Content-Disposition: form-data; name=\"audio\"; filename=\"onboarding.m4a\"\r\n")
-            append("Content-Type: audio/mp4\r\n\r\n")
-            body.append(audioData)
-            append("\r\n")
+        // Older servers ignore unknown fields; newer ones may record it.
+        if let speechEngine {
+            appendField(name: "speech_engine", value: speechEngine.rawValue)
         }
         append("--\(boundary)--\r\n")
         return body

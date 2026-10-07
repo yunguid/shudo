@@ -36,8 +36,8 @@ struct BuildIdentity: Equatable {
 }
 
 /// Privacy-safe, on-device capture diagnostics. Events contain only static
-/// state names and the public source revision: never meal text, media names,
-/// audio, image contents, permission identifiers, or audio-route names.
+/// state names and the public source revision: never meal text, transcripts,
+/// media names, image contents, permission identifiers, or audio-route names.
 /// The bounded trace lives in Caches so device verification can read this one
 /// file without inspecting the user's app data or photo library.
 enum CaptureDiagnostics {
@@ -68,6 +68,12 @@ enum CaptureDiagnostics {
         case audioInterrupted = "recorder.interrupted"
         case audioRouteChanged = "recorder.route_changed"
         case mediaServicesReset = "recorder.media_services_reset"
+        case speechAssetStatus = "speech.asset_status"
+        case speechEngineSelected = "speech.engine_selected"
+        case speechEngineUnavailable = "speech.engine_unavailable"
+        case speechEngineFailed = "speech.engine_failed"
+        case speechTakeEmpty = "speech.take_empty"
+        case speechFinalizationTimedOut = "speech.finalization_timed_out"
     }
 
     static let fileName = "shudo-capture-diagnostics.txt"

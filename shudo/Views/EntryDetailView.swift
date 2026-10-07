@@ -880,7 +880,14 @@ private struct EntryCorrectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focusedField: FocusField?
-    @StateObject private var audio = AudioRecorder()
+    /// Held unobserved: the voice card observes it, and this sheet mirrors
+    /// only what it needs, so meter and transcript updates never re-render
+    /// the note editor.
+    @StateObject private var voiceHolder = UnobservedHolder(VoiceTranscriber(profile: .correction))
+    @State private var hasLiveDictation = false
+    @State private var lastDictation: DictationMergePolicy.AppendRecord?
+    @State private var dictatedTakeCount = 0
+    @State private var dictatedEngine: SpeechEngineID?
     @State private var context = ""
     @State private var hasSubmitted = false
     @State private var errorMessage: String?
@@ -898,18 +905,20 @@ private struct EntryCorrectionSheet: View {
     let onSubmit: (EntryCorrectionSubmission) -> Void
     let onAccepted: () -> Void
 
-    private var hasAudio: Bool {
-        audio.recordedFileURL != nil
-    }
+    private var voice: VoiceTranscriber { voiceHolder.value }
 
     private var canSubmit: Bool {
         EntryCorrectionPolicy.canSubmit(
             text: context,
-            hasAudio: hasAudio,
+            hasLiveDictation: hasLiveDictation,
             hasImage: !images.isEmpty,
             isPreparingImage: isPreparingImage,
             isSubmitting: hasSubmitted
         )
+    }
+
+    private var canUndoDictation: Bool {
+        !hasSubmitted && DictationMergePolicy.canUndo(lastDictation, in: context)
     }
 
     var body: some View {
@@ -929,7 +938,18 @@ private struct EntryCorrectionSheet: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        voiceCorrectionCard
+                        VoiceCaptureCard(
+                            voice: voice,
+                            style: .correction,
+                            isDisabled: hasSubmitted,
+                            canUndo: canUndoDictation,
+                            onUndo: undoLastDictation,
+                            onWillStart: {
+                                errorMessage = nil
+                                focusedField = nil
+                            },
+                            onTake: appendTake
+                        )
 
                         photoAttachmentSection
 
@@ -1013,7 +1033,7 @@ private struct EntryCorrectionSheet: View {
                     Button("Cancel") {
                         imagePreparationTask?.cancel()
                         uploadEncodeTask?.cancel()
-                        audio.discardRecording()
+                        voice.cancel()
                         dismiss()
                     }
                         .foregroundStyle(Design.Color.muted)
@@ -1070,13 +1090,17 @@ private struct EntryCorrectionSheet: View {
         )
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
+        .onReceive(voice.$transcript) { transcript in
+            let hasText = !transcript.isEmpty
+            if hasLiveDictation != hasText { hasLiveDictation = hasText }
+        }
         .onDisappear {
             // Camera and Photos temporarily cover this sheet. Keep the whole
-            // draft, including a completed recording, across those system UIs.
+            // draft, including dictated text, across those system UIs.
             guard !isShowingCamera, !isShowingPhotoPicker, !hasSubmitted else { return }
             imagePreparationTask?.cancel()
             uploadEncodeTask?.cancel()
-            audio.discardRecording()
+            voice.cancel()
         }
         .interactiveDismissDisabled(hasSubmitted)
     }
@@ -1088,7 +1112,7 @@ private struct EntryCorrectionSheet: View {
     }
 
     private var updatesEstimate: Bool {
-        EntryCorrectionPolicy.usesPhotoForEstimate(text: context, hasAudio: hasAudio)
+        EntryCorrectionPolicy.usesPhotoForEstimate(text: context, hasLiveDictation: hasLiveDictation)
     }
 
     private var photoAttachmentSection: some View {
@@ -1200,118 +1224,35 @@ private struct EntryCorrectionSheet: View {
         )
     }
 
-    private var voiceCorrectionCard: some View {
-        VStack(spacing: 17) {
-            CorrectionAudioMeter(levels: audio.meterLevels, isActive: audio.isRecording)
-                .frame(height: 60)
-                .accessibilityHidden(true)
-
-            VStack(spacing: 4) {
-                Text(voiceHeadline)
-                    .font(
-                        audio.isRecording
-                            ? .system(size: 25, weight: .medium)
-                            : .headline
-                    )
-                    .foregroundStyle(Design.Color.ink)
-                    .monospacedDigit()
-                Text(voiceDetail)
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.muted)
-                    .monospacedDigit()
-            }
-
-            HStack(spacing: 16) {
-                if hasAudio && !audio.isRecording {
-                    Button {
-                        audio.discardRecording()
-                        clientRequestId = UUID()
-                        errorMessage = nil
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Design.Color.muted)
-                            .frame(width: 48, height: 48)
-                            .background(Design.Color.glassFill, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(hasSubmitted)
-                    .accessibilityLabel("Discard correction recording")
-                }
-
-                Button {
-                    Task { await toggleRecording() }
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                audio.isRecording
-                                    ? AnyShapeStyle(Design.Color.danger)
-                                    : AnyShapeStyle(
-                                        LinearGradient(
-                                            colors: [
-                                                Design.Color.accentPrimary,
-                                                Design.Color.accentSecondary
-                                            ],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                            )
-                            .frame(width: 76, height: 76)
-                            .shadow(
-                                color: Design.Color.accentPrimary.opacity(
-                                    reduceMotion ? 0 : (audio.isRecording ? 0.12 : 0.28)
-                                ),
-                                radius: reduceMotion ? 0 : 24
-                            )
-
-                        if audio.isStartingRecording {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
-                                .font(.title2.weight(.semibold))
-                                .foregroundStyle(.white)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(hasSubmitted)
-                .accessibilityLabel(recordingButtonLabel)
-                .accessibilityHint(audio.isRecording ? "Saves this recording" : "Uses the microphone")
-            }
-        }
-        .padding(22)
-        .background(
-            Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
-        )
-    }
-
-    private var voiceHeadline: String {
-        if audio.isRecording { return formatTime(audio.elapsedTime) }
-        return hasAudio ? "Correction ready" : "Speak the correction"
-    }
-
-    private var voiceDetail: String {
-        if audio.isRecording { return "Tap when you’re done" }
-        return hasAudio ? formatTime(audio.elapsedTime) : "Tap to record"
-    }
-
-    private var recordingButtonLabel: String {
-        if audio.isStartingRecording { return "Starting the microphone" }
-        return audio.isRecording
-            ? "Stop correction recording, \(formatTime(audio.elapsedTime)) recorded"
-            : "Start correction recording"
-    }
-
+    /// Releases the microphone before the camera or picker takes the audio
+    /// hardware; the words already heard still land in the note.
     private func settleVoiceCapture() {
-        if audio.isRecording {
-            audio.stopRecording()
-        } else if audio.isStartingRecording {
-            audio.abortStartingRecording()
-        }
+        voice.finishInBackground()
+    }
+
+    private func appendTake(_ take: VoiceTake) {
+        let result = DictationMergePolicy.appending(
+            take.text,
+            to: context,
+            limit: EntryCorrectionPolicy.maximumCharacters
+        )
+        if result.wasTruncated { errorMessage = VoiceCopy.reachedLengthLimit }
+        guard let record = result.record else { return }
+        context = result.note
+        lastDictation = record
+        dictatedTakeCount += 1
+        dictatedEngine = take.engine
+    }
+
+    private func undoLastDictation() {
+        guard let record = lastDictation,
+              let restored = DictationMergePolicy.undoing(record, in: context) else { return }
+        context = restored
+        lastDictation = nil
+        dictatedTakeCount = max(0, dictatedTakeCount - 1)
+        if dictatedTakeCount == 0 { dictatedEngine = nil }
+        clientRequestId = UUID()
+        errorMessage = nil
     }
 
     private func requestCamera() {
@@ -1421,41 +1362,31 @@ private struct EntryCorrectionSheet: View {
         errorMessage = nil
     }
 
-    private func toggleRecording() async {
-        guard !audio.isStartingRecording else { return }
-        errorMessage = nil
-        focusedField = nil
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        if audio.isRecording {
-            audio.stopRecording()
-        } else {
-            _ = await audio.startRecording()
-        }
-    }
-
     /// Validates locally and hands the correction off, then leaves right
     /// away. The update itself runs on the Today screen's meal card, so this
     /// sheet never has to hold the user through the network round-trip.
     private func submit() {
         guard canSubmit else { return }
-        settleVoiceCapture()
         errorMessage = nil
-        let normalized = EntryCorrectionPolicy.normalized(context)
-        let text = normalized.isEmpty ? nil : normalized
-        let audioData = audio.recordedData()
-        if let audioData,
-           !EntryCorrectionPolicy.audioIsWithinUploadLimit(audioData.count) {
-            errorMessage = "That recording is too large. Discard it and record a shorter correction."
-            return
-        }
-        guard text != nil || audioData != nil || !images.isEmpty else {
-            errorMessage = "Record, type, or add a photo."
-            return
-        }
+        focusedField = nil
         hasSubmitted = true
         let selectedImages = images
         let encodeTask = uploadEncodeTask
         Task {
+            // A take still in flight lands in the note first (capped wait).
+            if voice.isBusy {
+                if let take = await voice.stop(finalizationTimeout: 1.5) { appendTake(take) }
+            } else if let take = voice.collectReadyTake() {
+                appendTake(take)
+            }
+            let normalized = EntryCorrectionPolicy.normalized(context)
+            let text = normalized.isEmpty ? nil : normalized
+            guard text != nil || !selectedImages.isEmpty else {
+                hasSubmitted = false
+                errorMessage = VoiceCopy.didNotCatchThat
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                return
+            }
             var imageJPEG = await encodeTask?.value
             if !selectedImages.isEmpty && imageJPEG == nil {
                 imageJPEG = await Task.detached(priority: .userInitiated) {
@@ -1463,81 +1394,37 @@ private struct EntryCorrectionSheet: View {
                 }.value
             }
             guard selectedImages.isEmpty || imageJPEG != nil else {
-                await MainActor.run {
-                    hasSubmitted = false
-                    errorMessage = "Those photos couldn’t be prepared. Remove them or try again. Your draft is still here."
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
+                hasSubmitted = false
+                errorMessage = "Those photos couldn’t be prepared. Remove them or try again. Your draft is still here."
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
-            await MainActor.run {
-                onSubmit(
-                    EntryCorrectionSubmission(
-                        text: text,
-                        audioData: audioData,
-                        imageJPEG: imageJPEG,
-                        clientRequestId: clientRequestId
-                    )
-                )
-                audio.discardRecording()
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                UIAccessibility.post(
-                    notification: .announcement,
-                    argument: updatesEstimate ? "Updating meal" : "Saving meal photos"
-                )
-                dismiss()
-                onAccepted()
-            }
+            let submission = EntryCorrectionSubmission(
+                text: text,
+                speechEngine: text != nil && dictatedTakeCount > 0 ? dictatedEngine : nil,
+                imageJPEG: imageJPEG,
+                clientRequestId: clientRequestId
+            )
+            onSubmit(submission)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: submission.updatesEstimate ? "Updating meal" : "Saving meal photos"
+            )
+            dismiss()
+            onAccepted()
         }
     }
 
     private func resetCorrection() {
-        audio.discardRecording()
+        voice.cancel()
         context = ""
+        lastDictation = nil
+        dictatedTakeCount = 0
+        dictatedEngine = nil
         images = []
         clientRequestId = UUID()
         errorMessage = nil
         focusedField = nil
-    }
-
-    private func formatTime(_ duration: TimeInterval) -> String {
-        let total = max(0, Int(duration.rounded(.down)))
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
-}
-
-private struct CorrectionAudioMeter: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let levels: [CGFloat]
-    let isActive: Bool
-
-    var body: some View {
-        GeometryReader { geometry in
-            let spacing: CGFloat = 4
-            let count = max(levels.count, 1)
-            let barWidth = max(
-                2,
-                (geometry.size.width - spacing * CGFloat(count - 1)) / CGFloat(count)
-            )
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
-                    Capsule()
-                        .fill(
-                            isActive
-                                ? Design.Color.accentSecondary
-                                : Design.Color.subtle.opacity(0.65)
-                        )
-                        .frame(
-                            width: barWidth,
-                            height: max(4, geometry.size.height * (isActive ? level : 0.07))
-                        )
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .animation(
-                reduceMotion ? nil : .easeOut(duration: 0.08),
-                value: levels
-            )
-        }
     }
 }

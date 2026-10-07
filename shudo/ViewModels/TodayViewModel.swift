@@ -3,27 +3,28 @@ import Foundation
 /// A locally accepted meal correction. The composer hands this to
 /// `TodayViewModel` and dismisses immediately; the payload is kept until the
 /// server accepts the update so a failure can be retried without retyping or
-/// re-recording anything.
+/// re-dictating anything. Dictation was already transcribed on the phone, so
+/// the payload is text (plus which recognizer heard it) — never audio.
 struct EntryCorrectionSubmission: Equatable {
     let text: String?
-    let audioData: Data?
+    let speechEngine: SpeechEngineID?
     let imageJPEG: Data?
     let clientRequestId: UUID
 
     init(
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID? = nil,
         imageJPEG: Data? = nil,
         clientRequestId: UUID
     ) {
         self.text = text
-        self.audioData = audioData
+        self.speechEngine = speechEngine
         self.imageJPEG = imageJPEG
         self.clientRequestId = clientRequestId
     }
 
     var updatesEstimate: Bool {
-        audioData != nil || text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 }
 
@@ -281,6 +282,11 @@ final class TodayViewModel: ObservableObject {
             for item in items where item.status.isProcessing && correctionTasks[item.id] == nil {
                 startPolling(entryId: item.id, localDay: item.localDay ?? localDay(for: day))
             }
+            // Meal names Luke actually logs help the fallback recognizers
+            // spell brands right (contextual strings; never sent anywhere).
+            VoiceVocabularyStore.shared.learn(
+                fromMealTitles: items.filter { $0.status == .complete }.map(\.summary)
+            )
 
             prefetchAdjacentDays(around: day, timezone: timezone)
 
@@ -436,7 +442,7 @@ final class TodayViewModel: ObservableObject {
 
     struct PendingEntrySubmission {
         let text: String?
-        let audioData: Data?
+        let speechEngine: SpeechEngineID?
         let imageJPEG: Data?
         let timezone: String
         let targetLocalDay: String
@@ -454,7 +460,7 @@ final class TodayViewModel: ObservableObject {
     @discardableResult
     func acceptEntrySubmission(
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID? = nil,
         imageJPEG: Data?,
         for targetDay: Date? = nil,
         clientRequestId: UUID = UUID()
@@ -466,11 +472,7 @@ final class TodayViewModel: ObservableObject {
         let placeholder = Entry(
             id: placeholderId,
             createdAt: optimisticTimestamp(for: day, timezone: timezone),
-            summary: optimisticTitle(
-                text: text,
-                hasAudio: audioData != nil,
-                hasImage: imageJPEG != nil
-            ),
+            summary: Self.optimisticTitle(text: text, hasImage: imageJPEG != nil),
             imageURL: nil,
             proteinG: 0,
             carbsG: 0,
@@ -489,7 +491,7 @@ final class TodayViewModel: ObservableObject {
 
         pendingSubmissions[placeholderId] = PendingEntrySubmission(
             text: text,
-            audioData: audioData,
+            speechEngine: speechEngine,
             imageJPEG: imageJPEG,
             timezone: timezone,
             targetLocalDay: targetLocalDay,
@@ -523,7 +525,7 @@ final class TodayViewModel: ObservableObject {
         do {
             let result = try await api.createEntry(
                 text: payload.text,
-                audioData: payload.audioData,
+                speechEngine: payload.speechEngine,
                 imageJPEG: payload.imageJPEG,
                 timezone: payload.timezone,
                 localDay: payload.targetLocalDay,
@@ -674,7 +676,7 @@ final class TodayViewModel: ObservableObject {
             let result = try await reanalysis.correctEntry(
                 id: entryId,
                 text: payload.text,
-                audioData: payload.audioData,
+                speechEngine: payload.speechEngine,
                 imageJPEG: payload.imageJPEG,
                 usesImageForEstimate: payload.updatesEstimate,
                 clientRequestId: payload.clientRequestId
@@ -1098,16 +1100,25 @@ final class TodayViewModel: ObservableObject {
         return calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
     }
 
-    private func optimisticTitle(text: String?, hasAudio: Bool, hasImage: Bool) -> String {
+    nonisolated static let maximumOptimisticTitleLength = 90
+
+    /// The placeholder card's title: the real first line of what Luke said
+    /// or typed (dictation is text before upload now, so there is no
+    /// "Voice note" stand-in), shortened at a word boundary because one
+    /// dictated take is often a single long line.
+    nonisolated static func optimisticTitle(text: String?, hasImage: Bool) -> String {
         if let first = text?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: "\n")
-            .first,
+            .first?
+            .trimmingCharacters(in: .whitespaces),
            !first.isEmpty {
-            return first
+            guard first.count > maximumOptimisticTitleLength else { return first }
+            let prefix = first.prefix(maximumOptimisticTitleLength)
+            let cut = prefix.lastIndex(where: \.isWhitespace).map { prefix[..<$0] } ?? prefix
+            return cut.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                + "…"
         }
-        if hasAudio && hasImage { return "Voice note + photo" }
-        if hasAudio { return "Voice note" }
         if hasImage { return "Meal photo" }
         return "Meal"
     }

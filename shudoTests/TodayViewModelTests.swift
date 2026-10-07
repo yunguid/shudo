@@ -522,7 +522,6 @@ struct EntrySubmissionLifecycleTests {
         let vm = makeViewModel()
         let id = vm.acceptEntrySubmission(
             text: "Chicken bowl",
-            audioData: nil,
             imageJPEG: nil
         )
 
@@ -537,7 +536,6 @@ struct EntrySubmissionLifecycleTests {
         let vm = makeViewModel()
         let id = vm.acceptEntrySubmission(
             text: "Chicken bowl",
-            audioData: nil,
             imageJPEG: nil
         )
 
@@ -557,7 +555,6 @@ struct EntrySubmissionLifecycleTests {
         let vm = makeViewModel()
         let id = vm.acceptEntrySubmission(
             text: "Chicken bowl",
-            audioData: nil,
             imageJPEG: nil
         )
         await vm.activeSubmissionTask(entryId: id)?.value
@@ -576,11 +573,34 @@ struct EntrySubmissionLifecycleTests {
         #expect(vm.isPendingSubmission(id))
     }
 
+    @Test func dictatedSubmissionTitlesTheCardWithTheRealFirstLine() {
+        let vm = makeViewModel()
+        let id = vm.acceptEntrySubmission(
+            text: "Two scrambled eggs and toast\nwith butter",
+            speechEngine: .speechTranscriber,
+            imageJPEG: nil
+        )
+        #expect(vm.entries.first { $0.id == id }?.summary == "Two scrambled eggs and toast")
+    }
+
+    @Test func optimisticTitlesNeverSayVoiceNote() {
+        #expect(TodayViewModel.optimisticTitle(text: "  Oatmeal  \nberries", hasImage: true) == "Oatmeal")
+        #expect(TodayViewModel.optimisticTitle(text: nil, hasImage: true) == "Meal photo")
+        #expect(TodayViewModel.optimisticTitle(text: "   ", hasImage: false) == "Meal")
+
+        let longTake = "so for lunch I had a big chicken burrito bowl from chipotle with white rice "
+            + "black beans fajita veggies cheese sour cream and the mild salsa"
+        let title = TodayViewModel.optimisticTitle(text: longTake, hasImage: false)
+        #expect(title.hasSuffix("…"))
+        #expect(title.count <= TodayViewModel.maximumOptimisticTitleLength + 1)
+        #expect(longTake.hasPrefix(String(title.dropLast())))
+        #expect(!title.dropLast().hasSuffix(" "))
+    }
+
     @Test func deletingAFailedLocalSubmissionRemovesItWithoutServerWork() async {
         let vm = makeViewModel()
         let id = vm.acceptEntrySubmission(
             text: "Chicken bowl",
-            audioData: nil,
             imageJPEG: nil
         )
         await vm.activeSubmissionTask(entryId: id)?.value

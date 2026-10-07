@@ -531,9 +531,11 @@ enum OnboardingCapturePolicy {
         )
     }
 
-    static func canSubmit(text: String, hasAudio: Bool, isSubmitting: Bool) -> Bool {
+    /// `hasLiveDictation`: words from a take still in flight are on screen;
+    /// preparing finishes the take and appends them first.
+    static func canSubmit(text: String, hasLiveDictation: Bool = false, isSubmitting: Bool) -> Bool {
         guard !isSubmitting, text.count <= maximumTextCharacters else { return false }
-        return hasAudio || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasLiveDictation || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     static func proposalContext(userText: String, preserving profile: Profile?) -> String {
