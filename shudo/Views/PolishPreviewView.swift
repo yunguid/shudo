@@ -9,6 +9,7 @@ enum PolishPreviewScreen: String {
     case insights
     case heatmap
     case train
+    case body
 
     static var launchValue: Self? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -116,6 +117,8 @@ struct PolishPreviewView: View {
             }
         case .train:
             TrainPreviewFixtures.screen()
+        case .body:
+            BodyFixtures.previewScreen()
         }
     }
 
