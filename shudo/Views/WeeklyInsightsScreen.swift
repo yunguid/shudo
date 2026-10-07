@@ -1,9 +1,8 @@
 import SwiftUI
 
-/// The dedicated home for weekly insights: a running seven-day window that
-/// updates every day at the top, then the stored Monday-anchored summaries
-/// browsable week by week beneath it. Reached from the "This week" card at
-/// the bottom of Today.
+/// "This week": the rolling seven days (calories per logged day as the hero,
+/// protein day by day underneath), then the stored weekly recaps. Reached
+/// from the Today header.
 struct WeeklyInsightsScreen: View {
     let profile: Profile
 
@@ -43,7 +42,7 @@ struct WeeklyInsightsScreen: View {
         }
     #endif
 
-    private var runningWindow: NutrientTrendWeek? {
+    private var window: NutrientTrendWeek? {
         NutritionProgressPolicy.runningWeekWindow(
             totals: dailyTotals,
             target: profile.dailyMacroTarget,
@@ -54,25 +53,23 @@ struct WeeklyInsightsScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                proteinCard
-                runningWindowCard
-                WeeklyInsightsView(
-                    summaries: summaries,
-                    totals: dailyTotals,
-                    fallbackTarget: profile.dailyMacroTarget,
-                    targetHistory: targetHistory,
-                    isLoading: isLoading,
-                    errorMessage: errorMessage,
-                    onRetry: { Task { await load() } }
-                )
+            VStack(alignment: .leading, spacing: 14) {
+                weekCard
+                if !summaries.isEmpty {
+                    WeeklyRecapList(
+                        summaries: summaries,
+                        totals: dailyTotals,
+                        target: profile.dailyMacroTarget,
+                        targetHistory: targetHistory
+                    )
+                }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 10)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
             .padding(.bottom, 32)
         }
-        .background(AppBackground())
-        .navigationTitle("Weekly insights")
+        .background(Design.Color.canvas.ignoresSafeArea())
+        .navigationTitle("This week")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             guard loadsRemotely else { return }
@@ -84,166 +81,99 @@ struct WeeklyInsightsScreen: View {
         }
     }
 
-    /// The live half of the screen: this week so far, refreshed every visit,
-    /// while the pager below holds the finished, narrated weeks.
-    private var runningWindowCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+    private var weekCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Last 7 days")
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.ink)
+                Text("Last 7 days").eyebrowStyle()
                 Spacer()
-                if let window = runningWindow {
-                    Text("\(window.loggedDayCount) of 7 days logged")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Design.Color.muted)
+                if let window, window.loggedDayCount > 0 {
+                    Text("\(window.loggedDayCount) of 7 logged")
+                        .font(Design.Typeface.meta)
+                        .foregroundStyle(Design.Color.textTertiary)
                         .monospacedDigit()
                 }
             }
 
             if let errorMessage {
-                Text(errorMessage).font(.footnote).foregroundStyle(Design.Color.muted)
-            } else if let window = runningWindow, let average = window.average, window.loggedDayCount > 0 {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text("\(Int(average.caloriesKcal.rounded()))")
-                        .font(.title.weight(.bold))
-                        .foregroundStyle(Design.Color.ink)
-                        .monospacedDigit()
-                    Text(
-                        "kcal/logged day · target \(Int((window.averageTarget?.caloriesKcal ?? profile.dailyMacroTarget.caloriesKcal).rounded()))"
-                    )
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Design.Color.muted)
-                    .monospacedDigit()
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    "Average \(Int(average.caloriesKcal.rounded())) kilocalories per logged day this week"
-                )
-
-                HStack(alignment: .top, spacing: 12) {
-                    runningMetric(
-                        "Protein", average.proteinG,
-                        window.averageTarget?.proteinG ?? profile.dailyMacroTarget.proteinG,
-                        Design.Color.ringProtein)
-                    runningMetric(
-                        "Carbs", average.carbsG,
-                        window.averageTarget?.carbsG ?? profile.dailyMacroTarget.carbsG,
-                        Design.Color.ringCarb)
-                    runningMetric(
-                        "Fat", average.fatG,
-                        window.averageTarget?.fatG ?? profile.dailyMacroTarget.fatG,
-                        Design.Color.ringFat)
-                }
-                Text("Averages use logged days only; even a logged day may be incomplete. Today is still in progress.")
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.textSecondary)
             } else if isLoading {
-                VStack(alignment: .leading, spacing: 9) {
-                    Capsule().fill(Design.Color.elevated).frame(width: 180, height: 12)
-                    Capsule().fill(Design.Color.elevated).frame(height: 8)
+                VStack(alignment: .leading, spacing: 12) {
+                    Capsule().fill(Design.Color.surface2).frame(width: 160, height: 28)
+                    Capsule().fill(Design.Color.surface2).frame(height: 88)
                 }
                 .shimmering()
                 .accessibilityLabel("Loading this week")
-            } else {
-                Text("Log a meal and this week's running numbers appear here.")
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(18)
-        .background(
-            Design.Color.glassFill,
-            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-        )
-    }
-
-    private var proteinDays: [ProteinDay] {
-        ProteinProgress.days(totals: dailyTotals, target: profile.dailyMacroTarget,
-                             history: targetHistory, timezone: profile.timezone)
-    }
-
-    private var proteinCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Your protein").font(.headline)
-            if let errorMessage {
-                Text(errorMessage).font(.footnote)
-            } else if isLoading {
-                ProgressView("Loading protein")
-            } else {
-                if let today = proteinDays.last {
-                    Text(ProteinProgress.todayMessage(today, displayName: profile.displayName))
-                        .font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                ForEach(proteinDays) { day in
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Text(day.date, format: Date.FormatStyle(timeZone: TimeZone(identifier: profile.timezone) ?? .current).weekday(.abbreviated).month(.abbreviated).day())
-                            Spacer()
-                            Text(day.loggedGrams.map { "\(Int($0.rounded())) / \(Int(day.targetGrams.rounded()))g" } ?? "No log")
-                                .monospacedDigit()
-                        }
-                        .font(.caption)
-                        if let logged = day.loggedGrams {
-                            ProgressView(value: NutritionProgressPolicy.progress(current: logged, goal: day.targetGrams))
-                                .tint(Design.Color.ringProtein)
-                                .accessibilityLabel("Protein logged against target")
+            } else if let window, window.loggedDayCount > 0, let average = window.average {
+                let target = window.averageTarget ?? NutrientTrendValues(
+                    caloriesKcal: profile.dailyMacroTarget.caloriesKcal,
+                    proteinG: profile.dailyMacroTarget.proteinG,
+                    carbsG: profile.dailyMacroTarget.carbsG,
+                    fatG: profile.dailyMacroTarget.fatG)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        calories(average)
+                        Text("kcal / day")
+                            .font(.headline)
+                            .foregroundStyle(Design.Color.textSecondary)
+                        Spacer(minLength: 8)
+                        calorieTarget(target)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        calories(average)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("kcal / day")
+                                .font(.headline)
+                                .foregroundStyle(Design.Color.textSecondary)
+                            calorieTarget(target)
                         }
                     }
                 }
-                Text("No log means unknown intake, not zero. Targets reflect each day’s settings; today may be incomplete.")
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    "Average \(Int(average.caloriesKcal.rounded())) of \(Int(target.caloriesKcal.rounded())) kilocalories per logged day")
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Protein").eyebrowStyle()
+                        Spacer()
+                        Text("\(Int(average.proteinG.rounded())) g avg · of \(Int(target.proteinG.rounded()))")
+                            .font(Design.Typeface.meta)
+                            .foregroundStyle(Design.Color.ember)
+                            .monospacedDigit()
+                    }
+                    ProteinWeekBars(
+                        days: ProteinProgress.days(
+                            totals: dailyTotals, target: profile.dailyMacroTarget,
+                            history: targetHistory, timezone: profile.timezone),
+                        timezone: profile.timezone
+                    )
+                }
+            } else {
+                Text("Nothing logged in the last seven days.")
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.textSecondary)
             }
-            NavigationLink("Explore protein portions") { ProteinReferenceView() }
-                .font(.subheadline.weight(.medium))
-                .padding(.vertical, 8)
         }
-        .foregroundStyle(Design.Color.ink)
-        .padding(18)
-        .background(Design.Color.glassFill, in: RoundedRectangle(cornerRadius: Design.Radius.card))
+        .padding(16)
+        .cardSurface(radius: Design.Radius.cardLarge)
     }
 
-    private func runningMetric(
-        _ label: String, _ value: Double, _ goal: Double, _ color: Color
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(Design.Color.muted)
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("\(Int(value.rounded()))")
-                    .font(.system(.subheadline, design: .default, weight: .bold))
-                    .foregroundStyle(Design.Color.ink)
-                    .monospacedDigit()
-                Text("/\(Int(goal.rounded()))g")
-                    .font(.caption2)
-                    .foregroundStyle(Design.Color.muted)
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.8)
-            }
-            GeometryReader { geometry in
-                Capsule()
-                    .fill(Design.Color.rule)
-                    .overlay(alignment: .leading) {
-                        Capsule()
-                            .fill(color)
-                            .frame(
-                                width: geometry.size.width
-                                    * NutritionProgressPolicy.progress(current: value, goal: goal)
-                            )
-                    }
-            }
-            .frame(height: 4)
-            .accessibilityHidden(true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "\(label), average \(Int(value.rounded())) of \(Int(goal.rounded())) grams per day"
-        )
+    private func calories(_ average: NutrientTrendValues) -> some View {
+        Text(Int(average.caloriesKcal.rounded()).formatted())
+            .font(Design.Typeface.numeral(.largeTitle, weight: .bold))
+            .foregroundStyle(Design.Color.textPrimary)
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    private func calorieTarget(_ target: NutrientTrendValues) -> some View {
+        Text("of \(Int(target.caloriesKcal.rounded()).formatted())")
+            .font(.footnote)
+            .foregroundStyle(Design.Color.textTertiary)
+            .monospacedDigit()
     }
 
     @MainActor
@@ -259,8 +189,91 @@ struct WeeklyInsightsScreen: View {
             let loaded = try await (totalsRequest, historyRequest, summariesRequest)
             (dailyTotals, targetHistory, summaries) = loaded
         } catch {
-            errorMessage = "Weekly insights couldn’t be loaded."
+            errorMessage = "Couldn’t load this week. Pull to retry."
         }
         isLoading = false
+    }
+}
+
+/// Seven days of protein as bars against a dashed target line: ember on a
+/// hit (≥ 90%), dimmed under it, a stub where nothing was logged.
+private struct ProteinWeekBars: View {
+    let days: [ProteinDay]
+    let timezone: String
+
+    private static let maxRatio = 1.25
+    private static let barHeight: CGFloat = 88
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack(alignment: .bottom) {
+                TargetRule()
+                    .stroke(Design.Color.textTertiary.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                    .frame(height: 1)
+                    .offset(y: -Self.barHeight / Self.maxRatio)
+                HStack(alignment: .bottom, spacing: 8) {
+                    ForEach(days) { day in
+                        column(day)
+                    }
+                }
+            }
+            .frame(height: Self.barHeight + 18, alignment: .bottom)
+            HStack(spacing: 8) {
+                ForEach(days) { day in
+                    Text(day.date, format: Date.FormatStyle(timeZone: TimeZone(identifier: timezone) ?? .current).weekday(.narrow))
+                        .font(Design.Typeface.meta)
+                        .foregroundStyle(day.id == days.last?.id ? Design.Color.textPrimary : Design.Color.textTertiary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func column(_ day: ProteinDay) -> some View {
+        let ratio = day.loggedGrams.map { $0 / max(day.targetGrams, 1) }
+        let height = ratio.map { max(4, Self.barHeight * min($0, Self.maxRatio) / Self.maxRatio) } ?? 4
+        return VStack(spacing: 4) {
+            if let grams = day.loggedGrams {
+                Text("\(Int(grams.rounded()))")
+                    .font(Design.Typeface.numeral(.caption2, weight: .semibold))
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    // Knocks the target rule out behind the number.
+                    .padding(.horizontal, 3)
+                    .background(Design.Color.surface1)
+            }
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(fill(ratio))
+                .frame(height: height)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel(day))
+    }
+
+    private func fill(_ ratio: Double?) -> AnyShapeStyle {
+        guard let ratio else { return AnyShapeStyle(Design.Color.surface3) }
+        return ratio >= AdherencePolicy.proteinHitRatio
+            ? AnyShapeStyle(Design.Color.emberFill)
+            : AnyShapeStyle(Design.Color.ember.opacity(0.35))
+    }
+
+    private func accessibilityLabel(_ day: ProteinDay) -> String {
+        let date = day.date.formatted(
+            Date.FormatStyle(timeZone: TimeZone(identifier: timezone) ?? .current).weekday(.wide).month(.abbreviated).day())
+        guard let grams = day.loggedGrams else { return "\(date), nothing logged" }
+        return "\(date), \(Int(grams.rounded())) of \(Int(day.targetGrams.rounded())) grams of protein"
+    }
+}
+
+private struct TargetRule: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        }
     }
 }
