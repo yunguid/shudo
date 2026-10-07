@@ -55,8 +55,9 @@ private final class PolishPreviewCorrectionService: EntryReanalysisServing {
         clientRequestId: UUID
     ) async throws -> APIService.ReanalysisResult {
         // Long enough for a person (or a UI test polling an animated
-        // hierarchy) to see the timeline's updating state before it settles.
-        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        // hierarchy on a busy machine, ~4s of idle waits) to see the
+        // timeline's updating state before it settles.
+        try? await Task.sleep(nanoseconds: 6_000_000_000)
         let attempt = (attemptCounts[id] ?? 0) + 1
         attemptCounts[id] = attempt
         if attempt == 1, text?.localizedCaseInsensitiveContains("fail") == true {

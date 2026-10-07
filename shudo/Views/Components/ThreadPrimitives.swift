@@ -170,20 +170,16 @@ private struct MessageTextSelectionSheet: View {
     }
 }
 
-/// One coach row: avatar gutter (avatar only on the group's last message).
+/// Shudo's side of the thread. A one-to-one conversation needs no avatar
+/// gutter (the title already says who this is), so his column starts at
+/// the margin like Messages.
 struct CoachRow<Content: View>: View {
-    var showsAvatar: Bool
-    var isThinking = false
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Group {
-                if showsAvatar { CoachAvatar(size: 28, isThinking: isThinking) } else { Color.clear }
-            }
-            .frame(width: 28, height: 28)
+        HStack(alignment: .bottom, spacing: 0) {
             content
-            Spacer(minLength: 36)
+            Spacer(minLength: 48)
         }
     }
 }
@@ -198,15 +194,25 @@ struct MeRow<Content: View>: View {
     }
 }
 
+/// Centered stamp between the day's chapters: "7:21 PM", or with the day
+/// on the first one ("**Today** 6:52 AM"), like Messages.
 struct ThreadTimestamp: View {
-    let text: String
+    var day: String?
+    let time: String
+
     var body: some View {
-        Text(text)
-            .font(Design.Typeface.meta)
-            .foregroundStyle(Design.Color.textTertiary)
-            .frame(maxWidth: .infinity)
-            .padding(.top, 14)
-            .padding(.bottom, 4)
+        Group {
+            if let day {
+                Text("\(Text(day).fontWeight(.semibold)) \(time)")
+            } else {
+                Text(time)
+            }
+        }
+        .font(Design.Typeface.meta)
+        .foregroundStyle(Design.Color.textTertiary)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 18)
+        .padding(.bottom, 8)
     }
 }
 
@@ -265,17 +271,20 @@ struct MacroBar: View {
     let target: Double
     let color: Color
 
+    @ScaledMetric(relativeTo: .caption) private var valueWidth: CGFloat = 62
+
     var body: some View {
         HStack(spacing: 8) {
             Text(label)
                 .font(Design.Typeface.eyebrow)
                 .foregroundStyle(color)
-                .frame(width: 12, alignment: .leading)
+                .fixedSize()
+                .frame(minWidth: 12, alignment: .leading)
             GeometryReader { geo in
                 Capsule().fill(color.opacity(0.16))
                     .overlay(alignment: .leading) {
                         Capsule().fill(color)
-                            .frame(width: max(5, geo.size.width * min(value / target, 1)))
+                            .frame(width: value > 0 ? max(5, geo.size.width * min(value / target, 1)) : 0)
                     }
             }
             .frame(height: 5)
@@ -285,7 +294,9 @@ struct MacroBar: View {
             }
             .font(Design.Typeface.numeral(.caption, weight: .semibold))
             .monospacedDigit()
-            .frame(width: 62, alignment: .trailing)
+            .lineLimit(1)
+            .fixedSize()
+            .frame(minWidth: valueWidth, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label), \(Int(value)) of \(Int(target)) grams")
@@ -308,5 +319,7 @@ struct MacroInline: View {
             Text("\(Int(value))").foregroundStyle(Design.Color.textPrimary)
             Text(label).foregroundStyle(color)
         }
+        .lineLimit(1)
+        .fixedSize()
     }
 }

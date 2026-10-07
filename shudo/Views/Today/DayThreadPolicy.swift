@@ -23,8 +23,8 @@ enum DayThreadItem: Identifiable, Equatable {
     case meal(Entry)
     case activity(Activity)
     case checkIn(WeightCheckIn)
-    /// Shudo is thinking / writing (`label` = tool status, e.g. "Checking what's near you…").
-    case typing(label: String?, at: Date)
+    /// Shudo is thinking (dots only; tool status labels stay behind the scenes).
+    case typing(at: Date)
 
     var id: String {
         switch self {
@@ -45,7 +45,7 @@ enum DayThreadItem: Identifiable, Equatable {
         case .meal(let entry): return entry.createdAt
         case .activity(let activity): return activity.occurredAt
         case .checkIn(let checkIn): return checkIn.photoCapturedAt ?? checkIn.createdAt
-        case .typing(_, let at): return at
+        case .typing(let at): return at
         }
     }
 
@@ -89,8 +89,6 @@ struct DayThreadRow: Identifiable, Equatable {
     var timestamp: Date?
     /// Corner shaping within the same-sender group.
     var position: BubblePosition
-    /// The coach avatar sits on the last row of a coach group only.
-    var showsAvatar: Bool
     /// Extra breathing room above the first row of a group.
     var startsGroup: Bool
 
@@ -98,8 +96,10 @@ struct DayThreadRow: Identifiable, Equatable {
 }
 
 enum DayThreadPolicy {
-    /// A centered timestamp separates rows this far apart (iMessage style).
-    static let timestampGap: TimeInterval = 15 * 60
+    /// A centered timestamp separates rows this far apart. An hour keeps
+    /// the stamps to the day's real chapters (morning, lunch, the lift)
+    /// instead of one over every other message.
+    static let timestampGap: TimeInterval = 60 * 60
 
     /// Every source merged into one chronological list. Rows hidden by the
     /// caller (meals pending an undoable delete) are passed in `hiddenIds`.
@@ -126,9 +126,9 @@ enum DayThreadPolicy {
         var sorted = items.sorted(by: precedes)
         // A turn that is still "thinking" shows the typing bubble after
         // everything else; while text streams the bubble itself is live.
-        if case .thinking(let label)? = typing {
+        if case .thinking? = typing {
             let last = sorted.last?.date ?? now
-            sorted.append(.typing(label: label, at: max(now, last)))
+            sorted.append(.typing(at: max(now, last)))
         }
         return sorted
     }
@@ -140,7 +140,7 @@ enum DayThreadPolicy {
     }
 
     /// Groups consecutive same-sender rows (broken by a timestamp or a
-    /// center pill) and places timestamps on ≥15-minute gaps.
+    /// center pill) and places timestamps on hour-long gaps.
     static func rows(for items: [DayThreadItem]) -> [DayThreadRow] {
         guard !items.isEmpty else { return [] }
         var rows: [DayThreadRow] = []
@@ -160,7 +160,6 @@ enum DayThreadPolicy {
                 item: item,
                 timestamp: timestamp,
                 position: .single,
-                showsAvatar: false,
                 startsGroup: !(continues && timestamp == nil)
             ))
             previous = item
@@ -175,24 +174,24 @@ enum DayThreadPolicy {
                 let offset = index - start
                 rows[index].position =
                     count == 1 ? .single : offset == 0 ? .first : offset == count - 1 ? .last : .middle
-                rows[index].showsAvatar = rows[index].item.side == .coach && index == end
             }
             start = end + 1
         }
         return rows
     }
 
-    /// "Read 3:31 PM" under Luke's latest text once Shudo has it (the
-    /// server accepted the turn); nil while sending or when the latest
-    /// thing on his side isn't a text.
-    static func readReceipt(for rows: [DayThreadRow]) -> (rowId: String, readAt: Date)? {
+    /// "Read" under Luke's latest text once Shudo has it (the server
+    /// accepted the turn) and until Shudo answers — the reply itself is the
+    /// receipt after that. Nil while sending or when the latest thing on his
+    /// side isn't a text.
+    static func readReceiptRowId(for rows: [DayThreadRow]) -> String? {
         guard let index = rows.lastIndex(where: { $0.item.side == .me }) else { return nil }
         guard case .message(let message) = rows[index].item, message.role == .user else { return nil }
-        let reply = rows[(index + 1)...].first { $0.item.side == .coach }
-        switch reply?.item {
-        case .message(let coach)?: return (rows[index].id, max(message.createdAt, min(coach.deliverAt, coach.createdAt)))
-        default: return (rows[index].id, message.createdAt)
+        let answered = rows[(index + 1)...].contains { row in
+            if case .message(let reply) = row.item { return reply.role == .coach }
+            return false
         }
+        return answered ? nil : rows[index].id
     }
 
     /// The day's coach message the deep link points at, as a row id.
@@ -232,6 +231,13 @@ enum DayHeaderMath {
             carbsProgress: progress(totals.carbsG, target.carbsG),
             fatProgress: progress(totals.fatG, target.fatG)
         )
+    }
+
+    /// What the hero number means: still to eat today, past the target, or
+    /// — on a finished day — how far short it ended.
+    static func remainingLabel(_ numbers: DayHeaderNumbers, isPast: Bool) -> String {
+        if numbers.isOver { return "kcal over" }
+        return isPast ? "kcal short" : "kcal left"
     }
 
     /// Progress toward a goal, 0…1 (rings and bars never overdraw; a met
@@ -354,6 +360,35 @@ enum DayLabelPolicy {
         case .gain: return "Day \(days + 1) of the bulk"
         case .lose: return "Day \(days + 1) of the cut"
         case .maintain: return nil
+        }
+    }
+    /// The empty day's hello: "Morning, Luke." by the local hour.
+    static func greeting(hour: Int, name: String?) -> String {
+        let part: String
+        switch hour {
+        case 4..<12: part = "Morning"
+        case 12..<17: part = "Afternoon"
+        default: part = "Evening"
+        }
+        let first = name?.split(separator: " ").first.map(String.init) ?? ""
+        return first.isEmpty ? "\(part)." : "\(part), \(first)."
+    }
+
+    /// How the thread names a day, iMessage-style: "Today", "Yesterday",
+    /// a weekday within the week, then "Mon, Sep 28".
+    static func threadDay(localDay: String, today: String) -> String {
+        guard let days = LocalDayMath.days(from: localDay, to: today), days >= 0 else { return "Today" }
+        switch days {
+        case 0: return "Today"
+        case 1: return "Yesterday"
+        case 2...6: return ThreadCardCopy.weekdayName(localDay, short: false) ?? localDay
+        default:
+            guard let date = LocalDayMath.date(localDay) else { return localDay }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "EEE, MMM d"
+            return formatter.string(from: date)
         }
     }
 }
