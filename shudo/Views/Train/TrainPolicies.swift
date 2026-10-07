@@ -4,7 +4,7 @@ import Foundation
 //
 // Everything the Train tab derives from rows lives here as deterministic
 // functions: calendar math, session rotation, double-progression targets,
-// e1RM/PR detection for display, the weekly ring, polling cadence, list
+// e1RM/PR detection for display, the week strip, polling cadence, list
 // merging and card copy. The server stays authoritative for stored PRs and
 // burn; these exist so the UI is instant and offline-correct.
 
@@ -270,17 +270,10 @@ struct LiftTarget: Equatable, Identifiable, Sendable {
         }
     }
 
-    /// "Last 185 × 8/8/7/7".
-    var lastSummary: String? {
-        guard let last else { return nil }
-        let working = last.sets.filter(\.isWorking)
-        guard !working.isEmpty else { return nil }
-        let repText = working.map { String($0.reps) }.joined(separator: "/")
-        if let top = working.compactMap(\.weight).max(), top > 0 {
-            let unitSuffix = working.first?.unit == .kg ? " kg" : ""
-            return "Last \(StrengthMath.formatWeight(top))\(unitSuffix) × \(repText)"
-        }
-        return "Last \(repText)"
+    /// The load goes up this session — the one progression worth flagging.
+    var addsWeight: Bool {
+        if case .increaseWeight = basis { return true }
+        return false
     }
 }
 
@@ -564,26 +557,7 @@ enum PRPolicy {
     }
 }
 
-// MARK: Weekly ring
-
-enum TrainingWeekPace: Equatable, Sendable {
-    case noTarget
-    case done
-    case onPace
-    /// The target slipped but target − 1 is still reachable (and counts).
-    case tight
-    case behind
-
-    func label(target: Int?) -> String {
-        switch self {
-        case .noTarget: return ""
-        case .done: return "Week closed"
-        case .onPace: return "On pace"
-        case .tight: return "\(max(1, (target ?? 1) - 1)) still counts"
-        case .behind: return "Fresh week Monday"
-        }
-    }
-}
+// MARK: Week strip
 
 struct TrainingWeekDay: Equatable, Identifiable, Sendable {
     var localDay: String
@@ -603,29 +577,17 @@ struct TrainingWeekProgress: Equatable, Sendable {
     var days: [TrainingWeekDay]
     var completed: Int
     var target: Int?
-    var pace: TrainingWeekPace
 
-    /// Without a plan there's no target; the ring fills against three
-    /// sessions (where Luke trains today) so one session never reads as done.
-    var fraction: Double {
-        let goal = Double(target ?? TrainingWeekPolicy.defaultRingSessions)
-        return goal > 0 ? min(1, Double(completed) / goal) : 0
+    /// "2 of 4" against the plan; nil without one (the strip says it).
+    var countLabel: String? {
+        target.map { "\(completed) of \($0)" }
     }
 
-    var summary: String {
-        let count = target.map { "\(completed) of \($0) this week" }
-            ?? "\(completed) session\(completed == 1 ? "" : "s") this week"
-        let pace = pace.label(target: target)
-        return pace.isEmpty ? count : "\(count) · \(pace)"
-    }
-
-    static let empty = TrainingWeekProgress(days: [], completed: 0, target: nil, pace: .noTarget)
+    static let empty = TrainingWeekProgress(days: [], completed: 0, target: nil)
 }
 
 enum TrainingWeekPolicy {
-    static let defaultRingSessions = 3
-
-    /// A training session for the ring: logged against the plan, or a
+    /// A training session for the week strip: logged against the plan, or a
     /// lifting/HIIT session. The 10-minute morning bike is not a session.
     static func isTrainingSession(_ activity: Activity) -> Bool {
         activity.countsTowardHistory
@@ -665,26 +627,11 @@ enum TrainingWeekPolicy {
                 isFuture: day > today
             )
         }
-        let completed = days.filter(\.trained).count
-        let target = plan?.sessionsPerWeek
-        let todayIndex = weekDays.firstIndex(of: today) ?? 0
-        let trainedToday = days.first(where: \.isToday)?.trained ?? false
-        let daysLeft = max(0, 7 - todayIndex - (trainedToday ? 1 : 0))
         return TrainingWeekProgress(
             days: days,
-            completed: completed,
-            target: target,
-            pace: pace(completed: completed, target: target, daysLeft: daysLeft)
+            completed: days.filter(\.trained).count,
+            target: plan?.sessionsPerWeek
         )
-    }
-
-    static func pace(completed: Int, target: Int?, daysLeft: Int) -> TrainingWeekPace {
-        guard let target, target > 0 else { return .noTarget }
-        let remaining = target - completed
-        if remaining <= 0 { return .done }
-        if daysLeft >= remaining { return .onPace }
-        if daysLeft >= remaining - 1, target > 1 { return .tight }
-        return .behind
     }
 }
 
@@ -764,11 +711,6 @@ enum ActivitySummaryFormatter {
         return "\(text) \(metric ? "km" : "mi")"
     }
 
-    /// "310 burned".
-    static func burnText(kcal: Double) -> String {
-        "\(Int(kcal.rounded()).formatted()) burned"
-    }
-
     /// "Barbell bench press" → "Bench press"; "Dumbbell row" → "DB row".
     static func shortLiftName(_ name: String) -> String {
         var text = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -818,22 +760,51 @@ enum ActivitySummaryFormatter {
         return setText(top, units: units) + " top"
     }
 
-    /// The card's second line: "Bench press 185×8 · +4 lifts" for lifting,
-    /// "32 min · 3.1 mi" for everything else.
-    static func subtitle(for activity: Activity, units: String) -> String? {
+    /// Every working set of one exercise: the collapsed form when the load
+    /// held ("4×8 @ 185", "25 × 8/7/7/6"), each set when it changed
+    /// ("135×10, 185×8, 205×5").
+    static func setsSummary(_ exercise: ActivityExercise, units: String) -> String {
+        let working = exercise.workingSets
+        let loads = Set(working.map { ($0.weightInPounds ?? 0).rounded() })
+        guard loads.count > 1 else { return exerciseSummary(exercise, units: units) }
+        return working.map { setText($0, units: units) }.joined(separator: ", ")
+    }
+
+    /// "Bench press 185×8" — the lead lift's top set; nil without lifts.
+    static func leadLift(of activity: Activity, units: String) -> (text: String, otherLifts: Int)? {
         let exercises = activity.exercises.filter { !$0.workingSets.isEmpty }
-        if let lead = exercises.first, let top = lead.topSet {
-            var text = shortLiftName(lead.name)
-            if top.weightInPounds != nil {
-                text += " " + setText(top, units: units)
-            } else {
-                let reps = lead.workingSets.map(\.reps)
-                text += Set(reps).count == 1 ? " \(reps.count)×\(reps[0])" : " ×\(reps.max() ?? 0)"
-            }
-            let others = exercises.count - 1
-            if others > 0 { text += " · +\(others) lift\(others == 1 ? "" : "s")" }
-            return text
+        guard let lead = exercises.first, let top = lead.topSet else { return nil }
+        var text = shortLiftName(lead.name)
+        if top.weightInPounds != nil {
+            text += " " + setText(top, units: units)
+        } else {
+            let reps = lead.workingSets.map(\.reps)
+            text += Set(reps).count == 1 ? " \(reps.count)×\(reps[0])" : " ×\(reps.max() ?? 0)"
         }
+        return (text, exercises.count - 1)
+    }
+
+    /// "Bench press 185×8 · +4 lifts" for lifting, "32 min · 3.1 mi" for
+    /// everything else.
+    static func subtitle(for activity: Activity, units: String) -> String? {
+        if let lead = leadLift(of: activity, units: units) {
+            let others = lead.otherLifts
+            return others > 0 ? "\(lead.text) · +\(others) lift\(others == 1 ? "" : "s")" : lead.text
+        }
+        return effortLine(for: activity, units: units)
+    }
+
+    /// The activity card's one stat line: "Bench press 185×8 · 61 min" for
+    /// lifting, "32 min · 3.1 mi" for everything else.
+    static func statLine(for activity: Activity, units: String) -> String? {
+        if let lead = leadLift(of: activity, units: units) {
+            return [lead.text, metaDuration(for: activity)].compactMap { $0 }.joined(separator: " · ")
+        }
+        return effortLine(for: activity, units: units)
+    }
+
+    /// "32 min · 3.1 mi", or the effort ("Hard") when nothing was measured.
+    private static func effortLine(for activity: Activity, units: String) -> String? {
         var parts: [String] = []
         if let minutes = activity.durationMin, minutes > 0 { parts.append(durationText(minutes: minutes)) }
         if let km = activity.distanceKm, km > 0 { parts.append(distanceText(kilometers: km, units: units)) }
@@ -841,20 +812,10 @@ enum ActivitySummaryFormatter {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Duration shown in the meta row only when the subtitle didn't use it.
+    /// Duration for a lifting log (cardio already leads with it).
     static func metaDuration(for activity: Activity) -> String? {
         guard activity.exercises.contains(where: { !$0.workingSets.isEmpty }),
               let minutes = activity.durationMin, minutes > 0 else { return nil }
         return durationText(minutes: minutes)
-    }
-
-    /// Working volume (Σ weight × reps) in the display unit.
-    static func volume(of activity: Activity, units: String) -> Double? {
-        let unit = WeightUnit(preference: units)
-        let pounds = activity.exercises
-            .flatMap(\.workingSets)
-            .compactMap { set in set.weightInPounds.map { $0 * Double(set.reps) } }
-            .reduce(0, +)
-        return pounds > 0 ? StrengthMath.convert(pounds: pounds, to: unit) : nil
     }
 }

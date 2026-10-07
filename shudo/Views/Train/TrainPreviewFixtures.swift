@@ -8,7 +8,8 @@ import UIKit
 ///
 /// Variants via `-shudoTrainPreview <variant>`:
 ///   (none)  the Train tab        `prs` / `recent`  scrolled to that section
-///   `detail` an activity detail  `log`  the logger opened on "Next up"
+///   `next`  nothing logged today `done`  today's session read, with a PR
+///   `detail` an activity detail  `log`  the typed logger on "Next up"
 ///   `empty`  no plan yet         `draft` a drafted plan waiting to run
 enum TrainPreviewFixtures {
     static let timezone = "America/New_York"
@@ -272,6 +273,25 @@ enum TrainPreviewFixtures {
         )
     }
 
+    /// Today's Lower B once it has been read.
+    static var completedToday: Activity {
+        var row = processingToday
+        row.status = .complete
+        row.durationMin = 54
+        row.activeKcal = 301
+        row.details = ActivityDetails(
+            exercises: [
+                ActivityExercise(name: "Deadlift", key: "deadlift",
+                                 sets: sets(285, [5, 5, 4], warmups: [(135, 5), (225, 3)])),
+                ActivityExercise(name: "Bulgarian split squat", key: "bulgarian_split_squat", sets: sets(45, [10, 9, 9])),
+                ActivityExercise(name: "Hip thrust", sets: sets(195, [12, 11, 10])),
+                ActivityExercise(name: "Hanging leg raise", sets: sets(nil, [15, 12, 12])),
+            ],
+            prs: [ActivityPR(exercise: "Deadlift", kind: .e1rm, value: 333, unit: "lb", previous: 321)],
+            planSessionId: "lower_b", burnMethod: .met, met: 5.0, weightKgUsed: 73.7)
+        return row
+    }
+
     static var detailActivity: Activity {
         activities.first { $0.id == UUID(uuidString: "A0000000-0000-4000-8000-000000000005")! }!
     }
@@ -304,12 +324,24 @@ enum TrainPreviewFixtures {
             WorkoutLogSheet(
                 session: next,
                 targets: DoubleProgressionPolicy.targets(for: next, history: activities),
-                onDictate: WorkoutDictationHook(start: { true }, stop: { nil }, cancel: {}),
                 onSubmit: { _ in })
         case "empty":
             NavigationStack {
                 TrainScreen(
                     viewModel: viewModel(plans: TrainingPlanState(), activities: Array(activities.suffix(4).dropLast())),
+                    onAskCoach: { _ in })
+            }
+        case "next":
+            NavigationStack {
+                TrainScreen(
+                    viewModel: viewModel(plans: TrainingPlanState(active: activePlan), activities: Array(activities.dropLast())),
+                    onAskCoach: { _ in })
+            }
+        case "done":
+            NavigationStack {
+                TrainScreen(
+                    viewModel: viewModel(
+                        plans: TrainingPlanState(active: activePlan), activities: Array(activities.dropLast()) + [completedToday]),
                     onAskCoach: { _ in })
             }
         case "draft":

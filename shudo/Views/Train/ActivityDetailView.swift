@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// One workout in full: stats, the set table with e1RMs, PRs, the photo it
-/// was read from, how the burn was estimated, what was said, and delete.
+/// One workout in full: the numbers, any PRs, every lift, the photo it was
+/// read from and what was said. Delete lives in the toolbar; how the burn
+/// was estimated sits behind a tap on the number.
 /// Pure presentation: the owner supplies the row and the side effects.
 struct ActivityDetailView: View {
     let activity: Activity
@@ -35,59 +36,63 @@ struct ActivityDetailView: View {
     @State private var showsBurnMath = false
 
     private var prs: [ActivityPR] { activity.prs.isEmpty ? fallbackPRs : activity.prs }
-    private var exercises: [ActivityExercise] { activity.exercises.filter { !$0.sets.isEmpty } }
+    private var exercises: [ActivityExercise] { activity.exercises.filter { !$0.workingSets.isEmpty } }
+    private var isSettled: Bool { activity.status == .complete && activity.localState == nil }
+    private var canDelete: Bool { onDelete != nil && (!activity.isProcessing || activity.isLocalOnly) }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                statusCard
-                if !stats.isEmpty {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                        ForEach(stats, id: \.label) { stat in
-                            ActivityStatTile(stat: stat)
-                        }
-                    }
-                }
+            VStack(alignment: .leading, spacing: 20) {
+                Text(dateText)
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.textTertiary)
+                    .padding(.top, -8)
+                statusView
+                if isSettled { statsRow }
                 if !prs.isEmpty { prCard }
-                ForEach(Array(exercises.enumerated()), id: \.offset) { _, exercise in
-                    ExerciseSetTable(
-                        exercise: exercise,
-                        units: units,
-                        isPR: prs.contains { LiftIdentity.normalizedName($0.exercise) == LiftIdentity.normalizedName(exercise.name) }
-                    )
-                }
+                if !exercises.isEmpty { exercisesCard }
                 if activity.imagePath != nil { photoCard }
-                if activity.activeKcal != nil, activity.status == .complete { burnCard }
                 if let input = activity.inputText?.trimmingCharacters(in: .whitespacesAndNewlines), !input.isEmpty {
-                    quoteCard(input)
-                }
-                if onDelete != nil, !activity.isProcessing || activity.isLocalOnly {
-                    Button(role: .destructive) {
-                        confirmingDelete = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            if isDeleting { ProgressView().tint(Design.Color.danger) }
-                            Text(activity.isLocalOnly ? "Discard" : "Delete workout")
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.danger)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Design.Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isDeleting)
-                    .padding(.top, 8)
+                    Text("“\(input)”")
+                        .font(.subheadline)
+                        .italic()
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("You said: \(input)")
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Design.Color.canvas.ignoresSafeArea())
         .navigationTitle(activity.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Delete this workout?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            if canDelete {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        confirmingDelete = true
+                    } label: {
+                        if isDeleting {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "trash")
+                                .foregroundStyle(Design.Color.textPrimary)
+                        }
+                    }
+                    .disabled(isDeleting)
+                    .accessibilityLabel(activity.isLocalOnly ? "Discard workout" : "Delete workout")
+                }
+            }
+        }
+        .confirmationDialog(
+            activity.isLocalOnly ? "Discard this workout?" : "Delete this workout?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button(activity.isLocalOnly ? "Discard" : "Delete", role: .destructive) {
                 Task {
                     isDeleting = true
                     let deleted = await onDelete?() ?? false
@@ -95,8 +100,6 @@ struct ActivityDetailView: View {
                     if deleted { dismiss() }
                 }
             }
-        } message: {
-            Text("It comes off your history, PR board and weekly count.")
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: isDeleting) { _, new in new }
         .task(id: activity.imagePath) {
@@ -107,149 +110,186 @@ struct ActivityDetailView: View {
 
     // MARK: Sections
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
-            ActivityKindTile(kind: activity.kind, isProcessing: activity.isProcessing, size: 56)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(activity.kind.label) · \(dateText)")
-                    .eyebrowStyle()
-                Text(activity.title)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !prs.isEmpty {
-                    TrainPRBadge(count: prs.count)
-                }
-            }
-        }
-    }
-
     private var dateText: String {
         let day = TrainSnapshot.displayTitle(localDay: activity.localDay)
         return "\(day) · \(activity.occurredAt.formatted(date: .omitted, time: .shortened))"
     }
 
     @ViewBuilder
-    private var statusCard: some View {
+    private var statusView: some View {
         if activity.isNotSent {
-            noticeCard(
-                symbol: "wifi.exclamationmark",
-                tint: Design.Color.danger,
-                title: "Not sent",
-                text: activity.errorMessage ?? ActivityLoggingController.notSentStatusMessage,
-                actionTitle: onRetry == nil ? nil : "Retry",
-                action: onRetry)
-        } else if activity.isProcessing {
-            HStack(alignment: .top, spacing: 12) {
-                CoachAvatar(size: 30, isThinking: true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Reading your session").eyebrowStyle(Design.Color.ember)
-                    Text(activity.analysisPreview ?? "Counting sets, checking PRs, estimating the burn…")
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.textSecondary)
-                        .shimmering()
-                    if case .stalled(let message) = activity.localState {
-                        Text(message)
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.textTertiary)
-                    }
+            HStack(spacing: 12) {
+                Label(activity.errorMessage ?? "Not sent", systemImage: "wifi.exclamationmark")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Design.Color.danger)
+                Spacer(minLength: 8)
+                if let onRetry {
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(TrainCapsuleButtonStyle(prominent: true))
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .cardSurface()
-        } else if activity.status == .failed {
-            noticeCard(
-                symbol: "exclamationmark.triangle.fill",
-                tint: Design.Color.danger,
-                title: "Couldn’t read this one",
-                text: (activity.errorMessage.map { $0 + " " } ?? "") + "Delete it and log it again in your own words.",
-                actionTitle: nil,
-                action: nil)
-        }
-    }
-
-    private func noticeCard(
-        symbol: String, tint: Color, title: String, text: String, actionTitle: String?, action: (() -> Void)?
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: symbol)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(tint)
-            Text(text)
-                .font(.footnote)
+        } else if activity.isProcessing {
+            Text(ActivityCard.readingLine(for: activity))
+                .font(.subheadline)
                 .foregroundStyle(Design.Color.textSecondary)
-            if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(TrainCapsuleButtonStyle(prominent: true))
-            }
+                .fixedSize(horizontal: false, vertical: true)
+                .shimmering()
+        } else if activity.status == .failed {
+            Text("Couldn’t read this one. Delete it and log it again in your own words.")
+                .font(.subheadline)
+                .foregroundStyle(Design.Color.danger)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
     }
 
-    struct Stat {
+    // MARK: Stats
+
+    struct Stat: Identifiable {
         var value: String
         var unit: String
-        var label: String
+        var isBurn = false
+        var id: String { unit }
     }
 
     private var stats: [Stat] {
-        guard activity.status == .complete, activity.localState == nil else { return [] }
         var stats: [Stat] = []
         if let minutes = activity.durationMin, minutes > 0 {
-            stats.append(Stat(value: "\(Int(minutes.rounded()))", unit: "min", label: "Time"))
-        }
-        if let kcal = activity.activeKcal, kcal >= 1 {
-            stats.append(Stat(value: Int(kcal.rounded()).formatted(), unit: "kcal", label: "Burned"))
+            stats.append(Stat(value: "\(Int(minutes.rounded()))", unit: "min"))
         }
         if let km = activity.distanceKm, km > 0 {
             let parts = ActivitySummaryFormatter.distanceText(kilometers: km, units: units).split(separator: " ")
-            stats.append(Stat(value: String(parts.first ?? ""), unit: String(parts.last ?? ""), label: "Distance"))
+            stats.append(Stat(value: String(parts.first ?? ""), unit: String(parts.last ?? "")))
         }
-        if let volume = ActivitySummaryFormatter.volume(of: activity, units: units) {
-            stats.append(Stat(
-                value: Int(volume.rounded()).formatted(), unit: WeightUnit(preference: units).rawValue,
-                label: "Volume"))
-        }
-        let workingSets = activity.exercises.flatMap(\.workingSets).count
+        let workingSets = exercises.flatMap(\.workingSets).count
         if workingSets > 0 {
-            stats.append(Stat(value: "\(workingSets)", unit: "", label: "Sets"))
+            stats.append(Stat(value: "\(workingSets)", unit: workingSets == 1 ? "set" : "sets"))
         }
         if let heartRate = activity.avgHeartRate {
-            stats.append(Stat(value: "\(heartRate)", unit: "bpm", label: "Avg HR"))
+            stats.append(Stat(value: "\(heartRate)", unit: "bpm"))
         }
-        if let rpe = activity.rpe {
-            stats.append(Stat(value: StrengthMath.formatWeight(rpe), unit: "/10", label: "RPE"))
-        } else if let intensity = activity.intensity {
-            stats.append(Stat(value: intensity.label, unit: "", label: "Effort"))
+        if let kcal = activity.activeKcal, kcal >= 1 {
+            let estimate = activity.details.burnMethod != .device
+            stats.append(Stat(value: (estimate ? "~" : "") + Int(kcal.rounded()).formatted(), unit: "kcal", isBurn: true))
         }
         return stats
     }
 
-    private var prCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "trophy.fill")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Design.Color.ember)
-                Text(prs.count == 1 ? "New PR" : "\(prs.count) new PRs").eyebrowStyle(Design.Color.ember)
-            }
-            ForEach(Array(prs.enumerated()), id: \.offset) { _, pr in
-                HStack(alignment: .firstTextBaseline) {
-                    Text(ActivitySummaryFormatter.shortLiftName(pr.exercise))
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Design.Color.textPrimary)
-                    Spacer(minLength: 8)
-                    Text(Self.prText(pr))
-                        .font(Design.Typeface.numeral(.subheadline, weight: .bold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .monospacedDigit()
+    /// One line of numbers; stacked when large type can't fit them across.
+    @ViewBuilder
+    private var statsRow: some View {
+        let stats = stats
+        if !stats.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 22) {
+                    ForEach(stats) { stat($0) }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(stats) { stat($0) }
                 }
             }
+            .popover(isPresented: $showsBurnMath, arrowEdge: .top) {
+                Text(Self.burnExplanation(for: activity, units: units))
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 250, alignment: .leading)
+                    .padding(14)
+                    .presentationCompactAdaptation(.popover)
+            }
         }
-        .padding(14)
+    }
+
+    @ViewBuilder
+    private func stat(_ stat: Stat) -> some View {
+        if stat.isBurn {
+            Button {
+                showsBurnMath = true
+            } label: {
+                statLabel(stat)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows how it was estimated")
+        } else {
+            statLabel(stat)
+        }
+    }
+
+    private func statLabel(_ stat: Stat) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(stat.value)
+                .font(Design.Typeface.numeral(.title2, weight: .bold))
+                .foregroundStyle(Design.Color.textPrimary)
+                .monospacedDigit()
+            Text(stat.unit)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(Design.Color.textTertiary)
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+    }
+
+    /// One or two plain sentences: where the number came from, and that it
+    /// never feeds back into the food targets.
+    static func burnExplanation(for activity: Activity, units: String) -> String {
+        let source: String
+        switch activity.details.burnMethod {
+        case .device:
+            switch activity.details.deviceLabel {
+            case "apple_watch": source = "From your Apple Watch."
+            case "strava": source = "From Strava."
+            case "gym_machine": source = "From the machine, trimmed 15% — consoles run high."
+            case let label?: source = "From \(label.replacingOccurrences(of: "_", with: " "))."
+            case nil: source = "From your device."
+            }
+        case .met:
+            var inputs: [String] = []
+            if let minutes = activity.durationMin { inputs.append(ActivitySummaryFormatter.durationText(minutes: minutes)) }
+            if let kilograms = activity.details.weightKgUsed {
+                let unit = WeightUnit(preference: units)
+                let weight = unit == .kg ? kilograms : kilograms * WeightUnit.poundsPerKilogram
+                inputs.append("\(Int(weight.rounded())) \(unit.rawValue)")
+            }
+            source = inputs.isEmpty
+                ? "Estimated from how long and how hard you went."
+                : "Estimated from \(inputs.joined(separator: " at ")) and how hard you went."
+        case nil:
+            source = "Estimated from how long and how hard you went."
+        }
+        return source + " Not added back to your food targets."
+    }
+
+    // MARK: PRs
+
+    private var prCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(prs.count == 1 ? "New PR" : "\(prs.count) new PRs").eyebrowStyle(Design.Color.ember)
+            ForEach(Array(prs.enumerated()), id: \.offset) { _, pr in
+                let parts = Self.prParts(pr)
+                TrainValueRow(ActivitySummaryFormatter.shortLiftName(pr.exercise)) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(parts.value)
+                            .font(Design.Typeface.numeral(.title3, weight: .bold))
+                            .foregroundStyle(Design.Color.textPrimary)
+                            .monospacedDigit()
+                        Text(parts.unit)
+                            .font(Design.Typeface.meta)
+                            .foregroundStyle(Design.Color.textTertiary)
+                        if let delta = parts.delta {
+                            Text(delta)
+                                .font(Design.Typeface.numeral(.footnote, weight: .bold))
+                                .foregroundStyle(Design.Color.ember)
+                                .monospacedDigit()
+                                .padding(.leading, 4)
+                        }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             LinearGradient(
@@ -261,16 +301,33 @@ struct ActivityDetailView: View {
                 .stroke(Design.Color.ember.opacity(0.4), lineWidth: 1))
     }
 
-    /// "e1RM 239 lb (was 231)", "225 lb", "15 reps (was 12)".
-    static func prText(_ pr: ActivityPR) -> String {
-        let value = StrengthMath.formatWeight(pr.value)
-        let unit = pr.unit.map { " \($0)" } ?? ""
-        let previous = pr.previous.map { " (was \(StrengthMath.formatWeight($0)))" } ?? ""
-        switch pr.kind {
-        case .e1rm: return "e1RM \(value)\(unit)\(previous)"
-        case .weight, .reps, .other: return "\(value)\(unit)\(previous)"
+    /// "228" "lb e1RM" "+6"; "15" "reps" "+3".
+    static func prParts(_ pr: ActivityPR) -> (value: String, unit: String, delta: String?) {
+        let unit = [pr.unit, pr.kind == .e1rm ? "e1RM" : nil].compactMap { $0 }.joined(separator: " ")
+        let delta = pr.previous.flatMap { previous -> String? in
+            let gain = pr.value - previous
+            return gain > 0 ? "+\(StrengthMath.formatWeight(gain))" : nil
         }
+        return (StrengthMath.formatWeight(pr.value), unit, delta)
     }
+
+    // MARK: Lifts
+
+    private var exercisesCard: some View {
+        VStack(spacing: 12) {
+            ForEach(Array(exercises.enumerated()), id: \.offset) { _, exercise in
+                TrainValueRow(
+                    ActivitySummaryFormatter.shortLiftName(exercise.name),
+                    value: ActivitySummaryFormatter.setsSummary(exercise, units: units))
+                    .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardSurface()
+    }
+
+    // MARK: Photo
 
     private var photoCard: some View {
         Group {
@@ -280,13 +337,13 @@ struct ActivityDetailView: View {
                     case .success(let image):
                         image.resizable().scaledToFit()
                     case .failure:
-                        photoPlaceholder("Photo unavailable")
+                        photoPlaceholder(failed: true)
                     default:
-                        photoPlaceholder(nil)
+                        photoPlaceholder(failed: false)
                     }
                 }
             } else {
-                photoPlaceholder(loadImageURL == nil ? "Photo attached" : nil)
+                photoPlaceholder(failed: loadImageURL == nil)
             }
         }
         .frame(maxWidth: .infinity)
@@ -298,184 +355,17 @@ struct ActivityDetailView: View {
         .accessibilityLabel("Workout photo")
     }
 
-    private func photoPlaceholder(_ text: String?) -> some View {
+    private func photoPlaceholder(failed: Bool) -> some View {
         ZStack {
             Design.Color.surface1
-            if let text {
-                Label(text, systemImage: "photo")
-                    .font(.footnote)
+            if failed {
+                Image(systemName: "photo")
+                    .font(.title3)
                     .foregroundStyle(Design.Color.textTertiary)
             } else {
                 ProgressView().tint(Design.Color.ember)
             }
         }
         .frame(height: 180)
-    }
-
-    private var burnCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(Design.Motion.snap) { showsBurnMath.toggle() }
-            } label: {
-                HStack {
-                    Label("How the burn was estimated", systemImage: "flame.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .rotationEffect(.degrees(showsBurnMath ? 180 : 0))
-                }
-            }
-            .buttonStyle(.plain)
-            if showsBurnMath {
-                Text(Self.burnExplanation(for: activity, units: units))
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
-    }
-
-    static func burnExplanation(for activity: Activity, units: String) -> String {
-        let method: String
-        switch activity.details.burnMethod {
-        case .device:
-            let source: String
-            switch activity.details.deviceLabel {
-            case "apple_watch": source = "your Apple Watch"
-            case "strava": source = "Strava"
-            case "gym_machine": source = "the machine’s display, trimmed 15% because consoles run high"
-            case let label?: source = label.replacingOccurrences(of: "_", with: " ")
-            case nil: source = "your device"
-            }
-            method = "Taken from \(source). Device numbers beat estimates."
-        case .met:
-            var inputs: [String] = []
-            if let met = activity.details.met { inputs.append("MET \(StrengthMath.formatWeight(met))") }
-            if let kilograms = activity.details.weightKgUsed {
-                let unit = WeightUnit(preference: units)
-                let weight = unit == .kg ? kilograms : kilograms * WeightUnit.poundsPerKilogram
-                inputs.append("\(Int(weight.rounded())) \(unit.rawValue) body weight")
-            }
-            if let minutes = activity.durationMin { inputs.append(ActivitySummaryFormatter.durationText(minutes: minutes)) }
-            method = inputs.isEmpty
-                ? "Estimated from the session’s length and effort, net of what you’d burn sitting still."
-                : "Estimated from effort: \(inputs.joined(separator: " × ")), net of what you’d burn sitting still."
-        case nil:
-            method = "Estimated from the session’s length and effort."
-        }
-        return method + " It isn’t added back to your food targets — your plan already counts training."
-    }
-
-    private func quoteCard(_ input: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("What you logged").eyebrowStyle()
-            Text(input)
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.textSecondary)
-                .textSelection(.enabled)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
-    }
-}
-
-struct ActivityStatTile: View {
-    let stat: ActivityDetailView.Stat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(stat.value)
-                    .font(Design.Typeface.numeral(.title3, weight: .bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if !stat.unit.isEmpty {
-                    Text(stat.unit)
-                        .font(Design.Typeface.meta)
-                        .foregroundStyle(Design.Color.textTertiary)
-                }
-            }
-            Text(stat.label).eyebrowStyle()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface(radius: Design.Radius.control)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-struct ExerciseSetTable: View {
-    let exercise: ActivityExercise
-    var units: String
-    var isPR: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(exercise.name)
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.textPrimary)
-                if isPR { TrainPRBadge() }
-                Spacer(minLength: 6)
-                if let best = exercise.workingSets.compactMap(StrengthMath.e1rmPounds).max() {
-                    let unit = WeightUnit(preference: units)
-                    Text("e1RM \(Int(StrengthMath.convert(pounds: best, to: unit).rounded()))")
-                        .font(Design.Typeface.numeral(.caption, weight: .semibold))
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .monospacedDigit()
-                }
-            }
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 7) {
-                GridRow {
-                    Text("Set").eyebrowStyle()
-                    Text("Weight").eyebrowStyle()
-                    Text("Reps").eyebrowStyle()
-                    Text("e1RM").eyebrowStyle()
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .gridColumnAlignment(.trailing)
-                }
-                ForEach(Array(numberedSets.enumerated()), id: \.offset) { _, row in
-                    GridRow {
-                        Text(row.label)
-                            .foregroundStyle(row.set.isWarmup ? Design.Color.textTertiary : Design.Color.textSecondary)
-                        Text(ActivitySummaryFormatter.weightLabel(row.set, units: units).map { $0 + (row.set.unit == WeightUnit(preference: units) ? " \(row.set.unit.rawValue)" : "") } ?? "BW")
-                            .foregroundStyle(row.set.isWarmup ? Design.Color.textTertiary : Design.Color.textPrimary)
-                        Text("\(row.set.reps)")
-                            .foregroundStyle(row.set.isWarmup ? Design.Color.textTertiary : Design.Color.textPrimary)
-                        Text(StrengthMath.e1rmPounds(row.set).map {
-                            "\(Int(StrengthMath.convert(pounds: $0, to: WeightUnit(preference: units)).rounded()))"
-                        } ?? "—")
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .gridColumnAlignment(.trailing)
-                    }
-                    .font(Design.Typeface.numeral(.subheadline, weight: .medium))
-                    .monospacedDigit()
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
-    }
-
-    /// Warmups read "W"; working sets are numbered 1…n.
-    private var numberedSets: [(label: String, set: ActivitySet)] {
-        var number = 0
-        return exercise.sets.map { set in
-            if set.isWarmup { return ("W", set) }
-            number += 1
-            return ("\(number)", set)
-        }
     }
 }

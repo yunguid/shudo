@@ -1,32 +1,32 @@
 import SwiftUI
 
-// MARK: - Week header: plan name, the 7-day strip, sessions-vs-target ring
+// MARK: - Week strip: plan name, "2 of 4", the seven days
 
 struct TrainWeekHeader: View {
     let planName: String?
     let week: TrainingWeekProgress
     var onOpenPlan: (() -> Void)?
 
+    private static let weekdayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 4) {
-                        Text(eyebrow).eyebrowStyle()
-                            .lineLimit(1)
-                        if onOpenPlan != nil {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(Design.Color.textTertiary)
-                        }
-                    }
-                    Text(week.summary)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .contentTransition(.numericText(value: Double(week.completed)))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(planName ?? "This week").eyebrowStyle()
+                    .lineLimit(1)
+                if onOpenPlan != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(Design.Color.textTertiary)
                 }
                 Spacer(minLength: 8)
-                TrainWeekRing(completed: week.completed, target: week.target, fraction: week.fraction)
+                if let count = week.countLabel {
+                    Text(count)
+                        .font(Design.Typeface.numeral(.footnote, weight: .semibold))
+                        .foregroundStyle(Design.Color.textSecondary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText(value: Double(week.completed)))
+                }
             }
             HStack(spacing: 6) {
                 ForEach(week.days) { day in
@@ -38,50 +38,18 @@ struct TrainWeekHeader: View {
         .cardSurface()
         .contentShape(Rectangle())
         .onTapGesture { onOpenPlan?() }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(onOpenPlan == nil ? [] : .isButton)
         .accessibilityHint(onOpenPlan == nil ? "" : "Opens your training plan")
     }
 
-    private var eyebrow: String {
-        guard let planName else { return "This week" }
-        if let target = week.target { return "\(planName) · \(target) days" }
-        return planName
-    }
-}
-
-struct TrainWeekRing: View {
-    let completed: Int
-    let target: Int?
-    let fraction: Double
-    var size: CGFloat = 58
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let lineWidth = size * 0.11
-        ZStack {
-            Circle().stroke(Design.Color.ember.opacity(0.16), lineWidth: lineWidth)
-            RingArc(progress: fraction)
-                .stroke(Design.Color.ember, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .shadow(color: Design.Color.ember.opacity(fraction >= 1 ? 0.6 : 0), radius: 6)
-                .animation(Design.Motion.gated(Design.Motion.ring, reduceMotion: reduceMotion), value: fraction)
-            VStack(spacing: -2) {
-                Text("\(completed)")
-                    .font(Design.Typeface.numeral(.title3, weight: .bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .monospacedDigit()
-                    .contentTransition(.numericText(value: Double(completed)))
-                if let target {
-                    Text("of \(target)")
-                        .font(Design.Typeface.meta)
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .monospacedDigit()
-                }
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(target.map { "\(completed) of \($0) sessions this week" } ?? "\(completed) sessions this week")
+    private var accessibilityText: String {
+        let count = week.target.map { "\(week.completed) of \($0) sessions this week" }
+            ?? "\(week.completed) session\(week.completed == 1 ? "" : "s") this week"
+        let days = week.days.indices.filter { week.days[$0].trained }.map { Self.weekdayNames[$0 % 7] }
+        let trained = days.isEmpty ? "" : ": " + days.formatted(.list(type: .and))
+        return [planName, count + trained].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -120,80 +88,102 @@ struct TrainDayPad: View {
             Image(systemName: symbol)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(day.trained ? Design.Color.onEmber : Design.Color.textSecondary)
-        } else if !day.isFuture {
-            Text("—")
-                .font(Design.Typeface.numeral(.subheadline, weight: .bold))
-                .foregroundStyle(Design.Color.textTertiary)
         }
     }
 }
 
 // MARK: - Next up
 
+/// The plan's next session: every lift with today's number (ember where the
+/// weight goes up), "Log session" (voice, through the capture bar) and a
+/// quiet way to type it or add a screenshot instead.
 struct NextSessionCard: View {
     let session: TrainingSession
     let targets: [LiftTarget]
-    var eyebrow = "Next up"
-    var isSecondary = false
     let onLog: () -> Void
+    let onType: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 6) {
-                Image(systemName: "dumbbell.fill")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Design.Color.ember)
-                Text(eyebrow).eyebrowStyle(Design.Color.ember)
-                Spacer()
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .lastTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Next up").eyebrowStyle(Design.Color.ember)
+                    Text(session.name)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(Design.Color.textPrimary)
+                }
+                Spacer(minLength: 8)
                 if let minutes = session.estMinutes {
-                    Label("~\(minutes) min", systemImage: "timer")
-                        .labelStyle(TrainInlineLabelStyle())
-                        .font(Design.Typeface.numeral(.caption, weight: .semibold))
+                    Text("~\(minutes) min")
+                        .font(Design.Typeface.numeral(.footnote, weight: .medium))
                         .foregroundStyle(Design.Color.textTertiary)
                 }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.name)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                if let focus = session.focus {
-                    Text(focus.prefix(1).uppercased() + focus.dropFirst())
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.textSecondary)
-                }
-            }
-            VStack(spacing: 12) {
-                ForEach(targets.prefix(3)) { target in
+            VStack(spacing: 11) {
+                ForEach(targets) { target in
                     LiftTargetRow(target: target)
                 }
             }
-            if targets.count > 3 {
-                Text("+\(targets.count - 3) more · \(targets.dropFirst(3).map { ActivitySummaryFormatter.shortLiftName($0.exercise.name) }.joined(separator: ", "))")
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .lineLimit(1)
+            HStack(spacing: 8) {
+                Button(action: onLog) {
+                    Label("Log session", systemImage: "mic.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                Button(action: onType) {
+                    Image(systemName: "keyboard")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityLabel("Type it or add a screenshot")
             }
-            Button(action: onLog) {
-                Label("Log session", systemImage: "mic.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(isSecondary ? AnyTrainButtonStyle(SecondaryButtonStyle()) : AnyTrainButtonStyle(PrimaryButtonStyle()))
         }
         .padding(16)
         .cardSurface()
     }
 }
 
-/// Type-erased button style so a card can switch prominence.
-struct AnyTrainButtonStyle: ButtonStyle {
-    private let make: (Configuration) -> AnyView
+/// A lift on the left, its numbers on the right — stacked when Dynamic Type
+/// leaves no room for both on one line.
+struct TrainValueRow<Trailing: View>: View {
+    let name: String
+    let trailing: Trailing
 
-    init<S: ButtonStyle>(_ style: S) {
-        make = { AnyView(style.makeBody(configuration: $0)) }
+    init(_ name: String, @ViewBuilder trailing: () -> Trailing) {
+        self.name = name
+        self.trailing = trailing()
     }
 
-    func makeBody(configuration: Configuration) -> some View {
-        make(configuration)
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                label.lineLimit(1)
+                Spacer(minLength: 8)
+                trailing.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                label
+                trailing
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var label: some View {
+        Text(name)
+            .font(.subheadline)
+            .foregroundStyle(Design.Color.textPrimary)
+    }
+}
+
+extension TrainValueRow where Trailing == Text {
+    /// The common case: numbers as one rounded, tabular string.
+    init(_ name: String, value: String, color: Color = Design.Color.textSecondary) {
+        self.init(name) {
+            Text(value)
+                .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
+                .foregroundStyle(color)
+                .monospacedDigit()
+        }
     }
 }
 
@@ -201,98 +191,73 @@ struct LiftTargetRow: View {
     let target: LiftTarget
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ActivitySummaryFormatter.shortLiftName(target.exercise.name))
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .lineLimit(1)
-                Text(target.lastSummary ?? "First time — find a weight you own")
-                    .font(Design.Typeface.numeral(.caption, weight: .regular))
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 6)
-            if let delta = target.deltaLabel {
-                Text(delta)
-                    .font(Design.Typeface.numeral(.caption2, weight: .bold))
-                    .foregroundStyle(Design.Color.ember)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Design.Color.ember.opacity(0.14), in: Capsule())
-            }
-            Text(target.prescription)
-                .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
-                .foregroundStyle(Design.Color.textPrimary)
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()
-        }
-        .accessibilityElement(children: .combine)
+        TrainValueRow(
+            ActivitySummaryFormatter.shortLiftName(target.exercise.name),
+            value: target.prescription,
+            color: target.addsWeight ? Design.Color.ember : Design.Color.textPrimary)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        let name = ActivitySummaryFormatter.shortLiftName(target.exercise.name)
+        guard target.addsWeight, let delta = target.deltaLabel else { return "\(name), \(target.prescription)" }
+        return "\(name), \(target.prescription), up \(delta.dropFirst())"
     }
 }
 
 // MARK: - Logged today
 
+/// Today's plan session once it's logged: the lifts as done (ember where a
+/// PR landed). While it's read, one calm shimmering line.
 struct LoggedSessionCard: View {
     let activity: Activity
     var sessionName: String?
     var units: String = "imperial"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: activity.isProcessing ? "dumbbell.fill" : "checkmark.seal.fill")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Design.Color.ember)
-                Text("\(sessionName ?? activity.title) · \(activity.isProcessing ? "reading" : "logged")")
-                    .eyebrowStyle(Design.Color.ember)
-                Spacer()
-                if !activity.prs.isEmpty { TrainPRBadge(count: activity.prs.count) }
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .lastTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Today").eyebrowStyle(Design.Color.ember)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(sessionName ?? activity.title)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(Design.Color.textPrimary)
+                        if !activity.prs.isEmpty { TrainPRBadge(count: activity.prs.count) }
+                    }
+                }
+                Spacer(minLength: 8)
+                if !activity.isProcessing, let minutes = activity.durationMin, minutes > 0 {
+                    Text(ActivitySummaryFormatter.durationText(minutes: minutes))
+                        .font(Design.Typeface.numeral(.footnote, weight: .medium))
+                        .foregroundStyle(Design.Color.textTertiary)
+                }
             }
             if activity.isProcessing {
-                Text(activity.analysisPreview ?? "Reading your session…")
+                Text(ActivityCard.readingLine(for: activity))
                     .font(.subheadline)
                     .foregroundStyle(Design.Color.textSecondary)
+                    .lineLimit(2)
                     .shimmering()
             } else {
                 let prNames = Set(activity.prs.map { LiftIdentity.normalizedName($0.exercise) })
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(activity.exercises.filter { !$0.workingSets.isEmpty }.prefix(4).enumerated()), id: \.offset) { _, exercise in
-                        HStack(spacing: 8) {
-                            Text(ActivitySummaryFormatter.shortLiftName(exercise.name))
-                                .font(.subheadline)
-                                .foregroundStyle(Design.Color.textPrimary)
-                                .lineLimit(1)
-                            Spacer(minLength: 6)
-                            if prNames.contains(LiftIdentity.normalizedName(exercise.name)) {
-                                TrainPRBadge()
-                            }
-                            Text(ActivitySummaryFormatter.exerciseSummary(exercise, units: units))
-                                .font(Design.Typeface.numeral(.subheadline))
-                                .monospacedDigit()
-                                .foregroundStyle(Design.Color.textSecondary)
-                                .fixedSize()
-                        }
+                VStack(spacing: 11) {
+                    ForEach(Array(activity.exercises.filter { !$0.workingSets.isEmpty }.enumerated()), id: \.offset) { _, exercise in
+                        let isPR = prNames.contains(LiftIdentity.normalizedName(exercise.name))
+                        TrainValueRow(
+                            ActivitySummaryFormatter.shortLiftName(exercise.name),
+                            value: ActivitySummaryFormatter.exerciseSummary(exercise, units: units),
+                            color: isPR ? Design.Color.ember : Design.Color.textSecondary)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityValue(isPR ? "Personal record" : "")
                     }
                 }
-            }
-            let footer = [
-                activity.durationMin.map { ActivitySummaryFormatter.durationText(minutes: $0) },
-                activity.activeKcal.map { "~\(Int($0.rounded())) kcal" },
-            ].compactMap { $0 }
-            if !footer.isEmpty, !activity.isProcessing {
-                Text(footer.joined(separator: " · "))
-                    .font(Design.Typeface.numeral(.caption, weight: .medium))
-                    .foregroundStyle(Design.Color.textTertiary)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardSurface()
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                .stroke(Design.Color.ember.opacity(0.35), lineWidth: 1))
     }
 }
 
@@ -302,21 +267,15 @@ struct EmptyPlanCard: View {
     let onBuild: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                CoachAvatar(size: 40)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("No plan yet")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                    Text("Tell Shudo to build you one — fit to your work week, built for the bulk, with numbers to beat every session.")
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                CoachAvatar(size: 36)
+                Text("No plan yet")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Design.Color.textPrimary)
             }
             Button(action: onBuild) {
-                Label("Build my plan", systemImage: "list.bullet.clipboard.fill")
+                Text("Build my plan")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(PrimaryButtonStyle())
@@ -326,6 +285,8 @@ struct EmptyPlanCard: View {
     }
 }
 
+/// A plan Shudo drafted: what changed, run it or change it. Tapping the
+/// card opens the full plan.
 struct DraftPlanCard: View {
     let plan: TrainingPlan
     var isActivating: Bool
@@ -334,37 +295,31 @@ struct DraftPlanCard: View {
     let onDetails: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "list.bullet.clipboard.fill")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Design.Color.honey)
-                Text("New plan · draft").eyebrowStyle(Design.Color.honey)
-            }
-            Text(plan.plan.name)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(Design.Color.textPrimary)
-            if let summary = plan.changeSummary ?? plan.rationale {
-                Text(summary)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .lineLimit(4)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(plan.plan.orderedSessions) { session in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(session.name)
-                            .font(.footnote.weight(.semibold))
+        VStack(alignment: .leading, spacing: 14) {
+            Button(action: onDetails) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("New plan").eyebrowStyle(Design.Color.honey)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(plan.plan.name)
+                            .font(.title3.weight(.bold))
                             .foregroundStyle(Design.Color.textPrimary)
-                            .frame(width: 70, alignment: .leading)
-                        Text(session.exercises.prefix(3).map { ActivitySummaryFormatter.shortLiftName($0.name) }.joined(separator: ", "))
-                            .font(.footnote)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.bold))
                             .foregroundStyle(Design.Color.textTertiary)
-                            .lineLimit(1)
+                    }
+                    if let summary = plan.changeSummary ?? plan.rationale {
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(Design.Color.textSecondary)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .onTapGesture(perform: onDetails)
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows the whole plan")
             HStack(spacing: 8) {
                 Button(action: onRun) {
                     HStack(spacing: 6) {
@@ -375,11 +330,8 @@ struct DraftPlanCard: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(isActivating)
-                Button("Change it", action: onChange)
-                    .buttonStyle(SecondaryButtonStyle())
-                Button(action: onDetails) {
-                    Image(systemName: "list.bullet")
-                        .accessibilityLabel("Plan details")
+                Button(action: onChange) {
+                    Text("Change it").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(SecondaryButtonStyle())
             }
@@ -401,19 +353,16 @@ struct PRBoardCard: View {
     static let collapsedCount = 5
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "trophy.fill")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Design.Color.ember)
-                Text("PR board").eyebrowStyle(Design.Color.ember)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("PR board").eyebrowStyle()
                 Spacer()
-                Text("Est. 1RM").eyebrowStyle()
+                Text("e1RM").eyebrowStyle()
+                    .accessibilityLabel("Estimated one-rep max")
             }
             let visible = expanded ? bests : Array(bests.prefix(Self.collapsedCount))
-            VStack(spacing: 0) {
-                ForEach(Array(visible.enumerated()), id: \.element.id) { index, best in
-                    if index > 0 { HairlineRule().padding(.vertical, 9) }
+            VStack(spacing: 14) {
+                ForEach(visible) { best in
                     PRBoardRow(best: best, units: units)
                 }
             }
@@ -422,7 +371,7 @@ struct PRBoardCard: View {
                     withAnimation(Design.Motion.snap) { expanded.toggle() }
                 }
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(Design.Color.ember)
+                .foregroundStyle(Design.Color.textSecondary)
             }
         }
         .padding(16)
@@ -430,6 +379,8 @@ struct PRBoardCard: View {
     }
 }
 
+/// One lift: the set that earned it underneath, the estimated max on the
+/// right — ember when it moved this week.
 struct PRBoardRow: View {
     let best: PersonalBest
     var units: String
@@ -437,21 +388,14 @@ struct PRBoardRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Text(ActivitySummaryFormatter.shortLiftName(best.name))
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .lineLimit(1)
-                    if best.isFresh {
-                        Image(systemName: "flame.fill")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(Design.Color.ember)
-                            .accessibilityLabel("New this week")
-                    }
-                }
-                Text("\(ActivitySummaryFormatter.setText(best.bestSet, units: units)) · \(TrainSnapshot.displayTitle(localDay: best.localDay))")
+                Text(ActivitySummaryFormatter.shortLiftName(best.name))
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .lineLimit(1)
+                Text(ActivitySummaryFormatter.setText(best.bestSet, units: units))
                     .font(Design.Typeface.numeral(.caption, weight: .regular))
                     .foregroundStyle(Design.Color.textTertiary)
+                    .monospacedDigit()
             }
             Spacer(minLength: 8)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -459,7 +403,7 @@ struct PRBoardRow: View {
                     let unit = WeightUnit(preference: units)
                     Text(Int(StrengthMath.convert(pounds: pounds, to: unit).rounded()).formatted())
                         .font(Design.Typeface.numeral(.title3, weight: .bold))
-                        .foregroundStyle(Design.Color.textPrimary)
+                        .foregroundStyle(best.isFresh ? Design.Color.ember : Design.Color.textPrimary)
                         .monospacedDigit()
                     Text(unit.rawValue)
                         .font(Design.Typeface.meta)
@@ -467,7 +411,7 @@ struct PRBoardRow: View {
                 } else {
                     Text("\(best.bestSet.reps)")
                         .font(Design.Typeface.numeral(.title3, weight: .bold))
-                        .foregroundStyle(Design.Color.textPrimary)
+                        .foregroundStyle(best.isFresh ? Design.Color.ember : Design.Color.textPrimary)
                         .monospacedDigit()
                     Text("reps")
                         .font(Design.Typeface.meta)
@@ -476,6 +420,7 @@ struct PRBoardRow: View {
             }
         }
         .accessibilityElement(children: .combine)
+        .accessibilityValue(best.isFresh ? "New this week" : "")
     }
 }
 
@@ -492,34 +437,25 @@ struct TrainingPlanSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(plan.status == .draft ? "Draft" : "Active plan").eyebrowStyle(Design.Color.ember)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if plan.status == .draft {
+                            Text("Draft").eyebrowStyle(Design.Color.honey)
+                        }
                         Text(plan.plan.name)
                             .font(Design.Typeface.screenTitle)
                             .foregroundStyle(Design.Color.textPrimary)
-                        Text(subtitle)
+                        Text("\(plan.plan.sessionsPerWeek) days a week")
                             .font(.subheadline)
                             .foregroundStyle(Design.Color.textSecondary)
-                        if let rationale = plan.rationale {
-                            Text(rationale)
-                                .font(.footnote)
-                                .foregroundStyle(Design.Color.textTertiary)
-                                .padding(.top, 4)
-                        }
                     }
                     ForEach(plan.plan.orderedSessions) { session in
                         sessionCard(session)
                     }
                     if let conditioning = plan.plan.conditioning {
-                        infoCard(title: "Conditioning", symbol: "figure.outdoor.cycle", text: conditioning.summary)
-                    }
-                    if let notes = plan.plan.notes {
-                        infoCard(title: "Notes", symbol: "text.quote", text: notes)
-                    }
-                    if !plan.plan.equipmentAssumed.isEmpty {
-                        infoCard(
-                            title: "Equipment", symbol: "dumbbell",
-                            text: plan.plan.equipmentAssumed.joined(separator: " · "))
+                        Label(conditioning.summary, systemImage: "figure.outdoor.cycle")
+                            .font(.subheadline)
+                            .foregroundStyle(Design.Color.textSecondary)
+                            .padding(.horizontal, 4)
                     }
                     VStack(spacing: 8) {
                         if let onRun, plan.status == .draft {
@@ -535,7 +471,7 @@ struct TrainingPlanSheet: View {
                             dismiss()
                             onChange()
                         } label: {
-                            Text("Ask Shudo to change it").frame(maxWidth: .infinity)
+                            Text("Change it").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(SecondaryButtonStyle())
                     }
@@ -554,14 +490,8 @@ struct TrainingPlanSheet: View {
         .presentationDragIndicator(.visible)
     }
 
-    private var subtitle: String {
-        var parts = ["\(plan.plan.sessionsPerWeek) sessions a week"]
-        parts.append("rotation \(plan.plan.orderedSessions.map(\.name).joined(separator: " → "))")
-        return parts.joined(separator: " · ")
-    }
-
     private func sessionCard(_ session: TrainingSession) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text(session.name)
                     .font(.headline)
@@ -570,17 +500,17 @@ struct TrainingPlanSheet: View {
                     Text(focus)
                         .font(.footnote)
                         .foregroundStyle(Design.Color.textTertiary)
+                        .lineLimit(1)
                 }
                 Spacer()
                 if let minutes = session.estMinutes {
                     Text("~\(minutes) min")
-                        .font(Design.Typeface.numeral(.caption, weight: .semibold))
+                        .font(Design.Typeface.numeral(.caption, weight: .medium))
                         .foregroundStyle(Design.Color.textTertiary)
                 }
             }
-            ForEach(Array(session.exercises.enumerated()), id: \.offset) { index, exercise in
-                if index > 0 { HairlineRule() }
-                VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(session.exercises.enumerated()), id: \.offset) { _, exercise in
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(exercise.name)
                             .font(.subheadline)
@@ -591,35 +521,17 @@ struct TrainingPlanSheet: View {
                             .foregroundStyle(Design.Color.textPrimary)
                             .monospacedDigit()
                     }
-                    let meta = [
-                        exercise.restSec.map { "rest \(Self.restText($0))" },
-                        exercise.incrementLb.map { "+\(StrengthMath.formatWeight($0)) lb when every set hits \(exercise.repMax)" },
-                        exercise.cue,
-                    ].compactMap { $0 }
+                    let meta = [exercise.restSec.map { "Rest \(Self.restText($0))" }, exercise.cue].compactMap { $0 }
                     if !meta.isEmpty {
                         Text(meta.joined(separator: " · "))
                             .font(.caption)
                             .foregroundStyle(Design.Color.textTertiary)
                     }
                 }
+                .accessibilityElement(children: .combine)
             }
         }
         .padding(14)
-        .cardSurface()
-    }
-
-    private func infoCard(title: String, symbol: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: symbol)
-                .font(Design.Typeface.eyebrow)
-                .textCase(.uppercase)
-                .foregroundStyle(Design.Color.textTertiary)
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.textSecondary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .cardSurface()
     }
 

@@ -14,9 +14,9 @@ struct WorkoutLogContext: Identifiable {
     var initialImage: UIImage?
 }
 
-/// The Train tab: this week's ring, the plan's next session with targets to
-/// beat, PRs and history. Host it inside a `NavigationStack` (activity
-/// detail pushes onto it):
+/// The Train tab: this week's strip, the plan's next session with numbers
+/// to beat (or today's, once it's logged), PRs and history. Host it inside a
+/// `NavigationStack` (activity detail pushes onto it):
 ///
 ///     NavigationStack {
 ///         TrainScreen(profile: profile, onAskCoach: { coach.compose($0) })
@@ -24,10 +24,12 @@ struct WorkoutLogContext: Identifiable {
 ///
 /// `onAskCoach` receives a complete sentence for the coach ("Build me a
 /// training plan…") — send it, or prefill the capture bar with it.
+/// `onLogByVoice` is "Log session": the shell binds it to the capture bar's
+/// mic in the Train context. Unbound, it opens the typed logger instead.
 struct TrainScreen: View {
     @StateObject private var viewModel: TrainViewModel
     var onAskCoach: (String) -> Void
-    var onDictate: WorkoutDictationHook?
+    var onLogByVoice: (() -> Void)?
 
     @State private var logContext: WorkoutLogContext?
     @State private var planSheet: TrainingPlan?
@@ -49,11 +51,11 @@ struct TrainScreen: View {
     init(
         viewModel: @autoclosure @escaping () -> TrainViewModel,
         onAskCoach: @escaping (String) -> Void,
-        onDictate: WorkoutDictationHook? = nil
+        onLogByVoice: (() -> Void)? = nil
     ) {
         _viewModel = StateObject(wrappedValue: viewModel())
         self.onAskCoach = onAskCoach
-        self.onDictate = onDictate
+        self.onLogByVoice = onLogByVoice
     }
 
     /// Convenience for the app shell. Pass a shared `logging` controller so
@@ -62,12 +64,12 @@ struct TrainScreen: View {
         profile: Profile,
         logging: ActivityLoggingController? = nil,
         onAskCoach: @escaping (String) -> Void,
-        onDictate: WorkoutDictationHook? = nil
+        onLogByVoice: (() -> Void)? = nil
     ) {
         self.init(
             viewModel: TrainViewModel(profile: profile, logging: logging),
             onAskCoach: onAskCoach,
-            onDictate: onDictate)
+            onLogByVoice: onLogByVoice)
     }
 
     private var snapshot: TrainSnapshot { viewModel.snapshot }
@@ -101,8 +103,10 @@ struct TrainScreen: View {
                         PRBoardCard(bests: snapshot.personalBests, units: viewModel.units)
                             .id("prs")
                     }
-                    recentSection
-                        .id("recent")
+                    if !recentGroups.isEmpty {
+                        recentSection
+                            .id("recent")
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
@@ -127,6 +131,7 @@ struct TrainScreen: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.body.weight(.semibold))
+                        .foregroundStyle(Design.Color.textPrimary)
                 }
                 .accessibilityLabel("Log a workout")
             }
@@ -148,8 +153,7 @@ struct TrainScreen: View {
                 session: context.session,
                 targets: context.targets,
                 initialKind: context.initialKind,
-                initialImage: context.initialImage,
-                onDictate: onDictate
+                initialImage: context.initialImage
             ) { draft in
                 _ = viewModel.log(draft, sessionName: context.session?.name)
                 submittedLogs += 1
@@ -175,6 +179,21 @@ struct TrainScreen: View {
 
     // MARK: Sections
 
+    /// Today's plan session, once logged, takes the hero spot (and leaves the
+    /// history list); otherwise the next session does.
+    private var heroActivityId: UUID? {
+        snapshot.activePlan == nil ? nil : snapshot.loggedToday?.id
+    }
+
+    private var recentGroups: [ActivityDayGroup] {
+        guard let hero = heroActivityId else { return snapshot.recent }
+        return snapshot.recent.compactMap { group in
+            var group = group
+            group.activities.removeAll { $0.id == hero }
+            return group.activities.isEmpty ? nil : group
+        }
+    }
+
     @ViewBuilder
     private var sessionSection: some View {
         if let plan = snapshot.activePlan {
@@ -187,31 +206,23 @@ struct TrainScreen: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(logged.isLocalOnly)
-            }
-            if let next = snapshot.nextSession {
+            } else if let next = snapshot.nextSession {
                 NextSessionCard(
                     session: next,
                     targets: snapshot.nextTargets,
-                    eyebrow: snapshot.loggedToday == nil ? "Next up" : "Next session",
-                    isSecondary: snapshot.loggedToday != nil
-                ) {
-                    logContext = WorkoutLogContext(session: next, targets: snapshot.nextTargets)
-                }
+                    onLog: {
+                        if let onLogByVoice {
+                            onLogByVoice()
+                        } else {
+                            logContext = WorkoutLogContext(session: next, targets: snapshot.nextTargets)
+                        }
+                    },
+                    onType: { logContext = WorkoutLogContext(session: next, targets: snapshot.nextTargets) })
             } else {
                 Text("\(plan.plan.name) has no sessions to run.")
                     .font(.footnote)
                     .foregroundStyle(Design.Color.textTertiary)
             }
-            Button {
-                onAskCoach(Self.changePlanPrompt)
-            } label: {
-                Label("Change my plan", systemImage: "bubble.left.and.text.bubble.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Design.Color.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 2)
         } else if snapshot.draftPlan == nil, viewModel.hasLoaded {
             EmptyPlanCard { onAskCoach(Self.buildPlanPrompt) }
         }
@@ -219,28 +230,9 @@ struct TrainScreen: View {
 
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Recent").eyebrowStyle()
-                Spacer()
-                Button {
-                    logContext = WorkoutLogContext()
-                } label: {
-                    Label("Log", systemImage: "plus")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Design.Color.ember)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.top, 6)
-            if snapshot.recent.isEmpty {
-                Text(viewModel.hasLoaded
-                    ? "Nothing logged yet. After your next session, tap Log and say it like you’d text a friend — or drop in your Watch screenshot."
-                    : "Loading your training…")
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .padding(.vertical, 8)
-            }
-            ForEach(snapshot.recent) { group in
+            Text("Recent").eyebrowStyle()
+                .padding(.top, 10)
+            ForEach(recentGroups) { group in
                 Text(group.title)
                     .font(Design.Typeface.meta)
                     .foregroundStyle(Design.Color.textTertiary)
@@ -255,7 +247,7 @@ struct TrainScreen: View {
             if viewModel.canShowMoreRecent {
                 Button("Show more") { viewModel.showMoreRecent() }
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Design.Color.ember)
+                    .foregroundStyle(Design.Color.textSecondary)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 4)
             }

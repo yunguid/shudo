@@ -46,7 +46,8 @@ struct TrainSnapshot: Equatable {
         let loggedToday = activities
             .filter { $0.localDay == today && $0.planSessionId != nil && $0.countsTowardHistory }
             .max { $0.occurredAt < $1.occurredAt }
-        let freshSince = TrainCalendar.adding(days: -6, to: today, timezone: timezone)
+        // "Fresh" PRs are this week's (Monday on), matching the week strip.
+        let freshSince = TrainCalendar.weekDays(containing: now, timezone: timezone).first
         return TrainSnapshot(
             activePlan: plans.active,
             draftPlan: plans.draft,

@@ -19,7 +19,6 @@ struct AppShell: View {
     /// re-render only the views that show them, never the whole shell.
     @StateObject private var coachVoice = UnobservedHolder(VoiceTranscriber(profile: .coach))
     @StateObject private var composerVoice = UnobservedHolder(VoiceTranscriber(profile: .meal))
-    @StateObject private var workoutVoice = UnobservedHolder(VoiceTranscriber(profile: .coach))
     @ObservedObject private var router = AppRouter.shared
 
     @State private var tab: AppTab
@@ -73,8 +72,7 @@ struct AppShell: View {
                 NavigationStack {
                     TrainScreen(
                         viewModel: dependencies.makeTrainViewModel(currentProfile, logging),
-                        onAskCoach: { sendToCoach($0, mode: .typed, engine: nil) },
-                        onDictate: workoutDictation
+                        onAskCoach: { sendToCoach($0, mode: .typed, engine: nil) }
                     )
                 }
             }
@@ -297,18 +295,6 @@ struct AppShell: View {
         dependencies.recordEvent(.mealLogged)
     }
 
-    private var workoutDictation: WorkoutDictationHook {
-        let voice = workoutVoice.value
-        return WorkoutDictationHook(
-            start: { await voice.start() },
-            stop: {
-                guard let take = await voice.stop() else { return nil }
-                return WorkoutDictation(text: take.text, speechEngine: take.engine.rawValue)
-            },
-            cancel: { voice.cancel() }
-        )
-    }
-
     private func submitWorkout(_ draft: WorkoutLogDraft, sessionName: String?) {
         logging.submit(draft, localDay: todayLocalDay, timezone: currentProfile.timezone, sessionName: sessionName)
         tab = .today
@@ -343,8 +329,7 @@ struct AppShell: View {
                 session: context.session,
                 targets: context.targets,
                 initialKind: context.initialKind,
-                initialImage: context.initialImage,
-                onDictate: workoutDictation
+                initialImage: context.initialImage
             ) { draft in
                 submitWorkout(draft, sessionName: context.session?.name)
             }

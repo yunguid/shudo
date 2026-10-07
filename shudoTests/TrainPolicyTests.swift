@@ -3,7 +3,7 @@ import Testing
 @testable import shudo
 
 /// Pure Train policies: e1RM, lift identity, rotation, double progression,
-/// PRs, the weekly ring, polling cadence, list merging and card copy.
+/// PRs, the week strip, polling cadence, list merging and card copy.
 struct TrainPolicyTests {
     private static let timezone = "America/New_York"
 
@@ -140,7 +140,7 @@ struct TrainPolicyTests {
         #expect(target.reps == [6, 6, 6, 6])
         #expect(target.prescription == "4×6 @ 185")
         #expect(target.deltaLabel == "+5 lb")
-        #expect(target.lastSummary == "Last 180 × 8/8/8/8")
+        #expect(target.addsWeight)
     }
 
     @Test func aMissedRepKeepsTheWeightAndAddsOneRepToTheWeakestSet() {
@@ -151,6 +151,7 @@ struct TrainPolicyTests {
         #expect(target.reps == [8, 8, 7, 7])
         #expect(target.prescription == "180 × 8/8/7/7")
         #expect(target.deltaLabel == "+1 rep")
+        #expect(!target.addsWeight)
 
         let tied = DoubleProgressionPolicy.nextTarget(
             for: Self.bench, last: Self.last([8, 7, 7, 7].map { ActivitySet(reps: $0, weight: 180) }))
@@ -182,7 +183,7 @@ struct TrainPolicyTests {
         #expect(target.weight == nil)
         #expect(target.prescription == "4×6–8")
         #expect(target.deltaLabel == nil)
-        #expect(target.lastSummary == nil)
+        #expect(!target.addsWeight)
     }
 
     @Test func kilogramLiftsStepInPlateSizedJumps() {
@@ -202,7 +203,7 @@ struct TrainPolicyTests {
         #expect(target.weight == nil)
         #expect(target.reps == [12, 10, 10])
         #expect(target.prescription == "12/10/10")
-        #expect(target.lastSummary == "Last 12/10/9")
+        #expect(target.basis == .addReps)
     }
 
     @Test func lastPerformanceIsTheMostRecentSettledLogOfThatLift() throws {
@@ -293,7 +294,7 @@ struct TrainPolicyTests {
         #expect(TrainCalendar.localDay(for: Self.now, timezone: Self.timezone) == "2026-10-06")
     }
 
-    @Test func ringCountsDistinctTrainingDaysThisWeek() {
+    @Test func weekStripCountsDistinctTrainingDaysThisWeek() {
         let plan = TrainPreviewFixtures.planDoc
         let activities = [
             Self.activity("2026-10-04", session: "lower_b"),                      // last week
@@ -308,9 +309,7 @@ struct TrainPolicyTests {
         let progress = TrainingWeekPolicy.progress(activities: activities, plan: plan, now: Self.now, timezone: Self.timezone)
         #expect(progress.completed == 2)
         #expect(progress.target == 4)
-        #expect(progress.pace == .onPace)
-        #expect(progress.summary == "2 of 4 this week · On pace")
-        #expect(progress.fraction == 0.5)
+        #expect(progress.countLabel == "2 of 4")
         #expect(progress.days.map(\.marker) == ["U", "L", nil, nil, nil, nil, nil])
         #expect(progress.days.map(\.trained) == [true, true, false, false, false, false, false])
         #expect(progress.days[1].isToday)
@@ -319,19 +318,8 @@ struct TrainPolicyTests {
 
         let noPlan = TrainingWeekPolicy.progress(activities: activities, plan: nil, now: Self.now, timezone: Self.timezone)
         #expect(noPlan.target == nil)
-        #expect(noPlan.pace == .noTarget)
-        #expect(noPlan.summary == "2 sessions this week")
+        #expect(noPlan.countLabel == nil)
         #expect(noPlan.days[0].symbolName == ActivityKind.strength.symbolName)
-        #expect(noPlan.fraction < 1)
-    }
-
-    @Test func paceAllowsOneMissedSessionToStillCount() {
-        #expect(TrainingWeekPolicy.pace(completed: 4, target: 4, daysLeft: 0) == .done)
-        #expect(TrainingWeekPolicy.pace(completed: 2, target: 4, daysLeft: 2) == .onPace)
-        #expect(TrainingWeekPolicy.pace(completed: 1, target: 4, daysLeft: 2) == .tight)
-        #expect(TrainingWeekPolicy.pace(completed: 0, target: 4, daysLeft: 1) == .behind)
-        #expect(TrainingWeekPolicy.pace(completed: 0, target: nil, daysLeft: 7) == .noTarget)
-        #expect(TrainingWeekPace.tight.label(target: 4) == "3 still counts")
     }
 
     // MARK: Polling + merge
@@ -412,8 +400,6 @@ struct TrainPolicyTests {
         #expect(ActivitySummaryFormatter.durationText(minutes: 52.4) == "52 min")
         #expect(ActivitySummaryFormatter.durationText(minutes: 65) == "1 h 5 min")
         #expect(ActivitySummaryFormatter.durationText(minutes: 120) == "2 h")
-        #expect(ActivitySummaryFormatter.burnText(kcal: 310.4) == "310 burned")
-        #expect(ActivitySummaryFormatter.burnText(kcal: 1_204) == "1,204 burned")
         #expect(ActivitySummaryFormatter.shortLiftName("Barbell bench press") == "Bench press")
         #expect(ActivitySummaryFormatter.shortLiftName("Barbell row") == "Barbell row")
         #expect(ActivitySummaryFormatter.shortLiftName("Dumbbell row") == "DB row")
@@ -431,9 +417,62 @@ struct TrainPolicyTests {
         let pyramid = ActivityExercise(name: "Deadlift", sets: [
             ActivitySet(reps: 5, weight: 185), ActivitySet(reps: 5, weight: 205), ActivitySet(reps: 3, weight: 225)])
         #expect(ActivitySummaryFormatter.exerciseSummary(pyramid, units: "imperial") == "225×3 top")
-        let volume = ActivitySummaryFormatter.volume(
-            of: Self.activity("2026-10-05", exercises: [Self.lift("Bench", 185, [8, 8])]), units: "imperial")
-        #expect(volume == 2_960)
+    }
+
+    @Test func detailSummaryListsEverySetWhenTheLoadChanged() {
+        #expect(ActivitySummaryFormatter.setsSummary(Self.lift("Bench", 185, [8, 8, 7]), units: "imperial") == "185 × 8/8/7")
+        let pyramid = ActivityExercise(name: "Deadlift", sets: [
+            ActivitySet(reps: 10, weight: 135, isWarmup: true),
+            ActivitySet(reps: 5, weight: 185), ActivitySet(reps: 5, weight: 205), ActivitySet(reps: 3, weight: 225)])
+        #expect(ActivitySummaryFormatter.setsSummary(pyramid, units: "imperial") == "185×5, 205×5, 225×3")
+    }
+
+    @Test func cardStatLineIsTheTopSetAndTheTime() {
+        var lift = Self.activity("2026-10-05", exercises: [
+            Self.lift("Barbell bench press", 180, [8, 8, 8, 8]), Self.lift("Weighted pull-up", 25, [8, 7, 7, 6]),
+        ])
+        #expect(ActivitySummaryFormatter.statLine(for: lift, units: "imperial") == "Bench press 180×8")
+        lift.durationMin = 61
+        #expect(ActivitySummaryFormatter.statLine(for: lift, units: "imperial") == "Bench press 180×8 · 1 h 1 min")
+        var ride = Self.activity("2026-10-05", kind: .cycle)
+        ride.durationMin = 10
+        ride.distanceKm = 4.4
+        #expect(ActivitySummaryFormatter.statLine(for: ride, units: "imperial") == "10 min · 2.7 mi")
+    }
+
+    @Test func aLogBeingReadShowsItsOwnWordsNotAStatus() {
+        var row = Self.activity("2026-10-06", status: .processing)
+        #expect(ActivityCard.readingLine(for: row) == "Logging…")
+        row.inputText = "  Deads 285 for 5 5 4 "
+        #expect(ActivityCard.readingLine(for: row) == "Deads 285 for 5 5 4")
+        row.details.analysisPreview = "Deadlifts 285 for 5, 5, 4"
+        #expect(ActivityCard.readingLine(for: row) == "Deadlifts 285 for 5, 5, 4")
+    }
+
+    @Test func burnExplanationIsOnePlainSentenceAndNeverFeedsTheTargets() {
+        var row = Self.activity("2026-10-05")
+        row.durationMin = 61
+        row.details.burnMethod = .met
+        row.details.met = 5
+        row.details.weightKgUsed = 73.7
+        let estimate = ActivityDetailView.burnExplanation(for: row, units: "imperial")
+        #expect(estimate == "Estimated from 1 h 1 min at 162 lb and how hard you went. Not added back to your food targets.")
+        #expect(!estimate.contains("MET"))
+        row.details.burnMethod = .device
+        row.details.deviceLabel = "apple_watch"
+        #expect(ActivityDetailView.burnExplanation(for: row, units: "imperial")
+            == "From your Apple Watch. Not added back to your food targets.")
+    }
+
+    @Test func prPartsSplitValueUnitAndGain() {
+        let parts = ActivityDetailView.prParts(
+            ActivityPR(exercise: "Bench press", kind: .e1rm, value: 228, unit: "lb", previous: 222))
+        #expect(parts.value == "228")
+        #expect(parts.unit == "lb e1RM")
+        #expect(parts.delta == "+6")
+        let first = ActivityDetailView.prParts(ActivityPR(exercise: "Dip", kind: .reps, value: 15, unit: "reps"))
+        #expect(first.unit == "reps")
+        #expect(first.delta == nil)
     }
 
     @Test func draftsCarryAnHonestOptimisticTitle() {
