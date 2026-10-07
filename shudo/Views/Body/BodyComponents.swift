@@ -40,9 +40,10 @@ struct BodyPhotoImage: View {
 }
 
 /// Privacy veil: physique photos stay blurred until revealed for the session.
+/// `iconSize: nil` drops the eye glyph (a row of tiles doesn't need twelve).
 struct PhysiqueVeil: ViewModifier {
     let isRevealed: Bool
-    var iconSize: Font = .footnote
+    var iconSize: Font? = .footnote
 
     func body(content: Content) -> some View {
         content
@@ -51,9 +52,11 @@ struct PhysiqueVeil: ViewModifier {
                 if !isRevealed {
                     ZStack {
                         Design.Color.canvas.opacity(0.25)
-                        Image(systemName: "eye.slash.fill")
-                            .font(iconSize.weight(.semibold))
-                            .foregroundStyle(Design.Color.textSecondary)
+                        if let iconSize {
+                            Image(systemName: "eye.slash.fill")
+                                .font(iconSize.weight(.semibold))
+                                .foregroundStyle(Design.Color.textSecondary)
+                        }
                     }
                     .transition(.opacity)
                 }
@@ -63,7 +66,7 @@ struct PhysiqueVeil: ViewModifier {
 }
 
 extension View {
-    func physiqueVeil(revealed: Bool, iconSize: Font = .footnote) -> some View {
+    func physiqueVeil(revealed: Bool, iconSize: Font? = .footnote) -> some View {
         modifier(PhysiqueVeil(isRevealed: revealed, iconSize: iconSize))
     }
 }
@@ -96,7 +99,6 @@ struct BodyPillButtonStyle: ButtonStyle {
 
 /// The empty slot for today's photo: dashed ember outline + viewfinder.
 struct CheckInPhotoPlaceholder: View {
-    var label = "Snap"
     var body: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
             .fill(Design.Color.surface2)
@@ -108,12 +110,9 @@ struct CheckInPhotoPlaceholder: View {
                     )
             }
             .overlay {
-                VStack(spacing: 6) {
-                    Image(systemName: "camera.viewfinder")
-                        .font(.title2.weight(.semibold))
-                    Text(label).font(Design.Typeface.eyebrow).tracking(1.1).textCase(.uppercase)
-                }
-                .foregroundStyle(Design.Color.ember)
+                Image(systemName: "camera.viewfinder")
+                    .font(.title.weight(.semibold))
+                    .foregroundStyle(Design.Color.ember)
             }
     }
 }

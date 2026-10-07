@@ -138,9 +138,6 @@ struct ProgressPolicyTests {
         let result = evaluate(bulk(), rate: 0.5)
         #expect(result.status == .onPace)
         #expect(result.projectedDay == "2027-03-30")
-        #expect(
-            TrajectoryPolicy.sentence(result, goal: bulk(), units: "imperial")
-                == "At +0.5 lb/wk you hit 175 lb around Mar 30, 2027.")
     }
 
     @Test func deadlineReportsRequiredRateAndLateness() throws {
@@ -182,9 +179,6 @@ struct ProgressPolicyTests {
         #expect(result.currentIsSelfReported)
         let remaining = try #require(result.remainingKG)
         #expect(abs(BodyUnits.pounds(remaining) - 12.5) < 1e-9)
-        #expect(
-            TrajectoryPolicy.sentence(result, goal: bulk(), units: "imperial")
-                == "12.5 lb to 175 lb. Weigh-ins start when your scale lands.")
     }
 
     @Test func projectionsBeyondTwoYearsAreDropped() {

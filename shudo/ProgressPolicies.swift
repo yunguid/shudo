@@ -368,46 +368,6 @@ enum TrajectoryPolicy {
         }
     }
 
-    static func sentence(_ trajectory: Trajectory, goal: BodyGoal?, units: String) -> String {
-        let unit = BodyUnits.label(units)
-        func weight(_ kg: Double) -> String { BodyUnits.format(BodyUnits.display(kg, units: units)) }
-        func rate(_ kg: Double) -> String { "\(BodyUnits.signed(BodyUnits.display(kg, units: units))) \(unit)/wk" }
-        let target = goal?.targetWeightKG.map { "\(weight($0)) \(unit)" } ?? "goal"
-
-        switch trajectory.status {
-        case .noGoal:
-            return "Set a goal weight and I'll map the road."
-        case .goalReached:
-            return "You're at \(target). Goal hit."
-        case .insufficientData:
-            let remaining = trajectory.remainingKG.map { "\(weight(abs($0))) \(unit) to \(target)." } ?? ""
-            let tail = trajectory.currentIsSelfReported
-                ? "Weigh-ins start when your scale lands."
-                : "A few more weigh-ins and the pace shows up."
-            return [remaining, tail].filter { !$0.isEmpty }.joined(separator: " ")
-        case .wrongDirection:
-            return "Moving the wrong way at \(rate(trajectory.rateKG ?? 0)). Eat more."
-        case .stalled:
-            return "Flat at \(rate(trajectory.rateKG ?? 0)). Time to add food."
-        case .tooFast:
-            return "\(rate(trajectory.rateKG ?? 0)) is quicker than a lean bulk wants. Watch the waist."
-        case .drifting:
-            return "Drifting at \(rate(trajectory.rateKG ?? 0)) on a maintenance goal."
-        case .ahead, .onPace, .behind:
-            guard let projected = trajectory.projectedDay, let date = LocalDayMath.date(projected) else {
-                return "At \(rate(trajectory.rateKG ?? 0)) the goal is more than two years out."
-            }
-            return "At \(rate(trajectory.rateKG ?? 0)) you hit \(target) around \(projectionFormatter.string(from: date))."
-        }
-    }
-
-    private static let projectionFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "MMM d, yyyy"
-        return formatter
-    }()
 }
 
 // MARK: - Streak

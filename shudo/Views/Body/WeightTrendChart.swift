@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Raw weigh-ins as dots, the gap-aware EMA as the ember line, the goal as a
 /// dashed honey rule, and the on-pace lean-bulk lane shaded from the goal's
-/// start. Before there are enough weigh-ins it draws only the self-reported
-/// start (hollow) and the lane, so the card is honest about what it knows.
+/// start. The goal's starting weight is a hollow marker; before there are
+/// enough weigh-ins the dots stand alone, with no trend line.
 struct WeightTrendChart: View {
     let points: [WeightTrendPoint]
     let goal: BodyGoal?
@@ -66,11 +66,6 @@ struct WeightTrendChart: View {
                             .background(Circle().fill(Design.Color.surface1))
                             .frame(width: 11, height: 11)
                     }
-                    .annotation(position: .top, alignment: .leading, spacing: 4) {
-                        Text("self-reported")
-                            .font(Design.Typeface.meta)
-                            .foregroundStyle(Design.Color.textTertiary)
-                    }
             }
             ForEach(plots) { plot in
                 PointMark(x: .value("Day", plot.date), y: .value("Weight", plot.raw))
@@ -100,6 +95,9 @@ struct WeightTrendChart: View {
                 AxisValueLabel().foregroundStyle(Design.Color.textTertiary)
             }
         }
+        // Weekly date ticks collide past xLarge; the chart's VoiceOver
+        // summary carries the numbers at every size.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
     }

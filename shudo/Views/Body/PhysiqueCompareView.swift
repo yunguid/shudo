@@ -1,14 +1,11 @@
 import SwiftUI
 
-/// Two check-ins against each other: side by side, or one frame with a
-/// draggable wipe between "before" and "after". Defaults to the first photo
-/// vs the latest; a thumbnail strip re-picks either side.
+/// Two check-ins against each other: one frame with a draggable wipe
+/// between "before" and "after" (or side by side, from the toolbar).
+/// Defaults to the first photo vs the latest; a thumbnail strip re-picks
+/// either side.
 struct PhysiqueCompareView: View {
-    enum Mode: String, CaseIterable, Identifiable {
-        case wipe = "Wipe"
-        case sideBySide = "Side by side"
-        var id: String { rawValue }
-    }
+    enum Mode { case wipe, sideBySide }
 
     enum Side { case before, after }
 
@@ -48,12 +45,6 @@ struct PhysiqueCompareView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
-                Picker("Mode", selection: $mode) {
-                    ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-
                 Group {
                     switch mode {
                     case .wipe: wipeView
@@ -72,6 +63,15 @@ struct PhysiqueCompareView: View {
             .navigationTitle("Compare")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        mode = mode == .wipe ? .sideBySide : .wipe
+                    } label: {
+                        Image(systemName: mode == .wipe ? "square.split.2x1" : "rectangle.split.2x1")
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .accessibilityLabel(mode == .wipe ? "Show side by side" : "Show wipe")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
@@ -104,8 +104,8 @@ struct PhysiqueCompareView: View {
                     .shadow(color: .black.opacity(0.35), radius: 6)
                     .offset(x: width * wipe - 18)
             }
-            .overlay(alignment: .topLeading) { cornerLabel("Before", before).padding(10) }
-            .overlay(alignment: .topTrailing) { cornerLabel("After", after).padding(10) }
+            .overlay(alignment: .topLeading) { cornerLabel(before).padding(10) }
+            .overlay(alignment: .topTrailing) { cornerLabel(after).padding(10) }
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -128,12 +128,12 @@ struct PhysiqueCompareView: View {
 
     private var sideBySide: some View {
         HStack(spacing: 8) {
-            ForEach([("Before", before), ("After", after)], id: \.0) { label, checkIn in
+            ForEach([("Before", before), ("After", after)], id: \.0) { _, checkIn in
                 Color.clear
                     .aspectRatio(3 / 4, contentMode: .fit)
                     .overlay { photo(checkIn, maxPixel: BodyPhotoSize.hero) }
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(alignment: .topLeading) { cornerLabel(label, checkIn).padding(8) }
+                    .overlay(alignment: .topLeading) { cornerLabel(checkIn).padding(8) }
             }
         }
     }
@@ -142,42 +142,40 @@ struct PhysiqueCompareView: View {
         BodyPhotoImage(path: checkIn?.progressPhotoPath, loader: loader, maxPixel: maxPixel)
     }
 
-    private func cornerLabel(_ title: String, _ checkIn: WeightCheckIn?) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title).eyebrowStyle(Design.Color.ember)
-            if let checkIn {
-                Text(BodyDayLabel.short(checkIn.localDay))
-                    .font(Design.Typeface.numeral(.caption, weight: .bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-            }
+    @ViewBuilder
+    private func cornerLabel(_ checkIn: WeightCheckIn?) -> some View {
+        if let checkIn {
+            Text(BodyDayLabel.short(checkIn.localDay))
+                .font(Design.Typeface.numeral(.caption, weight: .bold))
+                .foregroundStyle(Design.Color.textPrimary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.5))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .chromeGlass(in: RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous), tint: Design.Color.canvas.opacity(0.5))
     }
 
     // MARK: Summary + picker
 
+    /// "11 days · +1.2 lb": the gap, and the change when either the scale
+    /// or the trend knows both ends.
     private var summary: some View {
-        HStack(spacing: 16) {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
             if let before, let after {
-                let days = LocalDayMath.days(from: before.localDay, to: after.localDay) ?? 0
-                stat("\(abs(days))", caption: abs(days) == 1 ? "day apart" : "days apart")
-                if let start = before.weightKG, let end = after.weightKG {
-                    stat(
-                        BodyUnits.signed(BodyUnits.display(end - start, units: units)),
-                        caption: "\(BodyUnits.label(units)) change")
-                } else if let start = trendNear(before.localDay), let end = trendNear(after.localDay) {
-                    stat(
-                        BodyUnits.signed(BodyUnits.display(end - start, units: units)),
-                        caption: "\(BodyUnits.label(units)) trend change")
-                } else {
-                    stat("—", caption: "weigh both days for a change")
+                let days = abs(LocalDayMath.days(from: before.localDay, to: after.localDay) ?? 0)
+                stat("\(days)", caption: days == 1 ? "day" : "days")
+                if let change = weightChange(before, after) {
+                    stat(BodyUnits.signed(BodyUnits.display(change, units: units)), caption: BodyUnits.label(units))
                 }
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
+    }
+
+    private func weightChange(_ before: WeightCheckIn, _ after: WeightCheckIn) -> Double? {
+        if let start = before.weightKG, let end = after.weightKG { return end - start }
+        if let start = trendNear(before.localDay), let end = trendNear(after.localDay) { return end - start }
+        return nil
     }
 
     /// The trend weight from a weigh-in within 3 days of `day`, if any.
@@ -207,7 +205,6 @@ struct PhysiqueCompareView: View {
                 sideChip("Before", side: .before)
                 sideChip("After", side: .after)
                 Spacer()
-                Text("Tap a day").font(Design.Typeface.meta).foregroundStyle(Design.Color.textTertiary)
             }
             .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -302,14 +299,11 @@ struct PhysiquePhotoViewer: View {
 
     private func details(_ checkIn: WeightCheckIn) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 if let weight = checkIn.weightKG {
                     Text("\(BodyUnits.format(BodyUnits.display(weight, units: units))) \(BodyUnits.label(units))")
                         .font(Design.Typeface.numeral(.title3, weight: .bold))
                         .foregroundStyle(Design.Color.textPrimary)
-                }
-                if let pose = checkIn.photoPose {
-                    Text(pose.label).eyebrowStyle()
                 }
                 if let captured = checkIn.photoCapturedAt {
                     Text(BodyDayLabel.time(captured, timezone: timezone))
