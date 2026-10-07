@@ -550,7 +550,8 @@ struct TodayView: View {
 
     private func weightValueText(_ checkIn: WeightCheckIn) -> String {
         let units = vm.profile?.units ?? profile.units
-        let value = WeightCheckInPolicy.displayedValue(kilograms: checkIn.weightKG, units: units)
+        guard let kilograms = checkIn.weightKG else { return "Photo" }
+        let value = WeightCheckInPolicy.displayedValue(kilograms: kilograms, units: units)
         return "\(String(format: "%.1f", value)) \(units.lowercased() == "imperial" ? "lb" : "kg")"
     }
 

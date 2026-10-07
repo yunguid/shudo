@@ -41,7 +41,7 @@ struct DayNudgeContext {
 enum WeightReminderPolicy {
     static func copy(context: DayNudgeContext) -> NotificationCopy {
         let fallback = NotificationCopy(title: "Weigh-in", body: "Say your weight and you’re done.")
-        let allWeights = context.weightCheckIns.sorted { $0.localDay < $1.localDay }
+        let allWeights = context.weightCheckIns.filter { $0.weightKG != nil }.sorted { $0.localDay < $1.localDay }
         guard let latestDay = allWeights.last?.localDay else { return fallback }
         let cutoffDay = day(latestDay, adding: -27) ?? latestDay
         let ordered = allWeights.filter { $0.localDay >= cutoffDay }
@@ -53,8 +53,8 @@ enum WeightReminderPolicy {
 
         let leading = ordered.prefix(min(3, ordered.count / 2))
         let trailing = ordered.suffix(min(3, ordered.count / 2))
-        let start = leading.map(\.weightKG).reduce(0, +) / Double(leading.count)
-        let end = trailing.map(\.weightKG).reduce(0, +) / Double(trailing.count)
+        let start = leading.compactMap(\.weightKG).reduce(0, +) / Double(leading.count)
+        let end = trailing.compactMap(\.weightKG).reduce(0, +) / Double(trailing.count)
         let change = end - start
 
         let matchingNutrition = context.recentNutrition.filter {
