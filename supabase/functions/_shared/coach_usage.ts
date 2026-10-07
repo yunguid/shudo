@@ -1,19 +1,18 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
-import { type ClaudeUsage, logClaudeUsage } from "./claude.ts";
+import { recordClaudeUsage } from "./ai_usage.ts";
+import type { ClaudeUsage } from "./claude.ts";
 import type { CoachRunOperation } from "./coach_rpc.ts";
 
-/// Single seam for coach cost accounting. Lane B1 owns the price table and
-/// `recordClaudeUsage(admin, userId, operation, usage)` in `_shared/ai_usage.ts`
-/// (record_ai_provider_call). Until that module is merged this logs token
-/// counts only; at merge, delegate here so every coach call is recorded.
-export function recordCoachUsage(
-  _admin: SupabaseClient,
-  _userId: string,
+/// Every coach Claude call lands in the cost ledger (lane B1's
+/// recordClaudeUsage never throws; a failed write only logs).
+export async function recordCoachUsage(
+  admin: SupabaseClient,
+  userId: string,
   operation: CoachRunOperation,
   usage: ClaudeUsage,
+  runId?: string | null,
 ): Promise<void> {
-  logClaudeUsage({ ...usage, workload: `${operation}.${usage.workload}` });
-  return Promise.resolve();
+  await recordClaudeUsage(admin, userId, operation, usage, runId ?? null);
 }
 
 export function emptyUsage(workload: string, model: string): ClaudeUsage {

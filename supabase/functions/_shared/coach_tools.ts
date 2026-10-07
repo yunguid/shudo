@@ -524,7 +524,7 @@ async function updateBio(
       },
       summary,
     }),
-    { source: "coach_reply", messageId: environment.userMessageId },
+    { source: "bio_update", messageId: environment.userMessageId },
   );
   if (saved.status !== "saved") return fail("The bio changed at the same time; try again.");
   environment.changed.add("bio");

@@ -49,6 +49,7 @@ import {
   completeCoachRun,
   failCoachRun,
   fetchCoachMessages,
+  getCoachRuns,
   isClaimed,
   postUserCoachMessage,
   upsertStreamingCoachMessage,
@@ -427,7 +428,7 @@ class StreamingReply {
         claimToken: this.claimToken,
         messageId: this.messageId,
         body: snapshot.slice(0, MAX_TEXT_CHARACTERS),
-        payload: { streaming: true, persona_version: COACH_PERSONA_VERSION },
+        payload: { persona_version: COACH_PERSONA_VERSION },
         done: false,
       }).catch((error) => {
         console.warn("coach_stream_write_failed", { message: String(error) });
@@ -446,7 +447,8 @@ class StreamingReply {
       claimToken: this.claimToken,
       messageId: this.messageId,
       body: body.slice(0, MAX_TEXT_CHARACTERS),
-      payload: { ...payload, streaming: false },
+      payload,
+      model: typeof payload.model === "string" ? payload.model : null,
       done: true,
     });
     if (!ok) throw new LostRunFenceError("Coach reply fence was lost");
@@ -531,7 +533,8 @@ export async function runCoachTurn(
   const deadline = clock() + (dependencies.budgetMs ?? TURN_BUDGET_MS);
   const { admin, userId, request } = input;
   const client = dependencies.client ?? claudeClient();
-  const replyMessageId = await deterministicUuid(`${input.runId}:reply`);
+  // One reply row per attempt: a reclaimed run hides earlier attempts' rows.
+  const replyMessageId = await deterministicUuid(`${input.claimToken}:reply`);
   const reply = new StreamingReply(
     admin,
     input.runId,
@@ -663,7 +666,9 @@ export async function runCoachTurn(
         throw error;
       }
       const message = await stream.finalMessage();
-      usage = addUsage(usage, usageOf("coach_reply", message));
+      const requestUsage = usageOf("coach_reply", message);
+      usage = addUsage(usage, requestUsage);
+      await recordCoachUsage(admin, userId, "coach_reply", requestUsage, input.runId);
       lastResponseId = message.id ?? lastResponseId;
       lastModel = message.model ?? lastModel;
 
@@ -748,7 +753,10 @@ export async function runCoachTurn(
           violation.code,
         )
         : null;
-      if (rewrite) usage = addUsage(usage, rewrite.usage);
+      if (rewrite) {
+        usage = addUsage(usage, rewrite.usage);
+        await recordCoachUsage(admin, userId, "coach_reply", rewrite.usage, input.runId);
+      }
       if (
         rewrite &&
         !coachCopyViolation({ skip: false, bubbles: rewrite.bubbles, push_body: null }, policy)
@@ -811,7 +819,6 @@ export async function runCoachTurn(
     if (completion.status !== "complete") {
       throw new LostRunFenceError("Coach run was completed elsewhere");
     }
-    await recordCoachUsage(admin, userId, "coach_reply", usage);
 
     const rows = await fetchCoachMessages(admin, userId, [
       replyMessageId,
@@ -888,7 +895,7 @@ function delay(ms: number): Promise<void> {
 }
 
 /// A resend of a running turn: re-read the reply row and forward only the
-/// characters the client hasn't seen, until the reply is final.
+/// characters the client hasn't seen, until the run itself is finished.
 export async function tailCoachRun(
   admin: SupabaseClient,
   userId: string,
@@ -899,9 +906,10 @@ export async function tailCoachRun(
   const clock = options.clock ?? Date.now;
   const stopAt = clock() + (options.maxMs ?? TURN_BUDGET_MS);
   const sent = new Map<string, string>();
-  let doneSeenAt: number | null = null;
   while (clock() < stopAt) {
-    const rows = await runMessages(admin, userId, runId);
+    const [run] = await getCoachRuns(admin, { userId, runId, limit: 1 });
+    const rows = (await runMessages(admin, userId, runId))
+      .filter((row) => row.status !== "superseded");
     for (const row of rows) {
       if (row.payload?.streaming !== true) continue;
       const previous = sent.get(row.id) ?? "";
@@ -910,15 +918,20 @@ export async function tailCoachRun(
         sent.set(row.id, row.body);
       }
     }
-    const streaming = rows.some((row) => row.payload?.streaming === true);
-    if (rows.length > 0 && !streaming) {
-      doneSeenAt ??= clock();
-      // Cards land with the run's completion just after the reply is final.
-      if (clock() - doneSeenAt >= 1_000) {
-        for (const row of rows) emit({ type: "message", message: row });
-        emit({ type: "done", run_id: runId, message_ids: rows.map((row) => row.id) });
-        return;
-      }
+    if (!run || run.status === "complete" || run.status === "skipped") {
+      for (const row of rows) emit({ type: "message", message: row });
+      emit({ type: "done", run_id: runId, message_ids: rows.map((row) => row.id) });
+      return;
+    }
+    if (run.status === "failed" || !run.live) {
+      for (const row of rows) emit({ type: "message", message: row });
+      emit({
+        type: "error",
+        code: "turn_failed",
+        message: CHAT_FAILURE_FALLBACK,
+        retryable: true,
+      });
+      return;
     }
     await delay(options.intervalMs ?? STREAM_WRITE_INTERVAL_MS);
   }
@@ -1009,11 +1022,18 @@ export async function startCoachSend(
   } catch (error) {
     throw quotaHttpError(error) ?? error;
   }
+  if (claim.status === "quota") {
+    throw new HttpError(
+      429,
+      "The coach is out of thinking time for today. Try again later.",
+    );
+  }
   if (!claim.run_id) throw claimError(claim.status);
   const runId = claim.run_id;
-  const [userMessage] = posted.message_id
-    ? await fetchCoachMessages(admin, userId, [posted.message_id])
-    : [];
+  const userMessage = posted.message ??
+    (posted.message_id
+      ? (await fetchCoachMessages(admin, userId, [posted.message_id]))[0]
+      : null);
 
   const channel = new SseChannel(dependencies.keepaliveMs);
   const emit = (event: CoachStreamEvent) => channel.send(event);

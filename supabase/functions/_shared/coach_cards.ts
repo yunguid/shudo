@@ -12,6 +12,7 @@ import {
   activateTrainingPlanRpc,
   COACH_MESSAGE_COLUMNS,
   type CoachMessageRow,
+  discardTrainingPlanDraftRpc,
   saveCoachMemoryRpc,
 } from "./coach_rpc.ts";
 import { HttpError } from "./errors.ts";
@@ -198,7 +199,7 @@ async function bioUpdateAction(
     expectedVersion: currentVersion,
     document: renderMemoryDocument(sections),
     sections: sections as unknown as Record<string, unknown>,
-    source: "manual",
+    source: "undo",
     changeSummary: `Undo of bio update to version ${appliedVersion}`,
     messageId: message.id,
   });
@@ -221,19 +222,24 @@ async function trainingPlanAction(
   dependencies: CardActionDependencies,
 ): Promise<CoachMessageRow[]> {
   if (decision === "activate" || decision === "apply") {
-    await activateTrainingPlanRpc(admin, userId, planId);
+    const status = await activateTrainingPlanRpc(admin, userId, planId);
+    if (status !== "activated" && status !== "already_active") {
+      throw new HttpError(
+        status === "not_found" ? 404 : 409,
+        "That plan can't be activated anymore.",
+      );
+    }
     dependencies.refreshPlan?.();
     return await Promise.all(
       messages.map((message) => updatePayload(admin, userId, message, { status: "active" })),
     );
   }
   if (decision === "discard") {
-    const { error } = await admin.from("training_plans")
-      .update({ status: "rejected" })
-      .eq("id", planId)
-      .eq("user_id", userId)
-      .eq("status", "draft");
-    if (error) throw error;
+    const status = await discardTrainingPlanDraftRpc(admin, userId, planId);
+    if (status === "not_found") throw new HttpError(404, "That plan is gone");
+    if (status !== "rejected") {
+      throw new HttpError(409, "That plan is already active. Ask the coach to change it.");
+    }
     return await Promise.all(
       messages.map((message) => updatePayload(admin, userId, message, { status: "rejected" })),
     );

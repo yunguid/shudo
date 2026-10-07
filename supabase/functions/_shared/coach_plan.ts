@@ -905,7 +905,13 @@ export async function runCoachPlan(
         onUsage: (usage) => usageEvents.push(usage),
       });
     for (const usage of usageEvents) {
-      await recordCoachUsage(admin, request.userId, "coach_checkpoint", usage);
+      await recordCoachUsage(
+        admin,
+        request.userId,
+        "coach_checkpoint",
+        usage,
+        claim.run_id,
+      );
     }
 
     if (written.memoryNote && !context.wellbeingHold) {
@@ -920,7 +926,11 @@ export async function runCoachPlan(
             summary: `Coach note: ${note}`,
           };
         },
-        { source: "coach_reply", runId: claim.run_id },
+        {
+          source: "coach_reply",
+          runId: claim.run_id,
+          claimToken: claim.claim_token,
+        },
       ).catch((error) => {
         console.warn("coach_plan_memory_note_failed", { message: String(error) });
       });

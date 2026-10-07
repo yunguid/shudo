@@ -21,13 +21,16 @@ export type CoachRunClaimStatus =
   | "exhausted"
   | "disabled"
   | "capacity"
-  | "conflict";
+  | "conflict"
+  | "quota";
 
 export type CoachRunClaim = {
   status: CoachRunClaimStatus;
   run_id: string | null;
   claim_token: string | null;
   generation_attempt: number | null;
+  /// Budget reason when status is quota (project_ai_budget_exceeded, ...).
+  reason: string | null;
 };
 
 export type ClaimedCoachRun = CoachRunClaim & {
@@ -83,11 +86,14 @@ export async function claimCoachRun(
     run_id: stringOrNull(result.run_id),
     claim_token: stringOrNull(result.claim_token),
     generation_attempt: Number.isInteger(attempt) ? attempt : null,
+    reason: stringOrNull(result.reason),
   };
 }
 
 /// One message for complete_coach_run (persisted as role 'coach').
 export type CoachMessageInput = {
+  /// Optional explicit id for the inserted row.
+  id?: string;
   kind: string;
   body: string;
   payload?: Record<string, unknown>;
@@ -147,11 +153,13 @@ export async function failCoachRun(
   runId: string,
   claimToken: string,
   message: string,
+  retryable = true,
 ): Promise<boolean> {
   const { data, error } = await admin.rpc("fail_coach_run", {
     p_run_id: runId,
     p_claim_token: claimToken,
     p_error_message: message.slice(0, 500),
+    p_retryable: retryable,
   });
   if (error) throw error;
   return data === true;
@@ -160,6 +168,7 @@ export async function failCoachRun(
 export type UserMessagePost = {
   status: "created" | "existing" | "conflict" | "quota";
   message_id: string | null;
+  message: CoachMessageRow | null;
 };
 
 export async function postUserCoachMessage(
@@ -190,11 +199,15 @@ export async function postUserCoachMessage(
       "status"
     ],
     message_id: stringOrNull(result.message_id),
+    message: result.message && typeof result.message === "object"
+      ? result.message as CoachMessageRow
+      : null,
   };
 }
 
-/// Creates or updates the streaming coach reply under the run fence. Returns
-/// false when the fence was lost (another worker owns the run now).
+/// Creates or updates the streaming coach reply under the run fence. The
+/// body is the full text so far (idempotent); the server owns
+/// payload.streaming. Returns false when the fence was lost.
 export async function upsertStreamingCoachMessage(
   admin: SupabaseClient,
   args: {
@@ -204,6 +217,8 @@ export async function upsertStreamingCoachMessage(
     body: string;
     payload: Record<string, unknown>;
     done: boolean;
+    kind?: string;
+    model?: string | null;
   },
 ): Promise<boolean> {
   const { data, error } = await admin.rpc("upsert_streaming_coach_message", {
@@ -213,12 +228,22 @@ export async function upsertStreamingCoachMessage(
     p_body: args.body,
     p_payload: args.payload,
     p_done: args.done,
+    p_kind: args.kind ?? "text",
+    p_model: args.model ?? null,
   });
   if (error) throw error;
-  if (data === false || data === null) return false;
-  const status = objectOf(data).status;
-  return !(status === "stale" || status === "not_found");
+  return objectOf(data).status === "saved";
 }
+
+export type CoachMemorySource =
+  | "seed"
+  | "onboarding"
+  | "coach_reply"
+  | "bio_update"
+  | "day_digest"
+  | "weekly"
+  | "manual"
+  | "undo";
 
 export type MemorySaveResult = {
   status: "saved" | "conflict" | "stale";
@@ -232,10 +257,11 @@ export async function saveCoachMemoryRpc(
     expectedVersion: number;
     document: string;
     sections: Record<string, unknown>;
-    source: "onboarding" | "coach_reply" | "day_digest" | "weekly" | "manual";
+    source: CoachMemorySource;
     changeSummary: string | null;
     runId?: string | null;
     messageId?: string | null;
+    claimToken?: string | null;
   },
 ): Promise<MemorySaveResult> {
   const { data, error } = await admin.rpc("save_coach_memory", {
@@ -247,6 +273,7 @@ export async function saveCoachMemoryRpc(
     p_change_summary: args.changeSummary,
     p_run_id: args.runId ?? null,
     p_message_id: args.messageId ?? null,
+    p_claim_token: args.runId ? args.claimToken ?? null : null,
   });
   if (error) throw error;
   const result = objectOf(data);
@@ -278,13 +305,102 @@ export async function activateTrainingPlanRpc(
   admin: SupabaseClient,
   userId: string,
   planId: string,
-): Promise<unknown> {
+): Promise<string> {
   const { data, error } = await admin.rpc("activate_training_plan", {
     p_user_id: userId,
     p_plan_id: planId,
   });
   if (error) throw error;
-  return data;
+  return String(objectOf(data).status ?? "");
+}
+
+export async function discardTrainingPlanDraftRpc(
+  admin: SupabaseClient,
+  userId: string,
+  planId: string,
+): Promise<string> {
+  const { data, error } = await admin.rpc("discard_training_plan_draft", {
+    p_user_id: userId,
+    p_plan_id: planId,
+  });
+  if (error) throw error;
+  return String(objectOf(data).status ?? "");
+}
+
+/// A coach message outside any run (weekly recap). Idempotent per key.
+export async function postCoachMessage(
+  admin: SupabaseClient,
+  args: {
+    userId: string;
+    kind: string;
+    body: string;
+    payload: Record<string, unknown>;
+    localDay: string;
+    dedupeKey: string;
+    notify: boolean;
+    deliverAt?: string | null;
+    model?: string | null;
+  },
+): Promise<{ status: string; message_id: string | null }> {
+  const { data, error } = await admin.rpc("post_coach_message", {
+    p_user_id: args.userId,
+    p_kind: args.kind,
+    p_body: args.body,
+    p_payload: args.payload,
+    p_local_day: args.localDay,
+    p_dedupe_key: args.dedupeKey,
+    p_notify: args.notify,
+    p_deliver_at: args.deliverAt ?? null,
+    p_model: args.model ?? null,
+  });
+  if (error) throw error;
+  const result = objectOf(data);
+  return {
+    status: String(result.status ?? ""),
+    message_id: stringOrNull(result.message_id),
+  };
+}
+
+export type CoachRunSummary = {
+  id: string;
+  operation: string;
+  local_day: string;
+  checkpoint_key: string;
+  status: "running" | "complete" | "skipped" | "failed";
+  live: boolean;
+  generation_attempt: number;
+  input_fingerprint: string | null;
+  result: Record<string, unknown>;
+  completed_at: string | null;
+};
+
+export async function getCoachRuns(
+  admin: SupabaseClient,
+  args: {
+    userId: string;
+    runId?: string | null;
+    localDay?: string | null;
+    operation?: CoachRunOperation | null;
+    limit?: number;
+  },
+): Promise<CoachRunSummary[]> {
+  const { data, error } = await admin.rpc("get_coach_runs", {
+    p_user_id: args.userId,
+    p_run_id: args.runId ?? null,
+    p_local_day: args.localDay ?? null,
+    p_operation: args.operation ?? null,
+    p_limit: args.limit ?? 20,
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data as CoachRunSummary[] : [];
+}
+
+export async function runCoachHousekeeping(
+  admin: SupabaseClient,
+): Promise<Record<string, unknown>> {
+  const { data, error } = await admin.rpc("run_coach_housekeeping");
+  if (error) throw error;
+  return objectOf(data);
 }
 
 /// Columns returned to the client for a coach message (CoachMessageRow).

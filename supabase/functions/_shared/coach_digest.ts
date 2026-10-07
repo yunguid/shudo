@@ -377,7 +377,13 @@ export async function runDayDigest(
         throw error;
       }
     }
-    await recordCoachUsage(admin, request.userId, "day_digest", result.usage);
+    await recordCoachUsage(
+      admin,
+      request.userId,
+      "day_digest",
+      result.usage,
+      claim.run_id,
+    );
     const digest = parseDigestOutput(result.output);
     const saved = await saveDayDigestRpc(admin, claim.run_id, claim.claim_token, {
       headline: digest.headline,
@@ -404,7 +410,11 @@ export async function runDayDigest(
           sections: applyNoteOperations(sections, digest.memory_ops, now),
           summary: `Nightly digest ${digestDay}: ${digest.memory_ops.length} note change(s)`,
         }),
-        { source: "day_digest", runId: claim.run_id },
+        {
+          source: "day_digest",
+          runId: claim.run_id,
+          claimToken: claim.claim_token,
+        },
       ).catch((error) => {
         console.warn("coach_digest_memory_failed", { message: String(error) });
       });

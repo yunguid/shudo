@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import type { CoachSchedule, Weekday } from "./coach_policy.ts";
 import { WEEKDAYS } from "./coach_policy.ts";
-import { saveCoachMemoryRpc } from "./coach_rpc.ts";
+import { type CoachMemorySource, saveCoachMemoryRpc } from "./coach_rpc.ts";
 
 /// One living memory document per user: Luke's bio (his sections, his words)
 /// plus the coach's notes, a structured schedule and an equipment list. The
@@ -48,7 +48,7 @@ export type CoachMemory = {
   sections: CoachMemorySections;
 };
 
-const MAX_DOCUMENT_CHARACTERS = 12_000;
+const MAX_DOCUMENT_CHARACTERS = 20_000;
 const MAX_SECTION_CHARACTERS = 2_000;
 const MAX_NOTE_CHARACTERS = 240;
 const MAX_NOTES = 40;
@@ -279,8 +279,9 @@ export async function updateCoachMemory(
     sections: CoachMemorySections,
   ) => { sections: CoachMemorySections; summary: string } | null,
   options: {
-    source: "coach_reply" | "day_digest" | "weekly" | "manual";
+    source: CoachMemorySource;
     runId?: string | null;
+    claimToken?: string | null;
     messageId?: string | null;
     attempts?: number;
   },
@@ -304,6 +305,7 @@ export async function updateCoachMemory(
       source: options.source,
       changeSummary: change.summary.slice(0, 1000),
       runId: options.runId ?? null,
+      claimToken: options.claimToken ?? null,
       messageId: options.messageId ?? null,
     });
     last = {
