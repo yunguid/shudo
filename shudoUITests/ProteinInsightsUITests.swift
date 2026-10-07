@@ -1,6 +1,27 @@
 import XCTest
 
 final class ProteinInsightsUITests: XCTestCase {
+    /// 2.0 navigation: the old "This week" row is gone from Today; weekly
+    /// insights and the protein guide hang off the expanded day header.
+    @MainActor
+    func testWeekInsightsAreReachableFromTheTodayHeader() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-shudoPolishPreview", "main"]
+        app.launch()
+        let header = app.descendants(matching: .any)["today.header.remaining"]
+        XCTAssertTrue(header.waitForExistence(timeout: 8))
+        header.tap()
+        let insights = app.buttons["Week insights"]
+        XCTAssertTrue(insights.waitForExistence(timeout: 3))
+        insights.tap()
+        XCTAssertTrue(app.staticTexts["Your protein"].waitForExistence(timeout: 5))
+        let guide = app.buttons["Explore protein portions"]
+        for _ in 0..<4 where !guide.isHittable { app.swipeUp() }
+        XCTAssertTrue(guide.isHittable)
+        guide.tap()
+        XCTAssertTrue(app.navigationBars["Protein portions"].waitForExistence(timeout: 3))
+    }
+
     @MainActor
     func testProteinGuideAndWeeklyHistoryRemainReachable() {
         let app = XCUIApplication()

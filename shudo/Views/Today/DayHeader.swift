@@ -252,7 +252,9 @@ struct LedgerSwipeRow<Content: View>: View {
                 .offset(x: offset)
         }
         .clipped()
-        .simultaneousGesture(swipe, including: canDelete ? .all : .subviews)
+        // High priority: a real swipe (≥20 pt) must cancel the row's tap,
+        // or lifting the finger would also open the meal.
+        .highPriorityGesture(swipe, including: canDelete ? .all : .subviews)
         .contextMenu {
             if canDelete {
                 Button("Delete meal", systemImage: "trash", role: .destructive, action: onDelete)
