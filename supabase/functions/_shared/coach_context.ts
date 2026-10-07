@@ -866,51 +866,73 @@ export function coachSystemBlocks(
 }
 
 /// Every finite number reachable in `value` (for figure verification).
+const WEIGHT_KEY = /weight|(?:^|_)(?:kg|lb|lbs)$|^value$|^previous$/u;
+
+/// Every finite number reachable in `value` (for figure verification).
+/// Numbers under weight-like keys are also tagged so unit conversions are
+/// only ever derived for weights, never for calories or grams.
 export function collectNumbers(
   value: unknown,
   into: Set<number> = new Set(),
+  weights: Set<number> | null = null,
+  weightish = false,
 ): Set<number> {
+  const add = (number: number) => {
+    into.add(number);
+    if (weightish) weights?.add(number);
+  };
   if (typeof value === "number" && Number.isFinite(value)) {
-    into.add(value);
+    add(value);
   } else if (typeof value === "string") {
     const trimmed = value.trim();
-    if (/^-?\d+(?:\.\d+)?$/u.test(trimmed)) into.add(Number(trimmed));
+    if (/^-?\d+(?:\.\d+)?$/u.test(trimmed)) add(Number(trimmed));
   } else if (Array.isArray(value)) {
-    for (const item of value) collectNumbers(item, into);
+    for (const item of value) collectNumbers(item, into, weights, weightish);
   } else if (value && typeof value === "object") {
-    for (const item of Object.values(value)) collectNumbers(item, into);
+    for (const [key, item] of Object.entries(value)) {
+      collectNumbers(item, into, weights, weightish || WEIGHT_KEY.test(key));
+    }
   }
   return into;
 }
 
-/// Figures coach copy may cite: pack numbers (with absolute values, unit
-/// conversions and rounding), recent digests, PR deltas, and staples.
+/// Figures coach copy may cite: pack numbers (absolute values and
+/// rounding), lb/kg conversions of weights only, recent digests, PR deltas,
+/// and the staple-food list.
 export function allowedFiguresFor(
   context: CoachContext,
   ...extra: unknown[]
 ): number[] {
-  const numbers = collectNumbers([
-    buildStatePack(context),
-    context.digests.map((digest) => digest.metrics),
-    context.weekActivities.map((activity) => activity.details),
-    ...extra,
-  ]);
+  const weights = new Set<number>();
+  const numbers = collectNumbers(
+    [
+      buildStatePack(context),
+      context.digests.map((digest) => digest.metrics),
+      context.weekActivities.map((activity) => activity.details),
+      ...extra,
+    ],
+    new Set(),
+    weights,
+  );
   for (const activity of context.weekActivities) {
     for (const pr of prsOf(activity.details)) {
       const value = nullableNumber((pr as Record<string, unknown>).value);
       const previous = nullableNumber((pr as Record<string, unknown>).previous);
       if (value !== null && previous !== null) {
         numbers.add(Math.abs(value - previous));
+        weights.add(Math.abs(value - previous));
       }
     }
   }
   const derived = new Set<number>();
   for (const value of numbers) {
     derived.add(Math.abs(value));
-    derived.add(Math.round(value));
-    derived.add(Math.round(value / 10) * 10);
-    derived.add(round1(value * LB_PER_KG));
-    derived.add(round1(value * KG_PER_LB));
+    derived.add(Math.round(Math.abs(value)));
+    derived.add(Math.round(Math.abs(value) / 10) * 10);
+  }
+  for (const value of weights) {
+    derived.add(round1(Math.abs(value) * LB_PER_KG));
+    derived.add(round1(Math.abs(value) * KG_PER_LB));
   }
   for (const staple of COACH_STAPLE_FIGURES) derived.add(staple);
   return [...derived].filter((value) => Number.isFinite(value)).sort((a, b) =>

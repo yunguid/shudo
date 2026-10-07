@@ -139,40 +139,56 @@ function projectDate(
   return addDays(today, Math.ceil(weeks * 7));
 }
 
-/// Fills explicit targets in: whatever he didn't name absorbs the change,
-/// carbs first, then the result must pass the engine's validator.
+/// Fills explicit targets in: whatever he didn't name absorbs the change.
+/// A named calorie number holds and carbs (or fat, when carbs are named)
+/// absorb it; without one, protein or fat changes keep calories steady and
+/// move carbs, and a named carb number moves calories. The engine's
+/// validator still has the final say.
 function explicitTarget(
   base: NutritionTarget,
   explicit: NonNullable<GoalChangeRequest["explicit_targets"]>,
 ): NutritionTarget {
-  const protein = explicit.protein_g ?? base.protein_g;
-  const fat = explicit.fat_g ?? base.fat_g;
-  if (explicit.calories_kcal !== null && explicit.carbs_g === null) {
+  const protein = Math.round(explicit.protein_g ?? base.protein_g);
+  if (explicit.calories_kcal !== null) {
     const calories = Math.round(explicit.calories_kcal / 10) * 10;
+    if (explicit.carbs_g === null) {
+      const fat = Math.round(explicit.fat_g ?? base.fat_g);
+      return {
+        calories_kcal: calories,
+        protein_g: protein,
+        carbs_g: Math.max(
+          0,
+          Math.round((calories - protein * 4 - fat * 9) / 4),
+        ),
+        fat_g: fat,
+      };
+    }
+    const carbs = Math.round(explicit.carbs_g);
     return {
       calories_kcal: calories,
-      protein_g: Math.round(protein),
-      fat_g: Math.round(fat),
-      carbs_g: Math.max(0, Math.round((calories - protein * 4 - fat * 9) / 4)),
+      protein_g: protein,
+      carbs_g: carbs,
+      fat_g: explicit.fat_g !== null
+        ? Math.round(explicit.fat_g)
+        : Math.max(0, Math.round((calories - protein * 4 - carbs * 4) / 9)),
     };
   }
-  const carbs = explicit.carbs_g ?? base.carbs_g;
-  const calories = explicit.calories_kcal ??
-    Math.round((protein * 4 + carbs * 4 + fat * 9) / 10) * 10;
-  if (explicit.calories_kcal !== null) {
+  const fat = Math.round(explicit.fat_g ?? base.fat_g);
+  if (explicit.carbs_g !== null) {
+    const carbs = Math.round(explicit.carbs_g);
     return {
-      calories_kcal: Math.round(calories),
-      protein_g: Math.round(protein),
-      carbs_g: Math.round(carbs),
-      fat_g: Math.round(fat),
+      calories_kcal: Math.round((protein * 4 + carbs * 4 + fat * 9) / 10) * 10,
+      protein_g: protein,
+      carbs_g: carbs,
+      fat_g: fat,
     };
   }
-  // Calories follow the named macros when no calorie number was given.
+  const calories = Math.round(base.calories_kcal);
   return {
     calories_kcal: calories,
-    protein_g: Math.round(protein),
+    protein_g: protein,
     carbs_g: Math.max(0, Math.round((calories - protein * 4 - fat * 9) / 4)),
-    fat_g: Math.round(fat),
+    fat_g: fat,
   };
 }
 
@@ -263,7 +279,20 @@ export function planGoalChange(
 
   let target: NutritionTarget;
   try {
-    const computed = calculateDeterministicTargets(engineInput).target;
+    // Explicit numbers alone adjust today's targets; any goal change
+    // recomputes from the engine first.
+    const onlyExplicit = !request.phase && !request.goal_weight &&
+      !request.goal_date && request.weekly_rate_pct === null &&
+      !request.activity_level && request.training_days_per_week === null &&
+      !request.protein_bias && !request.fat_bias;
+    const computed = request.explicit_targets && onlyExplicit
+      ? {
+        calories_kcal: before.calories_kcal,
+        protein_g: before.protein_g,
+        carbs_g: before.carbs_g,
+        fat_g: before.fat_g,
+      }
+      : calculateDeterministicTargets(engineInput).target;
     target = request.explicit_targets
       ? validateNutritionTarget(
         explicitTarget(computed, request.explicit_targets),
