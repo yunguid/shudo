@@ -3,9 +3,19 @@ import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 const CLEANUP_LEASE_SECONDS = 120;
 const MAX_CLEANUP_BATCH = 50;
 
+/// Mirrors private.storage_cleanup_jobs_bucket_check.
+export const CLEANUP_BUCKETS = [
+  "entry-images",
+  "entry-audio",
+  "weight-checkin-photos",
+  "coach-media",
+] as const;
+
+export type CleanupBucket = typeof CLEANUP_BUCKETS[number];
+
 type CleanupJob = {
   id: string;
-  bucket: "entry-images" | "entry-audio";
+  bucket: CleanupBucket;
   mode: "object" | "prefix";
   object_path: string;
   lease_token: string;

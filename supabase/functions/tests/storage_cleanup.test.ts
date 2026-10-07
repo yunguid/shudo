@@ -1,9 +1,13 @@
-import { drainStorageCleanup } from "../_shared/storage_cleanup.ts";
+import {
+  CLEANUP_BUCKETS,
+  type CleanupBucket,
+  drainStorageCleanup,
+} from "../_shared/storage_cleanup.ts";
 import { assertEquals } from "./assertions.ts";
 
 type CleanupJobFixture = {
   id: string;
-  bucket: "entry-images" | "entry-audio";
+  bucket: CleanupBucket;
   mode: "object" | "prefix";
   object_path: string;
   lease_token: string;
@@ -200,4 +204,54 @@ Deno.test("a replaced completion lease is treated as a failed job", async () => 
     "complete_storage_cleanup",
     "fail_storage_cleanup",
   ]);
+});
+
+Deno.test("cleanup buckets mirror the database allowlist", () => {
+  assertEquals([...CLEANUP_BUCKETS], [
+    "entry-images",
+    "entry-audio",
+    "weight-checkin-photos",
+    "coach-media",
+  ]);
+});
+
+Deno.test("coach-media and weigh-in photo jobs remove from their own bucket", async () => {
+  const fake = cleanupAdmin([
+    job({
+      id: "job-coach",
+      bucket: "coach-media",
+      object_path: "user/2026-10-06/activity-photo.jpg",
+      lease_token: "lease-coach",
+    }),
+    job({
+      id: "job-weigh-in",
+      bucket: "weight-checkin-photos",
+      object_path: "user/2026-10-06/progress-photo.jpg",
+      lease_token: "lease-weigh-in",
+    }),
+  ]);
+  assertEquals(
+    await drainStorageCleanup(fake.admin as never),
+    { claimed: 2, completed: 2, failed: 0 },
+  );
+  assertEquals(fake.storageCalls, [
+    {
+      operation: "remove",
+      bucket: "coach-media",
+      paths: ["user/2026-10-06/activity-photo.jpg"],
+    },
+    {
+      operation: "remove",
+      bucket: "weight-checkin-photos",
+      paths: ["user/2026-10-06/progress-photo.jpg"],
+    },
+  ]);
+  assertEquals(
+    fake.rpcCalls.filter((call) => call.name === "complete_storage_cleanup")
+      .map((call) => call.args),
+    [
+      { p_job_id: "job-coach", p_lease_token: "lease-coach" },
+      { p_job_id: "job-weigh-in", p_lease_token: "lease-weigh-in" },
+    ],
+  );
 });

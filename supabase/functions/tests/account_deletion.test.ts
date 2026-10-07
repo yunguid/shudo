@@ -1,4 +1,5 @@
 import {
+  ACCOUNT_BUCKETS,
   ACCOUNT_DELETION_FAILURE_MESSAGE,
   ACCOUNT_DELETION_RETRY_MESSAGE,
   accountDeletionFailureMessage,
@@ -41,21 +42,36 @@ Deno.test("account deletion failure copy distinguishes pre-storage and partial d
 Deno.test("storage-first account deletion is idempotent across retries", async () => {
   const userId = "00000000-0000-4000-8000-000000000001";
   const objects = new Map<string, Set<string>>([
-    ["entry-images", new Set([`${userId}/photo.jpg`])],
+    ["entry-images", new Set([`${userId}/photo.jpg`, `${userId}/other.jpg`])],
     ["entry-audio", new Set([`u_${userId}/voice.m4a`])],
     ["profile-photos", new Set([`${userId}/avatar.jpg`])],
+    [
+      "weight-checkin-photos",
+      new Set([`${userId}/2026-10-06/progress-photo.jpg`]),
+    ],
+    [
+      "coach-media",
+      new Set([
+        `${userId}/2026-10-06/chat-photo.jpg`,
+        `${userId}/2026-10-06/activity-photo.jpg`,
+      ]),
+    ],
   ]);
   const admin = {
     storage: {
       from(bucket: string) {
         return {
           list(directory: string) {
+            // Storage lists direct children: files carry an id, nested
+            // folders (dated check-in and coach-media paths) do not.
             const prefix = `${directory}/`;
-            const items = [...(objects.get(bucket) ?? [])]
-              .filter((path) => path.startsWith(prefix))
-              .map((path) => path.slice(prefix.length))
-              .filter((name) => !name.includes("/"))
-              .map((name) => ({ id: `${bucket}:${name}`, name }));
+            const children = new Map<string, string | null>();
+            for (const path of objects.get(bucket) ?? []) {
+              if (!path.startsWith(prefix)) continue;
+              const [name, ...rest] = path.slice(prefix.length).split("/");
+              children.set(name, rest.length ? null : `${bucket}:${name}`);
+            }
+            const items = [...children].map(([name, id]) => ({ id, name }));
             return { data: items, error: null };
           },
           remove(paths: string[]) {
@@ -68,6 +84,65 @@ Deno.test("storage-first account deletion is idempotent across retries", async (
     },
   };
 
-  assertEquals(await deleteAccountStorage(admin as never, userId), 3);
+  assertEquals(await deleteAccountStorage(admin as never, userId), 7);
   assertEquals(await deleteAccountStorage(admin as never, userId), 0);
+  for (const [bucket, paths] of objects) {
+    assertEquals([bucket, paths.size], [bucket, 0]);
+  }
 });
+
+Deno.test("account deletion covers every private user bucket", () => {
+  // Auth refuses to delete a user who still owns Storage objects, so each
+  // bucket that stores user uploads must be drained before the Auth delete.
+  assertEquals([...ACCOUNT_BUCKETS].sort(), [
+    "coach-media",
+    "entry-audio",
+    "entry-images",
+    "profile-photos",
+    "weight-checkin-photos",
+  ]);
+});
+
+Deno.test("account deletion never lists outside the user's own prefixes", async () => {
+  const listed: Array<[string, string]> = [];
+  const admin = {
+    storage: {
+      from(bucket: string) {
+        return {
+          list(directory: string) {
+            listed.push([bucket, directory]);
+            return { data: [], error: null };
+          },
+          remove() {
+            throw new Error("Nothing should be removed");
+          },
+        };
+      },
+    },
+  };
+  const userId = "00000000-0000-4000-8000-0000000000c1";
+  assertEquals(await deleteAccountStorage(admin as never, userId), 0);
+  assertEquals(listed.length, ACCOUNT_BUCKETS.length * 2);
+  assert(
+    listed.every(([, directory]) =>
+      directory === userId || directory === `u_${userId}`
+    ),
+  );
+  await assertRejects(
+    () => deleteAccountStorage(admin as never, "../other-user"),
+    "unsafe account storage prefix",
+  );
+});
+
+async function assertRejects(
+  action: () => Promise<unknown>,
+  messageIncludes: string,
+): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    assert(error instanceof Error && error.message.includes(messageIncludes));
+    return;
+  }
+  throw new Error("Expected action to reject");
+}
