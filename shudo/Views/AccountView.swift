@@ -2,46 +2,34 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-enum ProfilePhotoInputPolicy {
-    static let maximumSourceBytes = 25_000_000
-    static let maximumPixelDimension: CGFloat = 12_000
-    static let maximumPixelCount: CGFloat = 50_000_000
-
-    static func accepts(byteCount: Int, pixelWidth: CGFloat, pixelHeight: CGFloat) -> Bool {
-        guard byteCount > 0, byteCount <= maximumSourceBytes,
-            pixelWidth.isFinite, pixelHeight.isFinite,
-            pixelWidth >= 1, pixelHeight >= 1,
-            pixelWidth <= maximumPixelDimension,
-            pixelHeight <= maximumPixelDimension
-        else { return false }
-        return pixelWidth * pixelHeight <= maximumPixelCount
-    }
-}
-
+/// The settings sheet behind the avatar: who you are, what Shudo knows, how
+/// the coach behaves, your daily targets, and the account itself.
 struct AccountView: View {
     private enum TargetField: Hashable { case calories, protein, carbs, fat }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focusedTarget: TargetField?
     @State private var profile: Profile
     @State private var targetDraft: MacroTargetDraft
-    @State private var isLoading = true
     @State private var isSavingTargets = false
+    @State private var savedTargetsTick = 0
+    @State private var showsSavedTargets = false
     @State private var isShowingProfileEditor = false
-    @State private var isShowingTargetRecalculation = false
     @State private var isShowingDeleteAccount = false
+    @State private var isShowingSignOut = false
+    @State private var isShowingPhotoOptions = false
+    @State private var isShowingPhotoPicker = false
     @State private var error: String?
-    @State private var savedMessage: String?
-    @State private var email = "-"
+    @State private var email: String?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var cropSource: ProfilePhotoCropSource?
     @State private var profilePhoto: UIImage?
     @State private var isLoadingProfilePhoto = false
     @State private var isSavingProfilePhoto = false
-    @State private var isShowingRemovePhotoConfirmation = false
 
     /// What Settings needs from the app shell (coach settings, bio, sign-out
-    /// cleanup). Heatmap and trends moved to the Body tab.
+    /// cleanup).
     struct ShellHooks {
         var coachService: any CoachServing
         var loadsRemotely: Bool
@@ -59,7 +47,6 @@ struct AccountView: View {
     private let accountDeletionService: any AccountDeletionServing
     private let hooks: ShellHooks
     private let loadsRemotely: Bool
-    private var onProfileUpdated: (Profile) -> Void { hooks.onProfileUpdated }
 
     init(
         initialProfile: Profile,
@@ -90,8 +77,14 @@ struct AccountView: View {
             _profile = State(initialValue: previewProfile)
             _targetDraft = State(initialValue: MacroTargetDraft(target: previewProfile.dailyMacroTarget))
             _profilePhoto = State(initialValue: profilePhoto)
-            _isLoading = State(initialValue: false)
             _email = State(initialValue: "luke@example.com")
+            // PolishPreview screenshots: `-shudoSettingsSheet editor|delete`.
+            let arguments = ProcessInfo.processInfo.arguments
+            let sheet = arguments.firstIndex(of: "-shudoSettingsSheet").flatMap {
+                arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil
+            }
+            _isShowingProfileEditor = State(initialValue: sheet == "editor")
+            _isShowingDeleteAccount = State(initialValue: sheet == "delete")
             service = SupabaseService()
             accountDeletionService = PolishPreviewAccountDeletionService()
             self.hooks = hooks
@@ -101,104 +94,81 @@ struct AccountView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            settingsScroll
+            content
                 .task {
-                    guard hooks.scrollToCoach else { return }
+                    guard let anchor = initialScrollAnchor else { return }
                     try? await Task.sleep(for: .milliseconds(350))
-                    withAnimation(Design.Motion.settle) { proxy.scrollTo("settings.coach", anchor: .top) }
+                    withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                        proxy.scrollTo(anchor, anchor: .top)
+                    }
                 }
         }
     }
 
-    private var settingsScroll: some View {
+    private var initialScrollAnchor: String? {
+        if hooks.scrollToCoach { return "settings.coach" }
+        #if DEBUG
+            // PolishPreview screenshots: `-shudoSettingsScroll settings.targets`.
+            let arguments = ProcessInfo.processInfo.arguments
+            if let flag = arguments.firstIndex(of: "-shudoSettingsScroll"), arguments.indices.contains(flag + 1) {
+                return arguments[flag + 1]
+            }
+        #endif
+        return nil
+    }
+
+    private var content: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                profileHeader
-                profileDetails
+            VStack(alignment: .leading, spacing: 28) {
+                header
+                if let error {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(Design.Color.danger)
+                        .frame(maxWidth: .infinity)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                youGroup
                 CoachSettingsSection(
                     service: hooks.coachService,
                     loadsRemotely: hooks.loadsRemotely,
                     onSettingsChanged: hooks.onSettingsChanged
                 )
                 .id("settings.coach")
-                bioRow
-                targetEditor
-                if isLoading {
-                    ProgressView()
-                        .tint(Design.Color.accentPrimary)
-                        .padding(.vertical, 8)
-                }
-
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.danger)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(
-                            Design.Color.danger.opacity(0.1),
-                            in: RoundedRectangle(cornerRadius: Design.Radius.m)
-                        )
-                }
-
-                Button {
-                    hooks.onSignOut()
-                    AuthSessionManager.shared.signOut()
-                    dismiss()
-                } label: {
-                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.danger)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(
-                            Design.Color.danger.opacity(0.1),
-                            in: RoundedRectangle(cornerRadius: Design.Radius.m)
-                        )
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 12)
-
-                Button(role: .destructive) {
-                    isShowingDeleteAccount = true
-                } label: {
-                    Label("Delete account", systemImage: "trash")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.danger)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Permanently deletes your meal log and account")
-
+                targetsGroup
+                    .id("settings.targets")
+                accountGroup
+                    .id("settings.account")
                 Text(BuildIdentity.current.displayText)
                     .font(.caption2.monospaced())
-                    .foregroundStyle(Design.Color.muted)
+                    .foregroundStyle(Design.Color.textTertiary)
                     .frame(maxWidth: .infinity)
                     .accessibilityIdentifier("Build identity")
             }
-            .padding(20)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
         }
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Design.Color.paper)
+        .background(Design.Color.canvas.ignoresSafeArea())
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
-                    .foregroundStyle(Design.Color.accentPrimary)
             }
         }
         .task {
             guard loadsRemotely else { return }
             await load()
         }
+        .task(id: profile.avatarPath) {
+            guard loadsRemotely else { return }
+            await loadProfilePhoto()
+        }
         .sheet(isPresented: $isShowingProfileEditor) {
             ProfileSettingsEditorView(profile: profile, service: service) { updated in
-                profile = updated
-                targetDraft = MacroTargetDraft(target: updated.dailyMacroTarget)
-                onProfileUpdated(updated)
+                apply(updated)
             }
         }
         .sheet(item: $cropSource) { source in
@@ -207,455 +177,299 @@ struct AccountView: View {
                 saveProfilePhoto(croppedImage)
             }
         }
-        .fullScreenCover(isPresented: $isShowingTargetRecalculation) {
-            NavigationStack {
-                OnboardingView(initialProfile: profile) { updated in
-                    profile = updated
-                    targetDraft = MacroTargetDraft(target: updated.dailyMacroTarget)
-                    ProfileCache.save(updated)
-                    onProfileUpdated(updated)
-                    isShowingTargetRecalculation = false
-                }
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { isShowingTargetRecalculation = false }
-                            .foregroundStyle(Design.Color.accentPrimary)
-                    }
-                }
-            }
-        }
         .sheet(isPresented: $isShowingDeleteAccount) {
             AccountDeletionSheet {
                 try await accountDeletionService.deleteAccount(
                     confirmation: AccountDeletionPolicy.confirmation
                 )
                 await MainActor.run {
-                    hooks.onSignOut()
-                    AuthSessionManager.shared.signOut()
                     isShowingDeleteAccount = false
-                    dismiss()
+                    signOut()
                 }
             }
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
-        .confirmationDialog(
-            "Remove profile photo?",
-            isPresented: $isShowingRemovePhotoConfirmation,
-            titleVisibility: .visible
-        ) {
+        .photosPicker(isPresented: $isShowingPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+        .onChange(of: selectedPhotoItem) { _, item in prepareSelectedPhoto(item) }
+        .confirmationDialog("Profile photo", isPresented: $isShowingPhotoOptions) {
+            Button("Choose a new photo") { isShowingPhotoPicker = true }
             Button("Remove photo", role: .destructive) { removeProfilePhoto() }
-            Button("Cancel", role: .cancel) {}
         }
-        .task(id: profile.avatarPath) {
-            guard loadsRemotely else { return }
-            await loadProfilePhoto()
+        .confirmationDialog("Sign out of Shudo?", isPresented: $isShowingSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) { signOut() }
         }
     }
 
-    private var profileHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 14) {
-                profileIdentity
-                Spacer(minLength: 8)
-                profilePhotoActions
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                profileIdentity
-                profilePhotoActions
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        }
-        .padding(.top, 6)
-    }
+    // MARK: Header
 
-    private var profileIdentity: some View {
-        HStack(spacing: 14) {
-            profilePhotoView
-            VStack(alignment: .leading, spacing: 4) {
-                if let displayName = profile.displayName, !displayName.isEmpty {
-                    Text(displayName)
-                        .font(.headline)
-                        .foregroundStyle(Design.Color.ink)
-                        .lineLimit(1)
+    private var header: some View {
+        VStack(spacing: 12) {
+            Button {
+                if profile.avatarPath == nil {
+                    isShowingPhotoPicker = true
+                } else {
+                    isShowingPhotoOptions = true
                 }
-                Text(email)
-                    .font(profile.displayName?.isEmpty == false ? .caption : .headline)
-                    .foregroundStyle(
-                        profile.displayName?.isEmpty == false ? Design.Color.muted : Design.Color.ink
-                    )
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            } label: {
+                avatar
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Design.Color.textPrimary)
+                            .frame(width: 26, height: 26)
+                            .background(Design.Color.surface3, in: Circle())
+                            .overlay(Circle().stroke(Design.Color.canvas, lineWidth: 3))
+                            .accessibilityHidden(true)
+                    }
             }
-        }
-    }
-
-    private var profilePhotoActions: some View {
-        HStack(spacing: 12) {
-            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                Text(profile.avatarPath == nil ? "Add photo" : "Replace photo")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Design.Color.accentPrimary)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-            }
+            .buttonStyle(.plain)
             .disabled(isSavingProfilePhoto)
-            .onChange(of: selectedPhotoItem) { _, item in
-                prepareSelectedPhoto(item)
-            }
+            .accessibilityLabel(profile.avatarPath == nil ? "Add profile photo" : "Change profile photo")
 
-            if profile.avatarPath != nil {
-                Button("Remove", role: .destructive) {
-                    isShowingRemovePhotoConfirmation = true
+            VStack(spacing: 3) {
+                Text(displayName)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .lineLimit(1)
+                if let email, email != displayName {
+                    Text(email)
+                        .font(.subheadline)
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                .font(.caption)
-                .foregroundStyle(Design.Color.danger)
-                .disabled(isSavingProfilePhoto)
             }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
     }
 
-    private var profilePhotoView: some View {
+    private var displayName: String {
+        if let name = profile.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        return email ?? "You"
+    }
+
+    private var avatar: some View {
         ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Design.Color.elevated,
-                            Design.Color.accentPrimary.opacity(0.12),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            Circle().fill(Design.Color.surface2)
             if let profilePhoto {
                 Image(uiImage: profilePhoto)
                     .resizable()
                     .scaledToFill()
-                    // Fill overflow is hit-testable past the clip; keep this
-                    // decorative hero from shadowing the neighboring controls.
+                    // Fill overflow is hit-testable past the clip; keep it
+                    // from shadowing the neighboring controls.
                     .allowsHitTesting(false)
             } else {
-                Image(systemName: "person.crop.circle")
-                    .font(.title2)
-                    .foregroundStyle(Design.Color.accentPrimary)
+                Image(systemName: "person.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(Design.Color.textTertiary)
             }
             if isLoadingProfilePhoto || isSavingProfilePhoto {
                 Circle().fill(.black.opacity(0.45))
                 ProgressView().tint(.white)
             }
         }
-        .frame(width: 68, height: 68)
+        .frame(width: 88, height: 88)
         .clipShape(Circle())
-        .overlay(Circle().stroke(Design.Color.rule, lineWidth: 1))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(profile.avatarPath == nil ? "No profile photo" : "Profile photo")
     }
 
-    private var profileDetails: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionLabel("PROFILE")
-                Spacer()
-                Button("Edit") { isShowingProfileEditor = true }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Design.Color.accentPrimary)
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Edit goals, body measurements, and activity")
-            }
-            VStack(spacing: 0) {
-                infoRow(icon: "globe", label: "Timezone", value: profile.timezone)
-                HairlineRule().padding(.leading, 16)
-                infoRow(icon: "ruler", label: "Units", value: profile.units.capitalized)
-                if let height = profile.heightCM {
-                    HairlineRule().padding(.leading, 16)
-                    infoRow(
-                        icon: "arrow.up.and.down",
-                        label: "Height",
-                        value: heightText(height, units: profile.units)
-                    )
-                }
-                if let weight = profile.weightKG {
-                    HairlineRule().padding(.leading, 16)
-                    infoRow(
-                        icon: "scalemass",
-                        label: "Weight",
-                        value: weightText(weight, units: profile.units)
-                    )
-                }
-                if let targetWeight = profile.targetWeightKG {
-                    HairlineRule().padding(.leading, 16)
-                    infoRow(
-                        icon: "target",
-                        label: "Target weight",
-                        value: weightText(targetWeight, units: profile.units)
-                    )
-                }
-            }
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
-            )
-        }
-    }
+    // MARK: You
 
-    private var targetEditor: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionLabel("DAILY TARGETS")
-                Spacer()
-                Button("Recalculate") { isShowingTargetRecalculation = true }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Design.Color.accentPrimary)
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Use voice or text to propose updated daily targets")
-                if let savedMessage {
-                    Text(savedMessage)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Design.Color.success)
-                }
-            }
-
-            VStack(spacing: 0) {
-                targetRow(
-                    label: "Calories",
-                    unit: "kcal",
-                    color: Design.Color.warning,
-                    text: $targetDraft.calories,
-                    field: .calories
-                )
-                HairlineRule().padding(.leading, 16)
-                targetRow(
-                    label: "Protein",
-                    unit: "g",
-                    color: Design.Color.ringProtein,
-                    text: $targetDraft.protein,
-                    field: .protein
-                )
-                HairlineRule().padding(.leading, 16)
-                targetRow(
-                    label: "Carbs",
-                    unit: "g",
-                    color: Design.Color.ringCarb,
-                    text: $targetDraft.carbs,
-                    field: .carbs
-                )
-                HairlineRule().padding(.leading, 16)
-                targetRow(
-                    label: "Fat",
-                    unit: "g",
-                    color: Design.Color.ringFat,
-                    text: $targetDraft.fat,
-                    field: .fat
-                )
-            }
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
-            )
-
-            if targetDraft.validatedTarget == nil {
-                Text("Use realistic positive targets: 500–10,000 kcal and at least 1 g per macro.")
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Button {
-                saveTargets()
-            } label: {
-                HStack(spacing: 8) {
-                    if isSavingTargets { ProgressView().tint(.white) }
-                    Text(isSavingTargets ? "Saving…" : "Save targets")
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(
-                    LinearGradient(
-                        colors: canSaveTargets
-                            ? [Design.Color.ctaPrimary, Design.Color.ctaSecondary]
-                            : [Design.Color.subtle, Design.Color.subtle],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    in: Capsule()
-                )
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSaveTargets)
-        }
-    }
-
-    private var bioRow: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("BIO")
+    private var youGroup: some View {
+        SettingsGroup {
             NavigationLink {
                 hooks.bioDestination()
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "person.text.rectangle.fill")
-                        .font(.body)
-                        .foregroundStyle(Design.Color.ember)
-                        .frame(width: 30, height: 30)
-                        .background(Design.Color.ember.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("What Shudo knows about you")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Design.Color.textPrimary)
-                        Text("Your bio. Talk to update it.")
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.textSecondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.textTertiary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
+                SettingsValueLabel(title: "What Shudo knows about you")
             }
             .buttonStyle(.plain)
-            .background(Design.Color.surface1, in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous))
             .accessibilityIdentifier("settings.bio")
-        }
-    }
 
-    private var canSaveTargets: Bool {
-        guard !isSavingTargets, let target = targetDraft.validatedTarget else { return false }
-        return target != profile.dailyMacroTarget
-    }
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(Design.Color.muted)
-            .tracking(0.5)
-    }
-
-    private func infoRow(icon: String, label: String, value: String) -> some View {
-        HStack {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
-                    .frame(width: 20)
-                Text(label)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.muted)
+            Button {
+                isShowingProfileEditor = true
+            } label: {
+                SettingsValueLabel(title: "Body & goal", value: goalSummary)
             }
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Design.Color.ink)
-                .multilineTextAlignment(.trailing)
-                .lineLimit(2)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.profile")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+    }
+
+    /// "Bulk to 175 lb", "Cut to 165 lb", "Maintain".
+    private var goalSummary: String {
+        let verb: String
+        switch profile.goalType {
+        case .gain: verb = "Bulk"
+        case .lose: verb = "Cut"
+        case .maintain: return "Maintain"
+        }
+        guard let target = profile.targetWeightKG else { return verb }
+        let value = BodyUnits.format(BodyUnits.display(target, units: profile.units))
+        return "\(verb) to \(value) \(BodyUnits.label(profile.units))"
+    }
+
+    // MARK: Targets
+
+    private var targetsGroup: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsGroup(label: "Daily targets") {
+                targetRow("Calories", unit: "kcal", color: Design.Color.macroKcal, text: $targetDraft.calories, field: .calories)
+                targetRow("Protein", unit: "g", color: Design.Color.macroProtein, text: $targetDraft.protein, field: .protein)
+                targetRow("Carbs", unit: "g", color: Design.Color.macroCarbs, text: $targetDraft.carbs, field: .carbs)
+                targetRow("Fat", unit: "g", color: Design.Color.macroFat, text: $targetDraft.fat, field: .fat)
+            } accessory: {
+                if showsSavedTargets {
+                    Label("Saved", systemImage: "checkmark")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Design.Color.positive)
+                        .transition(.opacity)
+                }
+            }
+
+            if targetsEdited {
+                if targetDraft.validatedTarget == nil {
+                    Text("500–10,000 kcal, and at least 1 g of each macro.")
+                        .font(.footnote)
+                        .foregroundStyle(Design.Color.warning)
+                        .padding(.horizontal, 16)
+                } else {
+                    Button(action: saveTargets) {
+                        HStack(spacing: 8) {
+                            if isSavingTargets { ProgressView().tint(Design.Color.onEmber) }
+                            Text(isSavingTargets ? "Saving…" : "Save targets")
+                        }
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Design.Color.onEmber)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(Design.Color.ember, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSavingTargets)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+        }
+        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: targetsEdited)
+        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: showsSavedTargets)
+        .sensoryFeedback(.success, trigger: savedTargetsTick)
+    }
+
+    private var targetsEdited: Bool {
+        targetDraft != MacroTargetDraft(target: profile.dailyMacroTarget)
     }
 
     private func targetRow(
-        label: String,
+        _ label: String,
         unit: String,
         color: Color,
         text: Binding<String>,
         field: TargetField
     ) -> some View {
         HStack(spacing: 12) {
-            Circle().fill(color).frame(width: 8, height: 8)
+            Circle().fill(color).frame(width: 7, height: 7)
             Text(label)
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.ink)
-            Spacer()
+                .font(.body)
+                .foregroundStyle(Design.Color.textPrimary)
+            Spacer(minLength: 8)
             TextField("0", text: text)
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.trailing)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Design.Color.ink)
+                .font(Design.Typeface.numeral(.body))
                 .monospacedDigit()
-                .frame(width: 82)
+                .foregroundStyle(Design.Color.textPrimary)
+                .frame(maxWidth: 96)
                 .focused($focusedTarget, equals: field)
+                .accessibilityLabel("\(label) target")
                 .onChange(of: text.wrappedValue) { _, updated in
                     let filtered = updated.filter { $0.isNumber || $0 == "," }
                     if filtered != updated { text.wrappedValue = filtered }
-                    savedMessage = nil
                 }
             Text(unit)
-                .font(.caption)
-                .foregroundStyle(Design.Color.muted)
-                .frame(width: 30, alignment: .leading)
+                .font(.footnote)
+                .foregroundStyle(Design.Color.textTertiary)
+                .fixedSize()
+                .frame(minWidth: 30, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .frame(minHeight: 52)
+        .contentShape(Rectangle())
+        .onTapGesture { focusedTarget = field }
     }
 
-    private func heightText(_ centimeters: Double, units: String) -> String {
-        guard units.lowercased() == "imperial" else {
-            return "\(Int(centimeters.rounded())) cm"
+    // MARK: Account
+
+    private var accountGroup: some View {
+        SettingsGroup {
+            Button { isShowingSignOut = true } label: {
+                SettingsRow(title: "Sign out") { EmptyView() }
+            }
+            .buttonStyle(.plain)
+
+            Button { isShowingDeleteAccount = true } label: {
+                Text("Delete account")
+                    .font(.body)
+                    .foregroundStyle(Design.Color.danger)
+                    .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Permanently deletes your meal log and account")
         }
-        let totalInches = Int((centimeters / 2.54).rounded())
-        return "\(totalInches / 12)′ \(totalInches % 12)″"
     }
 
-    private func weightText(_ kilograms: Double, units: String) -> String {
-        let value = units.lowercased() == "imperial" ? kilograms * 2.20462 : kilograms
-        let suffix = units.lowercased() == "imperial" ? "lb" : "kg"
-        return "\(String(format: "%.1f", value)) \(suffix)"
+    // MARK: Flows
+
+    private func apply(_ updated: Profile) {
+        profile = updated
+        targetDraft = MacroTargetDraft(target: updated.dailyMacroTarget)
+        ProfileCache.save(updated)
+        hooks.onProfileUpdated(updated)
+    }
+
+    private func signOut() {
+        hooks.onSignOut()
+        AuthSessionManager.shared.signOut()
+        dismiss()
     }
 
     private func saveTargets() {
-        guard let target = targetDraft.validatedTarget, canSaveTargets else { return }
+        guard let target = targetDraft.validatedTarget, targetsEdited, !isSavingTargets else { return }
         focusedTarget = nil
         isSavingTargets = true
         error = nil
-        savedMessage = nil
-        Task {
+        Task { @MainActor in
             do {
-                let updated = try await service.updateDailyMacroTarget(target)
-                await MainActor.run {
-                    profile = updated
-                    targetDraft = MacroTargetDraft(target: updated.dailyMacroTarget)
-                    ProfileCache.save(updated)
-                    onProfileUpdated(updated)
-                    isSavingTargets = false
-                    savedMessage = "Saved"
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                }
+                apply(try await service.updateDailyMacroTarget(target))
+                savedTargetsTick += 1
+                showsSavedTargets = true
+                try? await Task.sleep(for: .seconds(2))
+                showsSavedTargets = false
             } catch {
-                await MainActor.run {
-                    isSavingTargets = false
-                    self.error = error.localizedDescription
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
+                self.error = error.localizedDescription
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
+            isSavingTargets = false
         }
     }
 
     private func load() async {
-        isLoading = true
-        error = nil
         let userId = AuthSessionManager.shared.userId ?? profile.userId
-
         do {
-            if let fresh = try await service.fetchProfile(userId: userId) {
-                profile = fresh
-                targetDraft = MacroTargetDraft(target: fresh.dailyMacroTarget)
-                ProfileCache.save(fresh)
-                onProfileUpdated(fresh)
-            }
-            if let loadedEmail = try? await loadEmail() {
-                email = loadedEmail
+            if let fresh = try await service.fetchProfile(userId: userId), fresh != profile {
+                let keepsDraft = targetsEdited
+                let draft = targetDraft
+                apply(fresh)
+                if keepsDraft { targetDraft = draft }
             }
         } catch {
-            self.error = error.localizedDescription
-            if let loadedEmail = try? await loadEmail() {
-                email = loadedEmail
-            }
+            // The cached profile is already on screen; a later visit retries.
         }
-        isLoading = false
+        email = try? await loadEmail()
     }
 
     private func loadEmail() async throws -> String {
@@ -671,6 +485,8 @@ struct AccountView: View {
         else { throw URLError(.cannotParseResponse) }
         return email
     }
+
+    // MARK: Photo
 
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
         guard let item else { return }
@@ -701,7 +517,7 @@ struct AccountView: View {
             } catch {
                 await MainActor.run {
                     selectedPhotoItem = nil
-                    self.error = "That photo couldn’t be opened. Try another image."
+                    self.error = "That photo couldn’t be opened. Try another one."
                 }
             }
         }
@@ -719,26 +535,22 @@ struct AccountView: View {
                 guard
                     let jpegData = await Task.detached(
                         priority: .userInitiated,
-                        operation: {
-                            image.profilePhotoJPEG()
-                        }
+                        operation: { image.profilePhotoJPEG() }
                     ).value
                 else {
                     await MainActor.run {
                         isSavingProfilePhoto = false
-                        error = "That photo couldn’t be prepared. Try another image."
+                        error = "That photo couldn’t be prepared. Try another one."
                     }
                     return
                 }
                 let updated = try await service.uploadProfilePhoto(jpegData, replacing: oldPath)
                 await MainActor.run {
-                    profile = updated
                     profilePhoto = image
                     if let path = updated.avatarPath {
                         ProfilePhotoCache.save(jpegData, userId: updated.userId, path: path)
                     }
-                    ProfileCache.save(updated)
-                    onProfileUpdated(updated)
+                    apply(updated)
                     isSavingProfilePhoto = false
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                 }
@@ -760,13 +572,10 @@ struct AccountView: View {
             do {
                 let updated = try await service.removeProfilePhoto(path: path)
                 await MainActor.run {
-                    profile = updated
                     profilePhoto = nil
                     ProfilePhotoCache.clear(userId: updated.userId)
-                    ProfileCache.save(updated)
-                    onProfileUpdated(updated)
+                    apply(updated)
                     isSavingProfilePhoto = false
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
                 }
             } catch {
                 await MainActor.run {
@@ -799,295 +608,6 @@ struct AccountView: View {
             ProfilePhotoCache.save(data, userId: profile.userId, path: path)
         } catch {
             // Keep Settings usable on a transient image failure; a later visit retries.
-        }
-    }
-}
-
-private struct ProfilePhotoCropSource: Identifiable {
-    let id = UUID()
-    let image: UIImage
-}
-
-private struct ProfilePhotoCropView: View {
-    @Environment(\.dismiss) private var dismiss
-    @GestureState private var dragTranslation: CGSize = .zero
-    @GestureState private var magnification: CGFloat = 1
-    @State private var zoom: CGFloat = 1
-    @State private var offset: CGSize = .zero
-
-    let image: UIImage
-    let onUse: (UIImage) -> Void
-
-    var body: some View {
-        NavigationStack {
-            GeometryReader { geometry in
-                let side = min(geometry.size.width - 40, geometry.size.height - 130)
-                VStack(spacing: 22) {
-                    Spacer(minLength: 8)
-                    cropCanvas(side: side)
-                    VStack(spacing: 8) {
-                        HStack {
-                            Image(systemName: "minus.magnifyingglass")
-                            Slider(value: $zoom, in: 1...4)
-                                .accessibilityLabel("Photo zoom")
-                            Image(systemName: "plus.magnifyingglass")
-                        }
-                        .foregroundStyle(Design.Color.muted)
-                        Text("Drag and zoom to frame your photo")
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.muted)
-                    }
-                    .padding(.horizontal, 28)
-                    Spacer(minLength: 8)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .onChange(of: zoom) { _, updated in
-                    offset = clampedOffset(offset, side: side, zoom: updated)
-                }
-                .safeAreaInset(edge: .bottom) {
-                    Button("Use photo") {
-                        onUse(renderedCrop(side: side))
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Design.Color.paper.opacity(0.94))
-                }
-            }
-            .background(Design.Color.paper)
-            .navigationTitle("Crop photo")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private func cropCanvas(side: CGFloat) -> some View {
-        let liveZoom = min(max(zoom * magnification, 1), 4)
-        let liveOffset = clampedOffset(
-            CGSize(
-                width: offset.width + dragTranslation.width,
-                height: offset.height + dragTranslation.height
-            ),
-            side: side,
-            zoom: liveZoom
-        )
-        return Image(uiImage: image)
-            .resizable()
-            .scaledToFill()
-            .frame(width: side, height: side)
-            .scaleEffect(liveZoom)
-            .offset(liveOffset)
-            .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
-            .overlay {
-                Circle()
-                    .stroke(.white.opacity(0.86), lineWidth: 1.5)
-                    .padding(10)
-                    .allowsHitTesting(false)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
-                    .stroke(Design.Color.rule, lineWidth: 1)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture()
-                    .updating($dragTranslation) { value, state, _ in state = value.translation }
-                    .onEnded { value in
-                        offset = clampedOffset(
-                            CGSize(
-                                width: offset.width + value.translation.width,
-                                height: offset.height + value.translation.height
-                            ),
-                            side: side,
-                            zoom: zoom
-                        )
-                    }
-            )
-            .simultaneousGesture(
-                MagnifyGesture()
-                    .updating($magnification) { value, state, _ in state = value.magnification }
-                    .onEnded { value in
-                        zoom = min(max(zoom * value.magnification, 1), 4)
-                        offset = clampedOffset(offset, side: side, zoom: zoom)
-                    }
-            )
-            .accessibilityLabel("Profile photo crop area")
-            .accessibilityHint("Drag to reposition the photo, or use the zoom slider")
-    }
-
-    private func clampedOffset(_ proposed: CGSize, side: CGFloat, zoom: CGFloat) -> CGSize {
-        let imageAspect = image.size.width / max(image.size.height, 1)
-        let baseWidth = imageAspect >= 1 ? side * imageAspect : side
-        let baseHeight = imageAspect >= 1 ? side : side / max(imageAspect, 0.001)
-        let maximumX = max(0, (baseWidth * zoom - side) / 2)
-        let maximumY = max(0, (baseHeight * zoom - side) / 2)
-        return CGSize(
-            width: min(max(proposed.width, -maximumX), maximumX),
-            height: min(max(proposed.height, -maximumY), maximumY)
-        )
-    }
-
-    private func renderedCrop(side: CGFloat) -> UIImage {
-        let outputSide: CGFloat = 512
-        let imageAspect = image.size.width / max(image.size.height, 1)
-        let baseWidth = imageAspect >= 1 ? outputSide * imageAspect : outputSide
-        let baseHeight = imageAspect >= 1 ? outputSide : outputSide / max(imageAspect, 0.001)
-        let outputOffset = CGSize(
-            width: offset.width / max(side, 1) * outputSide,
-            height: offset.height / max(side, 1) * outputSide
-        )
-        return UIGraphicsImageRenderer(size: CGSize(width: outputSide, height: outputSide)).image { _ in
-            UIColor.black.setFill()
-            UIRectFill(CGRect(origin: .zero, size: CGSize(width: outputSide, height: outputSide)))
-            image.draw(
-                in: CGRect(
-                    x: (outputSide - baseWidth * zoom) / 2 + outputOffset.width,
-                    y: (outputSide - baseHeight * zoom) / 2 + outputOffset.height,
-                    width: baseWidth * zoom,
-                    height: baseHeight * zoom
-                ))
-        }
-    }
-}
-
-extension UIImage {
-    fileprivate func normalizedForDisplay() -> UIImage {
-        guard imageOrientation != .up else { return self }
-        return UIGraphicsImageRenderer(size: size).image { _ in
-            draw(in: CGRect(origin: .zero, size: size))
-        }
-    }
-
-    fileprivate func profilePhotoJPEG() -> Data? {
-        let maxBytes = 2_000_000
-        for quality in [0.86, 0.74, 0.62, 0.50] {
-            if let data = jpegData(compressionQuality: quality), data.count <= maxBytes {
-                return data
-            }
-        }
-        return nil
-    }
-}
-
-private struct AccountDeletionSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var confirmation = ""
-    @State private var isDeleting = false
-    @State private var errorMessage: String?
-
-    let onDelete: () async throws -> Void
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Image(systemName: "trash.slash.fill")
-                        .font(.title2)
-                        .foregroundStyle(Design.Color.danger)
-                        .frame(width: 48, height: 48)
-                        .background(
-                            Design.Color.danger.opacity(0.1),
-                            in: Circle()
-                        )
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Permanently delete your account?")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(Design.Color.ink)
-                        Text(
-                            "This permanently removes your meals, photos, profile, and sign-in. It cannot be undone."
-                        )
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Type DELETE to confirm")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Design.Color.muted)
-                        TextField("DELETE", text: $confirmation)
-                            .textInputAutocapitalization(.characters)
-                            .autocorrectionDisabled()
-                            .font(.body.monospaced().weight(.semibold))
-                            .foregroundStyle(Design.Color.ink)
-                            .padding(.horizontal, 16)
-                            .frame(height: 50)
-                            .background(
-                                Design.Color.elevated,
-                                in: RoundedRectangle(
-                                    cornerRadius: Design.Radius.m,
-                                    style: .continuous
-                                )
-                            )
-                            .disabled(isDeleting)
-                    }
-
-                    if let errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.danger)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Button(role: .destructive) {
-                        deleteAccount()
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isDeleting { ProgressView().tint(.white) }
-                            Text(isDeleting ? "Deleting…" : "Delete account permanently")
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            canDelete ? Design.Color.danger : Design.Color.subtle,
-                            in: Capsule()
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canDelete)
-                }
-                .padding(20)
-            }
-            .background(Design.Color.paper)
-            .navigationTitle("Delete account")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .disabled(isDeleting)
-                }
-            }
-            .interactiveDismissDisabled(isDeleting)
-        }
-    }
-
-    private var canDelete: Bool {
-        !isDeleting && AccountDeletionPolicy.isConfirmed(confirmation)
-    }
-
-    private func deleteAccount() {
-        guard canDelete else { return }
-        isDeleting = true
-        errorMessage = nil
-        Task {
-            do {
-                try await onDelete()
-            } catch {
-                await MainActor.run {
-                    isDeleting = false
-                    errorMessage = error.localizedDescription
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
-            }
         }
     }
 }

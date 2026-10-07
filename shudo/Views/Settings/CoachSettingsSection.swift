@@ -2,10 +2,11 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-/// Settings → Coach: whether Shudo texts at all, how hard he pushes, how he
-/// talks, when he stays quiet, nearby-store recs (When-In-Use location) and
-/// the opt-in physique review. Every change saves to `profiles` and re-plans
-/// the day's texts (`CoachSync.apply(settings:)`).
+/// Settings → Coach and Notifications: whether Shudo texts at all, how hard
+/// he pushes, how he talks, nearby-store recs (When-In-Use location), the
+/// opt-in physique review, notification permission and quiet hours. Every
+/// change saves to `profiles` and re-plans the day's texts
+/// (`CoachSync.apply(settings:)`).
 struct CoachSettingsSection: View {
     let service: any CoachServing
     let loadsRemotely: Bool
@@ -15,80 +16,68 @@ struct CoachSettingsSection: View {
     @State private var loaded = false
     @State private var isSaving = false
     @State private var errorMessage: String?
-    @State private var notificationsDenied = false
+    @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var locationDenied = false
     @State private var quietSaveTask: Task<Void, Never>?
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                SettingsSectionLabel(text: "COACH")
-                Spacer()
-                if isSaving {
-                    ProgressView().controlSize(.small).tint(Design.Color.ember)
-                }
-            }
-            VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 28) {
+            SettingsGroup(label: "Coach") {
                 enabledRow
                 if settings.enabled {
-                    HairlineRule().padding(.leading, 16)
-                    pickerRow(title: "Intensity", detail: intensityDetail) {
-                        Picker("Intensity", selection: binding(\.intensity)) {
-                            ForEach(CoachSettings.Intensity.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("settings.coach.intensity")
+                    SettingsRow(title: "Intensity", subtitle: intensityDetail) {
+                        menu("Intensity", selection: binding(\.intensity), options: CoachSettings.Intensity.allCases, title: \.title)
+                            .accessibilityIdentifier("settings.coach.intensity")
                     }
-                    HairlineRule().padding(.leading, 16)
-                    pickerRow(title: "Language", detail: profanityDetail) {
-                        Picker("Language", selection: binding(\.profanity)) {
-                            ForEach(CoachSettings.Profanity.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("settings.coach.profanity")
+                    SettingsRow(title: "Language") {
+                        menu("Language", selection: binding(\.profanity), options: CoachSettings.Profanity.allCases, title: \.title)
+                            .accessibilityIdentifier("settings.coach.profanity")
                     }
-                    HairlineRule().padding(.leading, 16)
-                    quietHoursRow
                 }
-                HairlineRule().padding(.leading, 16)
                 toggleRow(
-                    title: "Nearby store recs",
-                    detail: locationDenied
-                        ? "Location is off for Shudo. Turn it on in Settings to get snack picks near you."
-                        : "When you ask what to grab, Shudo checks stores near you. Location stays on your iPhone; only store names are sent.",
+                    "Nearby store recs",
+                    subtitle: locationDenied ? "Location is off for Shudo" : nil,
                     isOn: Binding(get: { settings.locationRecsEnabled }, set: { setNearby($0) }),
                     identifier: "settings.coach.nearby"
                 )
-                if locationDenied {
-                    settingsLink.padding(.leading, 16).padding(.bottom, 10)
-                }
-                HairlineRule().padding(.leading, 16)
+                if locationDenied { openSettingsRow("Turn on location") }
                 toggleRow(
-                    title: "Physique review",
-                    detail: "Each Monday Shudo looks at your check-in photos and tells you what’s changing. Off unless you turn it on.",
+                    "Physique review",
+                    subtitle: "Mondays, from your check-in photos",
                     isOn: binding(\.physiqueAIReviewEnabled),
                     identifier: "settings.coach.physique"
                 )
-            }
-            .background(Design.Color.surface1, in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous))
-
-            if notificationsDenied, settings.enabled {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Notifications are off, so Shudo’s texts only show up in Today.")
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.honey)
-                        .fixedSize(horizontal: false, vertical: true)
-                    settingsLink
+            } accessory: {
+                if isSaving {
+                    ProgressView().controlSize(.mini).tint(Design.Color.textTertiary)
                 }
             }
+            .disabled(!loaded)
+
+            if settings.enabled {
+                SettingsGroup(label: "Notifications") {
+                    notificationsRow
+                    quietHoursRow
+                }
+                .transition(.opacity)
+            }
+
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(Design.Color.danger)
+                    .padding(.horizontal, 16)
             }
         }
+        .animation(Design.Motion.snap, value: settings.enabled)
         .task { await load() }
+        .onChange(of: scenePhase) { _, phase in
+            // Back from iOS Settings: reflect what changed there.
+            guard phase == .active else { return }
+            Task { await refreshPermissions() }
+        }
     }
 
     // MARK: Rows
@@ -96,104 +85,137 @@ struct CoachSettingsSection: View {
     private var enabledRow: some View {
         Toggle(isOn: Binding(get: { settings.enabled }, set: { setEnabled($0) })) {
             HStack(spacing: 12) {
-                CoachAvatar(size: 30)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Shudo texts you")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Design.Color.textPrimary)
-                    Text("Game plan, nudges, reactions to what you log, and a nightly recap.")
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.textSecondary)
+                CoachAvatar(size: 28)
+                Text("Shudo texts you")
+                    .font(.body)
+                    .foregroundStyle(Design.Color.textPrimary)
+            }
+        }
+        .tint(Design.Color.ember)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(minHeight: 56)
+        .accessibilityIdentifier("settings.coach.enabled")
+    }
+
+    private func toggleRow(_ title: String, subtitle: String?, isOn: Binding<Bool>, identifier: String) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(Design.Color.textPrimary)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(Design.Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .tint(Design.Color.ember)
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .accessibilityIdentifier("settings.coach.enabled")
-    }
-
-    private func pickerRow<Control: View>(title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Design.Color.textPrimary)
-                Spacer()
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.textTertiary)
-            }
-            control()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
-    private var quietHoursRow: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Quiet hours")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Design.Color.textPrimary)
-                Text("Texts still land in Today, just silently.")
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.textSecondary)
-            }
-            Spacer(minLength: 8)
-            DatePicker("Quiet from", selection: clockBinding(\.quietHoursStart), displayedComponents: .hourAndMinute)
-                .labelsHidden()
-            Text("–").foregroundStyle(Design.Color.textTertiary)
-            DatePicker("Quiet until", selection: clockBinding(\.quietHoursEnd), displayedComponents: .hourAndMinute)
-                .labelsHidden()
-        }
-        .tint(Design.Color.ember)
-        .padding(.horizontal, 16)
         .padding(.vertical, 10)
-    }
-
-    private func toggleRow(title: String, detail: String, isOn: Binding<Bool>, identifier: String) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Design.Color.textPrimary)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .tint(Design.Color.ember)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .frame(minHeight: 52)
         .accessibilityIdentifier(identifier)
     }
 
-    private var settingsLink: some View {
-        Button("Open Settings") {
-            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+    private func menu<Option: Hashable>(
+        _ label: String,
+        selection: Binding<Option>,
+        options: [Option],
+        title: KeyPath<Option, String>
+    ) -> some View {
+        Picker(label, selection: selection) {
+            ForEach(options, id: \.self) { Text($0[keyPath: title]).tag($0) }
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(Design.Color.ember)
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .tint(Design.Color.textSecondary)
+        .fixedSize()
+    }
+
+    /// iOS permission for Shudo's texts: on, off (fix it in Settings), or not
+    /// asked yet (ask now).
+    private var notificationsRow: some View {
+        Button {
+            if notificationStatus == .notDetermined {
+                Task {
+                    _ = await CoachNotificationAuthorization.request()
+                    await refreshPermissions()
+                }
+            } else {
+                openSystemSettings()
+            }
+        } label: {
+            SettingsValueLabel(
+                title: "Allow notifications",
+                value: notificationValue,
+                valueColor: notificationsAllowed ? Design.Color.textSecondary : Design.Color.honey
+            )
+        }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.notifications")
+    }
+
+    private var quietHoursRow: some View {
+        SettingsRow(title: "Quiet hours") {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    quietFrom
+                    Text("–")
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .accessibilityHidden(true)
+                    quietUntil
+                }
+                .fixedSize()
+                VStack(alignment: .leading, spacing: 6) {
+                    quietFrom
+                    quietUntil
+                }
+            }
+            .tint(Design.Color.ember)
+        }
+    }
+
+    private var quietFrom: some View {
+        DatePicker("Quiet from", selection: clockBinding(\.quietHoursStart), displayedComponents: .hourAndMinute)
+            .labelsHidden()
+    }
+
+    private var quietUntil: some View {
+        DatePicker("Quiet until", selection: clockBinding(\.quietHoursEnd), displayedComponents: .hourAndMinute)
+            .labelsHidden()
+    }
+
+    private func openSettingsRow(_ title: String) -> some View {
+        Button(action: openSystemSettings) {
+            SettingsValueLabel(title: title, value: nil)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var notificationsAllowed: Bool {
+        switch notificationStatus {
+        case .authorized, .provisional, .ephemeral: return true
+        default: return false
+        }
+    }
+
+    private var notificationValue: String {
+        if notificationsAllowed { return "On" }
+        return notificationStatus == .notDetermined ? "Turn on" : "Off"
     }
 
     private var intensityDetail: String {
         switch settings.intensity {
         case .chill: return "Up to 4 texts a day"
         case .lockedIn: return "Up to 7 texts a day"
-        case .drillSergeant: return "Up to 10. You asked."
+        case .drillSergeant: return "Up to 10 texts a day"
         }
     }
 
-    private var profanityDetail: String {
-        switch settings.profanity {
-        case .off: return "No swearing"
-        case .mild: return "The odd “damn”"
-        case .salty: return "Gym-floor language"
-        }
+    private func openSystemSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
     }
 
     // MARK: Bindings
@@ -229,7 +251,7 @@ struct CoachSettingsSection: View {
                     try? await Task.sleep(for: .milliseconds(700))
                     guard !Task.isCancelled else { return }
                     guard settings.quietHoursStart != settings.quietHoursEnd else {
-                        errorMessage = "Quiet hours need a start and an end that differ."
+                        errorMessage = "Quiet hours need a different start and end."
                         return
                     }
                     save(settings)
@@ -250,8 +272,8 @@ struct CoachSettingsSection: View {
             return
         }
         Task { @MainActor in
-            let granted = await CoachNotificationAuthorization.request()
-            notificationsDenied = !granted
+            _ = await CoachNotificationAuthorization.request()
+            await refreshPermissions()
             if loadsRemotely {
                 // One voice: the 1.x pacing nudges and weigh-in reminder
                 // stand down when the coach takes over.
@@ -315,20 +337,13 @@ struct CoachSettingsSection: View {
             settings = fetched
         }
         loaded = true
-        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-        notificationsDenied = status == .denied
+        await refreshPermissions()
+    }
+
+    private func refreshPermissions() async {
+        notificationStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         if loadsRemotely {
             locationDenied = settings.locationRecsEnabled && !LocationFixProvider.shared.authorization.isAuthorized
         }
-    }
-}
-
-struct SettingsSectionLabel: View {
-    let text: String
-    var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(Design.Color.textSecondary)
-            .tracking(0.5)
     }
 }
