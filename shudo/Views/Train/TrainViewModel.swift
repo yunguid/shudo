@@ -119,6 +119,7 @@ final class TrainViewModel: ObservableObject {
     private var overlay: [UUID: Activity] = [:]
     private var recentLimit = TrainViewModel.recentPageSize
     private var loadGeneration = UUID()
+    private var lastLoadedAt: Date?
     private var activationRequestIds: [UUID: UUID] = [:]
     private var cancellables = Set<AnyCancellable>()
 
@@ -208,6 +209,7 @@ final class TrainViewModel: ObservableObject {
             loadedActivities = ActivityTimelineMerge.sorted(rows)
             logging.reconcile(withLoaded: rows)
             hasLoaded = true
+            lastLoadedAt = now()
         case .failure(let error): failures.append(error)
         }
         errorMessage = failures.isEmpty ? nil : "Couldn’t refresh training. Pull down to try again."
@@ -215,6 +217,15 @@ final class TrainViewModel: ObservableObject {
     }
 
     func refresh() async { await load() }
+
+    /// Reloads when the tab reappears or the app returns to the foreground
+    /// and the data is older than `maxAge` — workouts logged by the coach
+    /// from chat arrive this way.
+    func refreshIfStale(maxAge: TimeInterval = 60) async {
+        guard !isLoading else { return }
+        if let lastLoadedAt, now().timeIntervalSince(lastLoadedAt) < maxAge { return }
+        await load()
+    }
 
     nonisolated private static func capture<T: Sendable>(
         _ operation: @Sendable () async throws -> T

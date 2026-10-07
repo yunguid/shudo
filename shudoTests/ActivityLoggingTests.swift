@@ -457,6 +457,23 @@ struct TrainViewModelTests {
         #expect(activations[0].clientRequestId == activations[1].clientRequestId)
     }
 
+    @Test func revisitsReloadOnlyWhenTheDataIsStale() async {
+        let service = FakeTrainService()
+        await service.setPlans(TrainingPlanState(active: Fixture.plan))
+        await service.setListed([])
+        let viewModel = Self.viewModel(service)
+        await viewModel.load()
+        #expect(viewModel.activities.isEmpty)
+
+        // Logged from chat by the coach while the tab was hidden.
+        await service.setListed([Fixture.row(day: "2026-10-06", status: .complete, session: "upper_a")])
+        await viewModel.refreshIfStale()
+        #expect(viewModel.activities.isEmpty)
+        await viewModel.refreshIfStale(maxAge: 0)
+        #expect(viewModel.activities.count == 1)
+        #expect(viewModel.snapshot.nextSession?.id == "lower_a")
+    }
+
     @Test func aFailedLoadKeepsWhatWasShowing() async {
         let service = FakeTrainService()
         let viewModel = TrainViewModel(

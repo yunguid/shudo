@@ -31,6 +31,8 @@ struct TrainScreen: View {
 
     @State private var logContext: WorkoutLogContext?
     @State private var planSheet: TrainingPlan?
+    @State private var submittedLogs = 0
+    @Environment(\.scenePhase) private var scenePhase
 
     #if DEBUG
     /// PolishPreview only: scroll to an anchor ("prs", "recent") after load.
@@ -131,7 +133,15 @@ struct TrainScreen: View {
         }
         .refreshable { await viewModel.refresh() }
         .task {
-            if !viewModel.hasLoaded { await viewModel.load() }
+            if viewModel.hasLoaded {
+                await viewModel.refreshIfStale()
+            } else {
+                await viewModel.load()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await viewModel.refreshIfStale() }
         }
         .sheet(item: $logContext) { context in
             WorkoutLogSheet(
@@ -142,6 +152,7 @@ struct TrainScreen: View {
                 onDictate: onDictate
             ) { draft in
                 _ = viewModel.log(draft, sessionName: context.session?.name)
+                submittedLogs += 1
             }
         }
         .sheet(item: $planSheet) { plan in
@@ -159,7 +170,7 @@ struct TrainScreen: View {
         .navigationDestination(for: ActivityRoute.self) { route in
             ActivityDetailContainer(viewModel: viewModel, id: route.id)
         }
-        .sensoryFeedback(.success, trigger: snapshot.week.completed) { old, new in new > old }
+        .sensoryFeedback(.success, trigger: submittedLogs)
     }
 
     // MARK: Sections
