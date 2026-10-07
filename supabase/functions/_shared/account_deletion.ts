@@ -4,10 +4,15 @@ import { isUuid } from "./http.ts";
 
 const STORAGE_PAGE_SIZE = 100;
 const STORAGE_REMOVE_BATCH = 100;
-const ACCOUNT_BUCKETS = [
+// Every private bucket that holds user-owned objects. Auth refuses to delete
+// a user who still owns Storage objects, so a bucket missing here blocks
+// account deletion as soon as that user uploads to it.
+export const ACCOUNT_BUCKETS = [
   "entry-images",
   "entry-audio",
   "profile-photos",
+  "weight-checkin-photos",
+  "coach-media",
 ] as const;
 
 export const ACCOUNT_DELETION_RETRY_MESSAGE =
@@ -97,7 +102,7 @@ export async function deleteAccountStorage(
     throw new Error("Refusing unsafe account storage prefix");
   }
   // The bucket/prefix passes are independent; clearing them together keeps
-  // deletion time bounded by the largest bucket instead of the sum of all six.
+  // deletion time bounded by the largest bucket instead of the sum of all.
   const passes = ACCOUNT_BUCKETS.flatMap((bucket) =>
     [userId, `u_${userId}`].map(async (prefix) => {
       const paths = await listAllFiles(admin, bucket, prefix);

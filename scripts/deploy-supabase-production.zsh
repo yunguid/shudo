@@ -241,11 +241,15 @@ authenticated_functions=(
   onboard_profile
   reanalyze_entry
   resume_entry
+  coach_chat
+  coach_sync
+  log_activity
 )
 
 maintenance_functions=(
   drain_storage_cleanup
   generate_weekly_summaries
+  coach_tick
 )
 
 allowed_function_slugs_json="$(
@@ -283,6 +287,7 @@ approved_migration_files=(
   20260722224247_add_private_profile_photos.sql
   20260730011301_add_existing_meal_photos.sql
   20260730041117_weight_checkins_and_micronutrient_reports.sql
+  20261006200000_shudo_two.sql
 )
 
 approved_migration_hashes=(
@@ -297,6 +302,7 @@ approved_migration_hashes=(
   8049c69efd841cf00c1fa1588f76281bc98eeaaf063159c24bf27d1a07b6a595
   6532384219785ab7cdffd3f7d186340043fecbae0a374aa89f63bc1a8cbc8de7
   9077a9d3c2f320b2085552f693e18619df60a60110e981a283dac1f08a73eadf
+  b8986c30ef07a96a8919207ad55889bfd6b386d9dce19d06d94b89bd404a1a66
 )
 
 approved_migration_versions=()
@@ -427,8 +433,10 @@ run_supabase functions list --project-ref "$project_ref" --output-format json \
 jq -e '
   def authenticated:
     ["create_entry", "correct_entry", "delete_entry", "delete_account",
-     "process_entry", "onboard_profile", "reanalyze_entry", "resume_entry"];
-  def maintenance: ["drain_storage_cleanup", "generate_weekly_summaries"];
+     "process_entry", "onboard_profile", "reanalyze_entry", "resume_entry",
+     "coach_chat", "coach_sync", "log_activity"];
+  def maintenance:
+    ["drain_storage_cleanup", "generate_weekly_summaries", "coach_tick"];
   (.functions // .) as $all |
   ([$all[] | .slug] | sort) == ((authenticated + maintenance) | sort) and
   ([$all[] |
