@@ -275,6 +275,9 @@ struct CoachMessage: Identifiable, Codable, Equatable, Sendable {
     var updatedAt: Date
     /// `payload.streaming == true`: the server is still writing `body`.
     var isStreaming: Bool
+    /// `payload.interrupted == true`: the reply run failed mid-stream; the
+    /// text so far is kept but will not grow.
+    var isInterrupted: Bool
     /// `payload.push_body`: the lock-screen text when `notify` is true.
     var pushBody: String?
 
@@ -323,7 +326,8 @@ struct CoachMessage: Identifiable, Codable, Equatable, Sendable {
             entryId: entryId,
             activityId: activityId
         )
-        self.isStreaming = rawPayload["streaming"]?.boolValue ?? false
+        self.isInterrupted = rawPayload["interrupted"]?.boolValue ?? false
+        self.isStreaming = (rawPayload["streaming"]?.boolValue ?? false) && !isInterrupted
         self.pushBody = Self.trimmedPushBody(rawPayload["push_body"]?.stringValue)
     }
 

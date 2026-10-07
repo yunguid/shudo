@@ -112,6 +112,13 @@ enum CoachThreadMerge {
         return CoachThreadOrdering.sorted(Array(result.values))
     }
 
+    /// Applies a delta. After a resend the server may restate the whole text
+    /// so far as the first delta; that replaces instead of appending.
+    static func resumedBody(existing: String, delta: String, mayRestate: Bool) -> String {
+        if mayRestate, !existing.isEmpty, delta.hasPrefix(existing) { return delta }
+        return existing + delta
+    }
+
     static func reconcile(local: CoachMessage, server: CoachMessage) -> CoachMessage {
         var merged = server
         if server.isStreaming, local.body.count > server.body.count, local.body.hasPrefix(server.body) {
@@ -186,6 +193,10 @@ final class CoachViewModel: ObservableObject {
         var finished = false
         var userMessageId: UUID?
         var streamedMessageIds: Set<UUID> = []
+        /// Bubbles streamed by an earlier attempt; the first delta after a
+        /// resend may restate the whole text so far (or only what's new).
+        var resumedMessageIds: Set<UUID> = []
+        var attempts = 0
         var task: Task<Void, Never>?
     }
 
@@ -481,6 +492,10 @@ final class CoachViewModel: ObservableObject {
             turns[id]?.locationResolved = true
         }
         guard let request = turns[id]?.request else { return .cancelled }
+        if (turns[id]?.attempts ?? 0) > 0 {
+            turns[id]?.resumedMessageIds = turns[id]?.streamedMessageIds ?? []
+        }
+        turns[id]?.attempts += 1
 
         var failure: CoachStreamFailure?
         var sawDone = false
@@ -521,7 +536,8 @@ final class CoachViewModel: ObservableObject {
             typing = .thinking(label: trimmed.isEmpty ? nil : trimmed)
 
         case .delta(let messageId, let text):
-            appendDelta(text, to: messageId, day: day)
+            let restates = turns[id]?.resumedMessageIds.remove(messageId) != nil
+            appendDelta(text, to: messageId, day: day, mayRestate: restates)
             turns[id]?.streamedMessageIds.insert(messageId)
             recentlyStreamed[messageId] = now()
             typing = .streaming(messageId: messageId)
@@ -568,9 +584,13 @@ final class CoachViewModel: ObservableObject {
         }
     }
 
-    private func appendDelta(_ text: String, to messageId: UUID, day: String) {
+    private func appendDelta(_ text: String, to messageId: UUID, day: String, mayRestate: Bool = false) {
         if var existing = findMessage(messageId) {
-            existing.body += text
+            existing.body = CoachThreadMerge.resumedBody(
+                existing: existing.body,
+                delta: text,
+                mayRestate: mayRestate
+            )
             existing.isStreaming = true
             put(existing)
         } else {

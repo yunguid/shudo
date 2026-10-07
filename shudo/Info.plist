@@ -44,7 +44,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Shudo uses the camera for meal photos, workout photos and progress photos.</string>
+	<string>Shudo uses the camera for meal photos, workout photos and screenshots, and your daily progress check-in photos.</string>
 	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
 	<dict>
 		<key>NearbyGrab</key>

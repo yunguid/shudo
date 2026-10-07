@@ -648,6 +648,8 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [UUID: CoachMessage]
     private var completedTurns: [UUID: [CoachMessage]] = [:]
+    private var acceptedUsers: [UUID: CoachMessage] = [:]
+    private var replyIds: [UUID: UUID] = [:]
     private var queuedOverrides: [[Step]] = []
     private var _sentRequests: [CoachSendRequest] = []
     private var _actions: [CoachCardAction] = []
@@ -657,6 +659,7 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
     private var _memory: CoachMemoryDocument
     private var _settings: CoachSettings
     private var _fetchDayError: Error?
+    private var _actError: Error?
     private var _script: Script
     private let clock: @Sendable () -> Date
     /// Added between scripted steps (PolishPreview uses ~90 ms for realism).
@@ -766,7 +769,9 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
                 return steps
             }
             if !queuedOverrides.isEmpty { return queuedOverrides.removeFirst() }
-            let user = CoachMessage(
+            // A resend of a turn the "server" already accepted tails it: same
+            // user row, same reply bubble (restated from the start).
+            let user = acceptedUsers[request.clientRequestId] ?? CoachMessage(
                 role: .user,
                 kind: request.attachmentPath == nil ? "text" : "photo",
                 body: request.text,
@@ -775,9 +780,11 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
                 attachmentPath: request.attachmentPath,
                 clientRequestId: request.clientRequestId
             )
+            let replyId = replyIds[request.clientRequestId] ?? UUID()
+            replyIds[request.clientRequestId] = replyId
             return _script(
                 request,
-                TurnContext(now: now, runId: UUID(), replyId: UUID(), userMessage: user)
+                TurnContext(now: now, runId: UUID(), replyId: replyId, userMessage: user)
             )
         }
         let delay = stepDelayMilliseconds
@@ -814,6 +821,8 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
             case .accepted(_, let user, let duplicate):
                 guard !duplicate, let user else { return }
                 stored[user.id] = user
+                acceptedUsers[request.clientRequestId] = user
+                turnMessages.removeAll { $0.id == user.id }
                 turnMessages.append(user)
             case .delta(let id, let text):
                 var message = stored[id] ?? CoachMessage(
@@ -840,9 +849,17 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
         }
     }
 
+    func setActError(_ error: Error?) {
+        lock.withLock { _actError = error }
+    }
+
     func act(on action: CoachCardAction) async throws -> [CoachMessage] {
-        lock.withLock {
+        try lock.withLock {
             _actions.append(action)
+            if let error = _actError {
+                _actError = nil
+                throw error
+            }
             var updated: [CoachMessage] = []
             for (id, message) in stored {
                 var raw = message.rawPayload.objectValue ?? [:]
