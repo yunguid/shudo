@@ -28,6 +28,7 @@ struct AppShell: View {
     @State private var headerExpanded: Bool
     @State private var draft = CaptureDraft()
     @State private var isTyping = false
+    @State private var composerHeight: CGFloat = 0
     @State private var sheet: ShellSheet?
     @State private var cover: ShellCover?
     @State private var composerSeed = ComposerSeed()
@@ -88,6 +89,7 @@ struct AppShell: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .overlay(alignment: .bottom) { typingOverlay }
+        .environment(\.captureComposerInset, isTyping ? composerHeight : 0)
         .animation(Design.Motion.snap, value: isTyping)
         .sheet(isPresented: $today.isPresentingComposer, onDismiss: composerDismissed) { composer }
         .sheet(item: $sheet) { sheet in sheetContent(sheet) }
@@ -207,15 +209,19 @@ struct AppShell: View {
     }
 
     /// The keyboard-docked composer (the accessory itself sits under the
-    /// keyboard). A light scrim; tap it to tuck the draft back into the bar.
+    /// keyboard). On Today the thread stays bright and makes room for it
+    /// (`captureComposerInset`) — you're replying to what's there. Elsewhere
+    /// a light scrim; tap it to tuck the draft back into the bar.
     @ViewBuilder
     private var typingOverlay: some View {
         if isTyping {
             ZStack(alignment: .bottom) {
-                Color.black.opacity(0.28)
-                    .ignoresSafeArea()
-                    .onTapGesture { isTyping = false }
-                    .accessibilityHidden(true)
+                if tab != .today {
+                    Color.black.opacity(0.28)
+                        .ignoresSafeArea()
+                        .onTapGesture { isTyping = false }
+                        .accessibilityHidden(true)
+                }
                 CaptureComposer(
                     draft: $draft,
                     placeholder: capture.context.placeholder,
@@ -231,6 +237,7 @@ struct AppShell: View {
                     },
                     onClose: { isTyping = false }
                 )
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
             }
             .transition(.opacity)
         }

@@ -385,6 +385,13 @@ struct CaptureBar: View {
     }
 }
 
+extension EnvironmentValues {
+    /// Height of the keyboard composer while it's open (0 otherwise). A
+    /// scrolling screen under it adds this to its bottom inset so its newest
+    /// content stays visible above the composer.
+    @Entry var captureComposerInset: CGFloat = 0
+}
+
 /// The typing surface: the tab bar's accessory sits under the keyboard, so
 /// tapping the field opens this glass field docked right above it, bound to
 /// the same draft. Same shape as the bar: mic bottom-left, send trailing.

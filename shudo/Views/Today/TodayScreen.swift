@@ -57,6 +57,10 @@ struct TodayScreen: View {
     @State private var isShowingDatePicker = false
     @State private var highlightedRowId: String?
     @State private var settledDay: String?
+    /// Stick-to-bottom: true while the newest row is in view. Only Luke's own
+    /// scrolling unpins it; the keyboard and composer resizing never do.
+    @State private var isPinnedToBottom = true
+    @State private var scrollPhase: ScrollPhase = .idle
     @State private var coachNotice: String?
     @State private var showErrorAlert = false
     @State private var nudgeRescheduleTask: Task<Void, Never>?
@@ -64,6 +68,7 @@ struct TodayScreen: View {
     @GestureState private var daySwipePreview: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.captureComposerInset) private var composerInset
 
     init(
         profile: Profile,
@@ -156,6 +161,17 @@ struct TodayScreen: View {
                     .defaultScrollAnchor(.bottom, for: .initialOffset)
                     .defaultScrollAnchor(.bottom, for: .sizeChanges)
                     .scrollDismissesKeyboard(.interactively)
+                    // The keyboard composer floats over the thread; make room
+                    // for it so the newest row sits right above it.
+                    .safeAreaPadding(.bottom, composerInset)
+                    .onScrollPhaseChange { _, phase in scrollPhase = phase }
+                    .onScrollGeometryChange(for: Bool.self, of: Self.isAtBottom) { _, atBottom in
+                        if atBottom {
+                            isPinnedToBottom = true
+                        } else if scrollPhase.isUserDriven {
+                            isPinnedToBottom = false
+                        }
+                    }
                     .offset(x: daySwipePreview)
                     .refreshable {
                         guard environment.loadsRemotely else { return }
@@ -184,6 +200,10 @@ struct TodayScreen: View {
                     }
                     .onChange(of: rows.last?.id) { _, _ in
                         guard settledDay == selectedDay else { return }
+                        // Don't yank Luke away from something he scrolled up
+                        // to read, unless the new row is his own send.
+                        guard isPinnedToBottom || rows.last?.item.side == .me else { return }
+                        isPinnedToBottom = true
                         withAnimation(Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion)) {
                             proxy.scrollTo("thread.bottom", anchor: .bottom)
                         }
@@ -236,6 +256,13 @@ struct TodayScreen: View {
         } message: {
             Text(today.errorMessage ?? "Please try again.")
         }
+    }
+
+    /// Within a thumb's width of the newest row, measured above every bottom
+    /// inset (tab bar, keyboard, composer). `visibleRect` spans the insets.
+    private static func isAtBottom(_ geometry: ScrollGeometry) -> Bool {
+        let visibleBottom = geometry.visibleRect.maxY - geometry.contentInsets.bottom
+        return geometry.contentSize.height - visibleBottom <= 48
     }
 
     private var readKey: String {
@@ -1067,5 +1094,16 @@ struct ChatPhoto: View {
         .clipShape(RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous))
         .task(id: path) { url = await loadURL(path) }
         .accessibilityLabel("Photo you sent")
+    }
+}
+
+private extension ScrollPhase {
+    /// Luke's finger (or its fling), as opposed to a programmatic scroll or
+    /// an inset change.
+    var isUserDriven: Bool {
+        switch self {
+        case .tracking, .interacting, .decelerating: true
+        default: false
+        }
     }
 }

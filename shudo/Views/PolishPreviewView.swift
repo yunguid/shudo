@@ -219,15 +219,21 @@ struct PolishPreviewView: View {
     /// `-shudoPreviewRecord` (with `-shudoScriptedSpeech`) starts the bar
     /// recording through the one entry point; `-shudoPreviewCaptureContext
     /// train|body|bio` picks the context (and so the tab).
+    /// `-shudoPreviewType` opens the keyboard composer instead.
     @MainActor
     private static func driveCapture() async {
-        guard PolishPreviewScreen.startsRecording else { return }
         let arguments = ProcessInfo.processInfo.arguments
+        let types = arguments.contains("-shudoPreviewType")
+        guard PolishPreviewScreen.startsRecording || types else { return }
         let context = arguments.firstIndex(of: "-shudoPreviewCaptureContext")
             .flatMap { arguments.indices.contains($0 + 1) ? CaptureContext(rawValue: arguments[$0 + 1]) : nil }
             ?? .today
         try? await Task.sleep(for: .milliseconds(1_200))
-        CaptureController.shared.startRecording(context: context)
+        if types {
+            CaptureController.shared.focusText(context: context)
+        } else {
+            CaptureController.shared.startRecording(context: context)
+        }
     }
 
     private static let completedEntryID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
