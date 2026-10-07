@@ -124,6 +124,26 @@ final class CoachNotificationDemoUITests: XCTestCase {
         snap("deep-link")
     }
 
+    /// The four texts as one conversation in Notification Center:
+    /// collapsed (with its count), then expanded. Coordinates only.
+    @MainActor
+    func testTextsStackAsOneConversation() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-shudoPolishPreview", "main",
+            "-shudoNotificationDemo", "-shudoNotificationDemoDelay", "8",
+        ]
+        app.launch()
+        sleep(25)
+        XCUIDevice.shared.press(.home)
+        sleep(50) // all four delivered
+        openNotificationCenter()
+        snap("nc-stack")
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.69)).tap()
+        sleep(3)
+        snap("nc-expanded")
+    }
+
     /// Before/after comparison: the app is whatever is installed; the test
     /// only backgrounds it and waits for a text pushed with `simctl push`
     /// (body mentioning "62g of protein"), then captures banner and long-look.
