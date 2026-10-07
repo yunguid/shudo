@@ -569,7 +569,7 @@ struct TodayScreen: View {
                         onRetry: { today.retryCorrection(entryId: entry.id) },
                         onDismiss: { today.dismissFailedCorrection(entryId: entry.id) }
                     )
-                    .frame(maxWidth: 300)
+                    .frame(width: Design.Layout.threadCardWidth)
                 }
             }
         }
@@ -596,7 +596,7 @@ struct TodayScreen: View {
                 onRetry: activity.isNotSent ? { logging.retry(activity.id) } : nil,
                 onDiscard: activity.isNotSent ? { logging.discard(activity.id) } : nil
             )
-            .frame(maxWidth: 300)
+            .frame(width: Design.Layout.threadCardWidth)
             if activity.isLocalOnly {
                 card
             } else {
@@ -620,16 +620,8 @@ struct TodayScreen: View {
 
     private func typingRow(label: String?) -> some View {
         CoachRow(showsAvatar: true, isThinking: true) {
-            VStack(alignment: .leading, spacing: 4) {
-                CoachTypingBubble()
-                if let label {
-                    Text(label)
-                        .font(Design.Typeface.meta)
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .padding(.leading, 4)
-                        .transition(.opacity)
-                }
-            }
+            // Dots only, like Messages; tool status labels read as noise.
+            CoachTypingBubble()
         }
         .padding(.top, 6)
     }

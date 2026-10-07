@@ -138,6 +138,12 @@ enum Design {
         static let hairline: CGFloat = 0.5
     }
 
+    enum Layout {
+        /// Every card in the coach thread (meals, workouts, check-ins and
+        /// Shudo's rich cards) shares one width so the column reads clean.
+        static let threadCardWidth: CGFloat = 300
+    }
+
     enum Motion {
         static let snap = Animation.snappy(duration: 0.25)
         static let settle = Animation.smooth(duration: 0.4)

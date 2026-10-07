@@ -33,7 +33,7 @@ struct MealReceiptCard: View {
                 )
                 .padding(.horizontal, 12)
                 .padding(.vertical, 1)
-                .frame(maxWidth: 300, alignment: .leading)
+                .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
                 .cardSurface(radius: Design.Radius.card)
                 .overlay {
                     if entry.status == .failed {
@@ -87,7 +87,7 @@ struct MealReceiptCard: View {
             .accessibilityHidden(true)
         }
         .padding(12)
-        .frame(maxWidth: 300)
+        .frame(width: Design.Layout.threadCardWidth)
         .cardSurface(radius: Design.Radius.card)
     }
 
@@ -159,7 +159,7 @@ struct CheckInThreadCard: View {
             Spacer(minLength: 0)
         }
         .padding(10)
-        .frame(maxWidth: 280)
+        .frame(width: Design.Layout.threadCardWidth)
         .background(Design.Color.surface1, in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)

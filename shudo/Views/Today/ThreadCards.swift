@@ -11,7 +11,7 @@ struct ThreadCard<Content: View>: View {
     let eyebrow: String
     let symbol: String
     var accent: Color = Design.Color.ember
-    var maxWidth: CGFloat = 300
+    var maxWidth: CGFloat = Design.Layout.threadCardWidth
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -26,7 +26,7 @@ struct ThreadCard<Content: View>: View {
             content
         }
         .padding(14)
-        .frame(maxWidth: maxWidth, alignment: .leading)
+        .frame(width: maxWidth, alignment: .leading)
         .cardSurface(radius: Design.Radius.card)
     }
 }
