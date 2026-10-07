@@ -279,11 +279,17 @@ struct BodyCheckInFlow: View {
             .cardSurface()
             .contentShape(Rectangle())
             .onTapGesture { weightFocused = true }
-            if step == .review, existing?.weightKG != nil, weightText.isEmpty {
+            if step == .weight {
+                Text(existing?.hasPhoto == true
+                     ? "Say it or type it. This morning’s photo stays as is."
+                     : "Say it or type it.")
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.textTertiary)
+            } else if existing?.weightKG != nil, weightText.isEmpty {
                 Text("Leaving it blank keeps this morning’s weight.")
                     .font(.caption)
                     .foregroundStyle(Design.Color.textTertiary)
-            } else if step == .review, weightText.isEmpty {
+            } else if weightText.isEmpty {
                 Text("No scale yet? Skip it. The photo is the check-in.")
                     .font(.caption)
                     .foregroundStyle(Design.Color.textTertiary)
@@ -351,6 +357,30 @@ struct BodyCheckInFlow: View {
 
     // MARK: Actions
 
+    /// What a save sends, before the photo is encoded: only what the user
+    /// actually provided. A blank weight stays nil (an earlier weight that day
+    /// survives); photo columns ride along only with a new photo; an
+    /// unchanged note isn't re-sent.
+    static func draft(
+        localDay: String,
+        weightKG: Double?,
+        includesPhoto: Bool,
+        pose: PhysiquePose,
+        capturedAt: Date?,
+        note: String,
+        existing: WeightCheckIn?
+    ) -> BodyCheckInDraft {
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return BodyCheckInDraft(
+            localDay: localDay,
+            weightKG: weightKG,
+            photoJPEG: nil,
+            pose: includesPhoto ? pose : nil,
+            capturedAt: includesPhoto ? (capturedAt ?? Date()) : nil,
+            note: trimmedNote.isEmpty || trimmedNote == existing?.note ? nil : trimmedNote
+        )
+    }
+
     private func loadGhost() async {
         guard ghost == nil, let ghostPath else { return }
         if let loader = photoLoader {
@@ -369,12 +399,15 @@ struct BodyCheckInFlow: View {
         isSaving = true
         errorMessage = nil
         let image = step == .review ? capture?.image : nil
-        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        var draft = BodyCheckInDraft(localDay: localDay)
-        draft.weightKG = weightKG
-        draft.pose = image == nil ? nil : pose
-        draft.capturedAt = image == nil ? nil : capture?.capturedAt
-        draft.note = trimmedNote.isEmpty || trimmedNote == existing?.note ? nil : trimmedNote
+        var draft = Self.draft(
+            localDay: localDay,
+            weightKG: weightKG,
+            includesPhoto: image != nil,
+            pose: pose,
+            capturedAt: capture?.capturedAt,
+            note: note,
+            existing: existing
+        )
         let service = service
         let existing = existing
         let updatesProfileWeight = updatesProfileWeight

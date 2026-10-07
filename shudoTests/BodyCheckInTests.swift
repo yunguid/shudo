@@ -289,6 +289,66 @@ struct BodyCheckInTests {
         #expect(BodyPoseAlignmentPolicy.hint(noFeet) == .stepBack)
     }
 
+    // MARK: Check-in flow
+
+    @Test func flowDraftsSendOnlyWhatWasProvided() {
+        let now = Date()
+        let morning = WeightCheckIn(
+            id: UUID(), localDay: "2026-10-06", weightKG: 74, progressPhotoPath: nil, note: "Slept 6h",
+            createdAt: now, updatedAt: now)
+
+        // Photo with a blank weight: no weight, photo columns present.
+        let photoOnly = BodyCheckInFlow.draft(
+            localDay: "2026-10-06", weightKG: nil, includesPhoto: true, pose: .side, capturedAt: now,
+            note: "Slept 6h", existing: morning)
+        #expect(photoOnly.weightKG == nil)
+        #expect(photoOnly.pose == .side)
+        #expect(photoOnly.capturedAt == now)
+        #expect(photoOnly.note == nil)  // unchanged note isn't re-sent
+
+        // "Add weight" later: weight only, no photo columns.
+        let weightOnly = BodyCheckInFlow.draft(
+            localDay: "2026-10-06", weightKG: 74.2, includesPhoto: false, pose: .frontRelaxed, capturedAt: now,
+            note: "", existing: morning)
+        #expect(weightOnly.weightKG == 74.2)
+        #expect(weightOnly.pose == nil && weightOnly.capturedAt == nil && weightOnly.photoJPEG == nil)
+        let payload = SupabaseService.bodyCheckInPayload(userId: Self.userId, draft: weightOnly, photoPath: nil)
+        #expect(Set(payload.keys) == ["user_id", "local_day", "weight_kg"])
+    }
+
+    @MainActor
+    @Test func viewModelMergesSavesAndPhotoRemovals() async throws {
+        let today = "2026-10-06"
+        let now = Date()
+        let photo = WeightCheckIn(
+            id: UUID(), localDay: today, weightKG: nil,
+            progressPhotoPath: "\(Self.userId)/\(today)/progress-11111111-2222-4333-8444-555555555555.jpg",
+            createdAt: now, updatedAt: now)
+        let service = FixtureBodyService(checkIns: [photo], nutrition: BodyNutritionHistory())
+        let model = BodyViewModel(
+            previewProfile: BodyFixtures.profile,
+            settings: BodyGoalSettings(profile: BodyFixtures.profile),
+            checkIns: [photo],
+            nutrition: BodyNutritionHistory(),
+            summaries: [],
+            service: service,
+            today: today)
+        #expect(model.snapshot.todayCheckIn?.hasWeight == false)
+
+        let saved = try await service.save(
+            BodyCheckInDraft(localDay: today, weightKG: 74), replacing: photo, updatesProfileWeight: true)
+        model.applySaved(saved)
+        #expect(model.checkIns.count == 1)
+        #expect(model.snapshot.todayCheckIn?.hasWeight == true)
+        #expect(model.snapshot.todayCheckIn?.hasPhoto == true)
+        #expect(model.snapshot.weighInCount == 1)
+
+        await model.removePhoto(try #require(model.snapshot.todayCheckIn))
+        #expect(model.snapshot.todayCheckIn?.hasPhoto == false)
+        #expect(model.snapshot.todayCheckIn?.weightKG == 74)
+        #expect(model.snapshot.photoCheckIns.isEmpty)
+    }
+
     // MARK: Body snapshot
 
     @Test func snapshotAnchorsTheBulkAndFindsTheGhost() {
