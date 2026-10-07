@@ -12,12 +12,19 @@ struct MealReceiptCard: View {
     var onCompletionRevealFinished: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var isSettled: Bool { entry.status == .complete && !isRetrying }
     private var isWorking: Bool { isRetrying || entry.status.isProcessing }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        // Large text stacks the number under the title instead of
+        // squeezing both into one row.
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        layout {
             if let url = entry.imageURL {
                 MealPhotoTile(url: url)
             }
@@ -25,13 +32,15 @@ struct MealReceiptCard: View {
                 Text(entry.summary)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(isSettled ? Design.Color.textPrimary : Design.Color.textSecondary)
-                    .lineLimit(2)
+                    .lineLimit(stacked ? 4 : 2)
                     .multilineTextAlignment(.leading)
                 detail
             }
-            Spacer(minLength: 8)
+            if !stacked { Spacer(minLength: 8) }
             if isSettled {
-                kcal.transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
+                ReceiptNumber(value: Int(entry.caloriesKcal.rounded()), unit: "kcal", inline: stacked)
+                    .contentTransition(.numericText(value: entry.caloriesKcal))
+                    .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
             }
         }
         .padding(.horizontal, 14)
@@ -91,14 +100,27 @@ struct MealReceiptCard: View {
         }
     }
 
-    private var kcal: some View {
-        VStack(alignment: .trailing, spacing: 0) {
-            Text(Int(entry.caloriesKcal.rounded()).formatted())
+}
+
+/// A receipt's one number: "695" over "kcal" at the trailing edge, or on
+/// one baseline under the title at accessibility text sizes.
+private struct ReceiptNumber: View {
+    let value: Int
+    let unit: String
+    var inline = false
+
+    var body: some View {
+        let layout = inline
+            ? AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 4))
+            : AnyLayout(VStackLayout(alignment: .trailing, spacing: 0))
+        layout {
+            Text(value.formatted())
                 .font(Design.Typeface.numeral(.title3, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(Design.Color.textPrimary)
-                .contentTransition(.numericText(value: entry.caloriesKcal))
-            Text("kcal")
+                .lineLimit(1)
+                .fixedSize()
+            Text(unit)
                 .font(Design.Typeface.meta)
                 .foregroundStyle(Design.Color.textTertiary)
         }
@@ -146,8 +168,14 @@ struct WorkoutReceiptCard: View {
     let activity: Activity
     let units: String
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        layout {
             VStack(alignment: .leading, spacing: 6) {
                 Label {
                     Text(activity.title)
@@ -164,20 +192,12 @@ struct WorkoutReceiptCard: View {
                     Text(subtitle)
                         .font(Design.Typeface.numeral(.footnote, weight: .medium))
                         .foregroundStyle(Design.Color.textSecondary)
-                        .lineLimit(1)
+                        .lineLimit(stacked ? 3 : 1)
                 }
             }
-            Spacer(minLength: 8)
+            if !stacked { Spacer(minLength: 8) }
             if let minutes = activity.durationMin, minutes > 0 {
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(Int(minutes.rounded()).formatted())
-                        .font(Design.Typeface.numeral(.title3, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(Design.Color.textPrimary)
-                    Text("min")
-                        .font(Design.Typeface.meta)
-                        .foregroundStyle(Design.Color.textTertiary)
-                }
+                ReceiptNumber(value: Int(minutes.rounded()), unit: "min", inline: stacked)
             }
         }
         .padding(.horizontal, 14)

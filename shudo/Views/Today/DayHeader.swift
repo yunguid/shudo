@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The pinned glass header over the day thread. Compact: rings, "N left of
-/// X kcal", P/C/F bars. Tap to expand (matched geometry) into the week
+/// The pinned glass header over the day thread. Compact: rings, "855 kcal
+/// left", P/C/F bars. Tap to expand (matched geometry) into the week
 /// strip, the big rings, and the meal ledger — tap a meal for its detail,
-/// swipe it away to delete (with undo).
+/// swipe it away to delete (with undo). At accessibility text sizes the
+/// bars drop under the number and the expanded day scrolls in place.
 struct DayHeader: View {
     @Binding var expanded: Bool
     let numbers: DayHeaderNumbers
@@ -21,24 +22,26 @@ struct DayHeader: View {
 
     @Namespace private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .caption) private var timeWidth: CGFloat = 40
 
     var body: some View {
-        VStack(spacing: 0) {
-            if expanded {
-                WeekStrip(days: weekDays, onSelect: onSelectDay)
-                    .padding(.bottom, 14)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                VStack(spacing: 16) {
-                    HStack(spacing: 18) {
-                        rings(size: 104)
-                        remaining(style: .largeTitle)
+        Group {
+            if expanded, typeSize.isAccessibilitySize {
+                ScrollView { expandedDay }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: 520)
+            } else if expanded {
+                expandedDay
+            } else if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 14) {
+                        rings(size: 58)
+                        remaining(style: .title)
                         Spacer(minLength: 0)
                     }
-                    VStack(spacing: 9) { bars }
+                    VStack(spacing: 7) { bars }
                 }
-                ledger
-                    .padding(.top, 14)
-                    .transition(.opacity)
             } else {
                 HStack(spacing: 14) {
                     rings(size: 58)
@@ -60,6 +63,25 @@ struct DayHeader: View {
         .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.6), trigger: expanded)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today.header")
+    }
+
+    private var expandedDay: some View {
+        VStack(spacing: 0) {
+            WeekStrip(days: weekDays, onSelect: onSelectDay)
+                .padding(.bottom, 14)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            VStack(spacing: 16) {
+                HStack(spacing: 18) {
+                    rings(size: 104)
+                    remaining(style: .largeTitle)
+                    Spacer(minLength: 0)
+                }
+                VStack(spacing: 9) { bars }
+            }
+            ledger
+                .padding(.top, 14)
+                .transition(.opacity)
+        }
     }
 
     private func toggle() {
@@ -131,7 +153,7 @@ struct DayHeader: View {
         VStack(spacing: 0) {
             if !meals.isEmpty {
                 HairlineRule().padding(.bottom, 4)
-                if meals.count <= 5 {
+                if meals.count <= 5 || typeSize.isAccessibilitySize {
                     ledgerRows
                 } else {
                     // A long day scrolls inside the header instead of pushing
@@ -182,12 +204,14 @@ struct DayHeader: View {
                     .font(Design.Typeface.numeral(.caption))
                     .monospacedDigit()
                     .foregroundStyle(Design.Color.textTertiary)
-                    .frame(width: 40, alignment: .leading)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(minWidth: timeWidth, alignment: .leading)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(meal.summary)
                         .font(.subheadline)
                         .foregroundStyle(meal.status == .complete ? Design.Color.textPrimary : Design.Color.textSecondary)
-                        .lineLimit(1)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                     if meal.status == .complete {
                         MacroInline(p: meal.proteinG, c: meal.carbsG, f: meal.fatG)
                     } else if meal.status == .failed {

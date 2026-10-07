@@ -53,12 +53,26 @@ struct CardButtonStyle: ButtonStyle {
         configuration.label
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(prominent ? Design.Color.onEmber : Design.Color.textPrimary)
+            .multilineTextAlignment(.center)
+            .padding(.vertical, 8)
             .frame(maxWidth: fills ? .infinity : nil)
-            .frame(height: 40)
+            .frame(minHeight: 40)
             .padding(.horizontal, fills ? 0 : 16)
             .background(prominent ? Design.Color.ember : Design.Color.surface3, in: Capsule())
             .opacity(configuration.isPressed ? 0.8 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
+    }
+}
+
+/// A card's buttons side by side, stacked when large text won't fit.
+private struct CardButtonRow<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { content }
+            VStack(spacing: 8) { content }
+        }
     }
 }
 
@@ -244,10 +258,12 @@ struct SnackRecCardView: View {
                 .accessibilityLabel(
                     "Adds \(Int(option.combined.proteinG.rounded())) grams protein, \(Int(option.combined.caloriesKcal.rounded())) kilocalories"
                 )
-                Text(ThreadCardCopy.snackPayoff(remainingAfter: option.remainingAfter, beforeLift: liftLater))
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(Design.Color.honey)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !isLogged {
+                    Text(ThreadCardCopy.snackPayoff(remainingAfter: option.remainingAfter, beforeLift: liftLater))
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(Design.Color.honey)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 buttons(option)
                     .padding(.top, 2)
             }
@@ -267,7 +283,7 @@ struct SnackRecCardView: View {
         if isLogged {
             DoneLabel(text: "Logged")
         } else {
-            HStack(spacing: 8) {
+            CardButtonRow {
                 if ThreadCardCopy.hasDirections(option) {
                     Button {
                         openDirections(option)
@@ -350,7 +366,7 @@ struct TrainingPlanCardView: View {
             }
             switch card.status {
             case .draft:
-                HStack(spacing: 8) {
+                CardButtonRow {
                     Button {
                         Task { _ = await actions.act(.trainingPlan(card, decision: .activate)) }
                     } label: {
@@ -416,7 +432,7 @@ struct GoalChangeCardView: View {
             }
             switch card.status {
             case .needsConfirmation:
-                HStack(spacing: 8) {
+                CardButtonRow {
                     Button {
                         Task {
                             if await actions.act(.goalChange(card, decision: .apply)) { actions.targetsChanged() }

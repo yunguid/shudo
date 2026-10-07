@@ -271,12 +271,15 @@ struct MacroBar: View {
     let target: Double
     let color: Color
 
+    @ScaledMetric(relativeTo: .caption) private var valueWidth: CGFloat = 62
+
     var body: some View {
         HStack(spacing: 8) {
             Text(label)
                 .font(Design.Typeface.eyebrow)
                 .foregroundStyle(color)
-                .frame(width: 12, alignment: .leading)
+                .fixedSize()
+                .frame(minWidth: 12, alignment: .leading)
             GeometryReader { geo in
                 Capsule().fill(color.opacity(0.16))
                     .overlay(alignment: .leading) {
@@ -291,7 +294,9 @@ struct MacroBar: View {
             }
             .font(Design.Typeface.numeral(.caption, weight: .semibold))
             .monospacedDigit()
-            .frame(width: 62, alignment: .trailing)
+            .lineLimit(1)
+            .fixedSize()
+            .frame(minWidth: valueWidth, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label), \(Int(value)) of \(Int(target)) grams")
@@ -314,5 +319,7 @@ struct MacroInline: View {
             Text("\(Int(value))").foregroundStyle(Design.Color.textPrimary)
             Text(label).foregroundStyle(color)
         }
+        .lineLimit(1)
+        .fixedSize()
     }
 }

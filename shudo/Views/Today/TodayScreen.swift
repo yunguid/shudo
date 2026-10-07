@@ -152,7 +152,6 @@ struct TodayScreen: View {
                         thread(rows, viewport: geometry.size.height)
                             .padding(.horizontal, 12)
                             .padding(.top, 4)
-                            .padding(.bottom, 16)
                     }
                     .defaultScrollAnchor(.bottom, for: .initialOffset)
                     .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -299,7 +298,10 @@ struct TodayScreen: View {
                     .id(row.id)
                     .transition(arrival(for: row.item.side))
             }
-            Color.clear.frame(height: 1).id("thread.bottom")
+            // The bottom margin *is* the scroll target, so scrolling to the
+            // newest row keeps the same breathing room above the capture bar
+            // as opening the day does.
+            Color.clear.frame(height: 18).id("thread.bottom")
         }
         .animation(
             settledDay == selectedDay ? Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion) : nil,
@@ -511,14 +513,14 @@ struct TodayScreen: View {
                         .clipShape(RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous))
                 }
                 if !pending.text.isEmpty {
+                    // A dimmed bubble is the whole "sending" state; it
+                    // brightens the moment Shudo has it.
                     MessageBubble(text: pending.text, isMine: true, position: row.position)
                         .opacity(pending.isFailed ? 0.6 : 0.85)
                 }
                 switch pending.state {
                 case .sending:
-                    Text("Sending…")
-                        .font(Design.Typeface.meta)
-                        .foregroundStyle(Design.Color.textTertiary)
+                    EmptyView()
                 case .failed(let message, let retryable):
                     HStack(spacing: 10) {
                         Text(message)
