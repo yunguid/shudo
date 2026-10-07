@@ -22,6 +22,9 @@ $$;
 -- The additive migration is intentionally safe to replay.
 \ir ../migrations/20260730011301_add_existing_meal_photos.sql
 \ir ../migrations/20260730041117_weight_checkins_and_micronutrient_reports.sql
+\ir ../migrations/20261006200000_shudo_two.sql
+-- The Shudo 2.0 migration is additive and intentionally safe to replay.
+\ir ../migrations/20261006200000_shudo_two.sql
 
 insert into auth.users (id, email)
 values
@@ -176,6 +179,8 @@ $$;
 \ir profile_photos.sql
 
 \ir weight_checkins.sql
+
+\ir shudo_two.sql
 
 -- Streamed previews stay bounded and are replaced/terminalized under the same
 -- attempt fence as the durable processor state.
