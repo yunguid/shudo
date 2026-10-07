@@ -68,33 +68,24 @@ struct RootView: View {
 
     private var loadingView: some View {
         VStack(spacing: 14) {
+            CoachAvatar(size: 56, isThinking: profileError == nil)
+                .accessibilityLabel(profileError == nil ? "Opening Shudo" : "Shudo")
             if let profileError {
-                Image(systemName: "wifi.exclamationmark")
-                    .font(.title2)
-                    .foregroundStyle(Design.Color.textSecondary)
-                Text("Couldn’t open your profile")
+                Text(profileError)
                     .font(.headline)
                     .foregroundStyle(Design.Color.textPrimary)
-                Text(profileError)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.textSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try again") { prepareProfile() }
                     .buttonStyle(PrimaryButtonStyle())
-                    .frame(maxWidth: 220)
+                    .padding(.top, 6)
                 Button("Sign out") {
                     Task { await CoachSync.shared.reset() }
                     AuthSessionManager.shared.signOut()
                 }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .padding(.top, 4)
-            } else {
-                CoachAvatar(size: 56, isThinking: true)
-                Text("Opening Shudo…")
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.textSecondary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.textTertiary)
+                .frame(minHeight: 44)
             }
         }
         .padding(28)
@@ -125,7 +116,7 @@ struct RootView: View {
                     await MainActor.run { AuthSessionManager.shared.signOut() }
                 } else if profile == nil {
                     await MainActor.run {
-                        profileError = "Check your connection and try again."
+                        profileError = "Can’t reach Shudo right now."
                     }
                 }
                 // Keep the cached/default profile on transient network or server failure.

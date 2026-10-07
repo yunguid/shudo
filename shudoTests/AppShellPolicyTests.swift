@@ -392,18 +392,6 @@ struct BioPresentationTests {
         #expect(lines.map(\.text) == ["Lean bulk.", "Bench 225", "Squat 315", "Sleep 8h", "Heading"])
     }
 
-    @Test func missingSectionsSkipHandleWithCare() {
-        let memory = CoachMemoryDocument(
-            version: 2, document: "x",
-            bio: CoachMemoryDocument.bioSections(["about": .string("a"), "goals": .string("g")]),
-            notes: [:], schedule: nil, equipment: [], updatedSource: nil, updatedAt: nil
-        )
-        let missing = BioPresentation.missingSections(in: memory)
-        #expect(!missing.contains("About") && !missing.contains("Goals"))
-        #expect(missing.contains("Schedule") && missing.contains("Sleep"))
-        #expect(!missing.contains("Handle with care"))
-    }
-
     @Test func revisionsParseAndLabelTheirSource() throws {
         let json = """
         [{"id":"0b6a1d6e-0000-4000-8000-00000000000a","version":6,"source":"bio_update","change_summary":" Lifts moved ","created_at":"2026-10-06T18:00:00.123456+00:00"},

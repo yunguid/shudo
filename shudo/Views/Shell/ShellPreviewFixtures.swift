@@ -432,7 +432,7 @@ enum ShellPreviewFixtures {
             onSettingsChanged: { _ in },
             openBio: {},
             bioDestination: {
-                AnyView(BioView(coachService: coach, loadRevisions: { revisions }, onSend: { _, _ in }))
+                AnyView(BioView(coachService: coach, loadRevisions: { revisions }, onSend: { _, _ in }, onTalkToUpdate: {}))
             },
             onSignOut: {}
         )
