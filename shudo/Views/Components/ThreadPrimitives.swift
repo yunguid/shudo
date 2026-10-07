@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Coach avatar: the app icon's 3x3 pad grid, drawn in SwiftUI.
 // Rows go amber → honey → cream like the icon. While Shudo is "thinking",
@@ -95,6 +96,7 @@ struct MessageBubble: View {
     let text: String
     let isMine: Bool
     var position: BubblePosition = .single
+    @State private var isSelectingText = false
 
     var body: some View {
         Text(text)
@@ -109,7 +111,62 @@ struct MessageBubble: View {
                     BubbleShape(isMine: false, position: position).fill(Design.Color.bubbleCoach)
                 }
             }
+            // Long-press lifts just the bubble (Messages-style) with copy actions.
+            .contentShape(.contextMenuPreview, BubbleShape(isMine: isMine, position: position))
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = text
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                Button {
+                    isSelectingText = true
+                } label: {
+                    Label("Select Text", systemImage: "selection.pin.in.out")
+                }
+                ShareLink(item: text) {
+                    Label("Share…", systemImage: "square.and.arrow.up")
+                }
+            }
+            .sheet(isPresented: $isSelectingText) {
+                MessageTextSelectionSheet(text: text)
+            }
             .frame(maxWidth: 290, alignment: isMine ? .trailing : .leading)
+    }
+}
+
+/// Full message text with native selection, for copying part of a bubble.
+private struct MessageTextSelectionSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(text)
+                    .font(Design.Typeface.bubble)
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Design.Space.gutter)
+            }
+            .background(Design.Color.canvas)
+            .navigationTitle("Select Text")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Copy All") {
+                        UIPasteboard.general.string = text
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
