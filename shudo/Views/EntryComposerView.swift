@@ -2,15 +2,27 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+/// What the composer hands to the Today screen: text only (dictation was
+/// transcribed on this iPhone), which recognizer produced any dictated
+/// words, the photo, and the idempotency key reused on every retry.
+struct EntryCaptureDraft: Equatable {
+    let text: String?
+    let speechEngine: SpeechEngineID?
+    let imageJPEG: Data?
+    let clientRequestId: UUID
+}
+
 enum EntryComposerPolicy {
     static let maximumNoteLength = 12_000
 
     static let maximumScannedItems = 4
 
+    /// `hasLiveDictation`: words are on screen from a take still in flight;
+    /// submitting finishes the take and sends them.
     static func canSubmit(
         isSubmitting: Bool,
         isPreparingImage: Bool,
-        hasAudio: Bool,
+        hasLiveDictation: Bool = false,
         hasImage: Bool,
         hasScannedFood: Bool,
         note: String
@@ -18,7 +30,7 @@ enum EntryComposerPolicy {
         !isSubmitting
             && !isPreparingImage
             && note.utf16.count <= maximumNoteLength
-            && (hasAudio
+            && (hasLiveDictation
                 || hasImage
                 || hasScannedFood
                 || !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -40,7 +52,16 @@ enum EntryComposerPolicy {
 struct EntryComposerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ObservedObject private var audio: AudioRecorder
+    /// Owned by the Today screen (so a mic tap can warm it up before this
+    /// sheet appears) and deliberately not observed here: the card observes
+    /// it, and this view mirrors only the phase, so meter and transcript
+    /// updates never re-render the note editor.
+    private let voice: VoiceTranscriber
+    @State private var voicePhase: VoiceTranscriber.Phase = .idle
+    @State private var hasLiveDictation = false
+    @State private var lastDictation: DictationMergePolicy.AppendRecord?
+    @State private var dictatedTakeCount = 0
+    @State private var dictatedEngine: SpeechEngineID?
 
     @State private var note = ""
     @State private var pickedImages: [PhotosPickerItem] = []
@@ -64,36 +85,40 @@ struct EntryComposerView: View {
     /// Hands the composed meal to the owner and returns immediately — the
     /// upload runs on the Today screen's card, so this sheet never holds the
     /// user through the network round trip.
-    let onSubmit: (String?, Data?, Data?, UUID) -> Void
+    let onSubmit: (EntryCaptureDraft) -> Void
     private let dayText: String
 
     init(
         selectedDay: Date,
         timezone: String,
         autoStartRecording: Bool = false,
-        audio: AudioRecorder,
+        voice: VoiceTranscriber,
         initialImages: [UIImage] = [],
-        onSubmit: @escaping (String?, Data?, Data?, UUID) -> Void
+        onSubmit: @escaping (EntryCaptureDraft) -> Void
     ) {
         self.selectedDay = selectedDay
         self.timezone = timezone
         self.autoStartRecording = autoStartRecording
-        self.audio = audio
+        self.voice = voice
+        _voicePhase = State(initialValue: voice.phase)
         _images = State(initialValue: initialImages)
         self.onSubmit = onSubmit
         dayText = Self.dayLabelText(selectedDay: selectedDay, timezone: timezone)
     }
 
-    private var hasAudio: Bool { audio.recordedFileURL != nil }
     private var canSubmit: Bool {
         EntryComposerPolicy.canSubmit(
             isSubmitting: isSubmitting,
             isPreparingImage: isPreparingImage,
-            hasAudio: hasAudio,
+            hasLiveDictation: hasLiveDictation,
             hasImage: !images.isEmpty,
             hasScannedFood: !scannedPortions.isEmpty,
             note: note
         )
+    }
+
+    private var canUndoDictation: Bool {
+        !isSubmitting && DictationMergePolicy.canUndo(lastDictation, in: note)
     }
 
     var body: some View {
@@ -103,13 +128,21 @@ struct EntryComposerView: View {
                 ScrollView {
                     VStack(spacing: 28) {
                         dayLabel
-                        voiceCapture
+                        VoiceCaptureCard(
+                            voice: voice,
+                            style: .meal,
+                            isDisabled: isSubmitting,
+                            canUndo: canUndoDictation,
+                            onUndo: undoLastDictation,
+                            onWillStart: { localError = nil },
+                            onTake: appendTake
+                        )
 
-                        // Directly under the recording controls: an error
-                        // below the note field could sit off-screen once a
-                        // photo was attached, making a failed start look
-                        // like a dead button.
-                        if let error = localError ?? audio.errorMessage {
+                        // Directly under the voice controls: an error below
+                        // the note field could sit off-screen once a photo
+                        // was attached, making a failure look like a dead
+                        // button.
+                        if let error = localError {
                             Text(error)
                                 .font(.footnote)
                                 .foregroundStyle(Design.Color.danger)
@@ -162,12 +195,17 @@ struct EntryComposerView: View {
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
         .onChange(of: isShowingPhotoPicker) { wasPresented, isPresented in
             guard wasPresented, !isPresented else { return }
-            CaptureDiagnostics.record(.photoPickerDismissed, state: audio.controlState.rawValue)
+            CaptureDiagnostics.record(.photoPickerDismissed, state: voice.controlState)
         }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
+        .onReceive(voice.$phase) { voicePhase = $0 }
+        .onReceive(voice.$transcript) { transcript in
+            let hasText = !transcript.isEmpty
+            if hasLiveDictation != hasText { hasLiveDictation = hasText }
+        }
         .onAppear {
             Perf.mark("composer.appear")
-            CaptureDiagnostics.record(.composerPresented, state: audio.controlState.rawValue)
+            CaptureDiagnostics.record(.composerPresented, state: voice.controlState)
             // Build the camera controller after the sheet settles so a later
             // "Camera" tap presents instantly instead of paying the picker's
             // multi-second first-build on the tap itself.
@@ -184,9 +222,8 @@ struct EntryComposerView: View {
             // covers presentations where that start couldn't run (a capture
             // deep link arriving while another sheet was up) without
             // double-starting or retrying a start that already failed.
-            guard !audio.isRecording, !audio.isStartingRecording,
-                  audio.recordedFileURL == nil, audio.errorMessage == nil else { return }
-            _ = await audio.startRecording()
+            guard voice.phase == .idle else { return }
+            await voice.start()
         }
         .interactiveDismissDisabled(isSubmitting)
     }
@@ -202,77 +239,6 @@ struct EntryComposerView: View {
         .padding(.vertical, 8)
         .background(Design.Color.glassFill, in: Capsule())
         .accessibilityLabel("Logging for \(dayText)")
-    }
-
-    private var voiceCapture: some View {
-        VStack(spacing: 18) {
-            AudioMeterView(levels: audio.meterLevels, isActive: audio.isRecording)
-                .frame(height: 76)
-                .padding(.horizontal, 18)
-
-            VStack(spacing: 5) {
-                Text(voiceHeadline)
-                    .font(audio.isRecording ? .system(size: 26, weight: .medium) : .headline)
-                    .monospacedDigit()
-                    .foregroundStyle(Design.Color.ink)
-
-                Text(voiceDetail)
-                    .font(.footnote)
-                    .monospacedDigit()
-                    .foregroundStyle(Design.Color.muted)
-            }
-
-            HStack(spacing: 16) {
-                if hasAudio && !audio.isRecording {
-                    Button {
-                        audio.discardRecording()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Design.Color.muted)
-                            .frame(width: 48, height: 48)
-                            .background(Design.Color.elevated, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Discard voice note")
-                }
-
-                Button {
-                    CaptureDiagnostics.record(.microphoneTapped, state: audio.controlState.rawValue)
-                    Task { await toggleRecording() }
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                audio.isRecording
-                                    ? AnyShapeStyle(Design.Color.danger)
-                                    : AnyShapeStyle(LinearGradient(
-                                        colors: [Design.Color.accentPrimary, Design.Color.accentSecondary],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ))
-                            )
-                            .frame(width: 76, height: 76)
-                            .shadow(color: Design.Color.accentPrimary.opacity(audio.isRecording ? 0.12 : 0.28), radius: 24)
-
-                        if audio.isStartingRecording {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: audio.isRecording ? "stop.fill" : "mic.fill")
-                                .font(.title2.weight(.semibold))
-                                .foregroundStyle(.white)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .contentShape(Circle())
-                .disabled(isSubmitting)
-                .accessibilityIdentifier("Voice recording control")
-                .accessibilityLabel(recordingButtonLabel)
-            }
-        }
-        .padding(.vertical, 8)
     }
 
     private var imageCapture: some View {
@@ -325,10 +291,7 @@ struct EntryComposerView: View {
 
                 mediaButton(title: "Photos", systemImage: "photo.on.rectangle") {
                     settleVoiceCapture()
-                    CaptureDiagnostics.record(
-                        .photoPickerPresented,
-                        state: audio.controlState.rawValue
-                    )
+                    CaptureDiagnostics.record(.photoPickerPresented, state: voice.controlState)
                     isShowingPhotoPicker = true
                 }
 
@@ -412,11 +375,7 @@ struct EntryComposerView: View {
                 } else {
                     Image(systemName: "arrow.up")
                 }
-                Text(
-                    isSubmitting
-                        ? "Sending…"
-                        : isPreparingImage ? "Preparing photos…" : "Log meal"
-                )
+                Text(submitTitle)
             }
             .font(.headline)
             .foregroundStyle(.white)
@@ -441,9 +400,15 @@ struct EntryComposerView: View {
         .background(.ultraThinMaterial)
     }
 
-    /// Computed once at init: body re-evaluates at ~16Hz while recording
-    /// (meter levels + elapsed time), and building a Calendar and
-    /// DateFormatter on each evaluation was measurable main-thread churn.
+    private var submitTitle: String {
+        if isSubmitting {
+            return voicePhase == .finishing ? "Finishing…" : "Sending…"
+        }
+        return isPreparingImage ? "Preparing photos…" : "Log meal"
+    }
+
+    /// Computed once at init: building a Calendar and DateFormatter on each
+    /// body evaluation was measurable main-thread churn.
     static func dayLabelText(selectedDay: Date, timezone: String) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
@@ -455,69 +420,37 @@ struct EntryComposerView: View {
         return formatter.string(from: selectedDay)
     }
 
-    private var voiceHeadline: String {
-        if audio.isStartingRecording { return "Starting…" }
-        if audio.isRecording { return formatTime(audio.elapsedTime) }
-        return hasAudio ? "Voice note ready" : "Describe what you ate"
-    }
-
-    private var voiceDetail: String {
-        if audio.isStartingRecording { return "Getting the microphone ready" }
-        if audio.isRecording {
-            return "\(formatTime(audio.remainingTime)) remaining · tap when done"
-        }
-        if hasAudio && audio.didReachMaximumDuration {
-            return "Recording stopped at the time limit"
-        }
-        return hasAudio ? formatTime(audio.elapsedTime) : "Tap to record a voice note"
-    }
-
-    private var recordingButtonLabel: String {
-        if audio.isStartingRecording { return "Starting the microphone" }
-        if audio.isRecording {
-            return "Stop recording, \(formatTime(audio.remainingTime)) remaining"
-        }
-        return "Start recording"
-    }
-
-    /// Ends voice capture before another surface takes the audio hardware:
-    /// a live recording is kept as the voice note; an in-flight warm-up is
-    /// aborted, since there is nothing to keep yet and a start finishing
-    /// underneath the camera gets killed by its capture session anyway.
+    /// Ends dictation before another surface takes the audio hardware: the
+    /// microphone is released right away and the words already heard land
+    /// in the note when the recognizer's final pass arrives; an in-flight
+    /// warm-up is aborted, since there is nothing to keep yet and a start
+    /// finishing underneath the camera gets killed by its capture session.
     private func settleVoiceCapture() {
-        if audio.isRecording {
-            audio.stopRecording()
-        } else if audio.isStartingRecording {
-            audio.abortStartingRecording()
-        }
+        voice.finishInBackground()
     }
 
-    private func toggleRecording() async {
-        // Ignore taps while the microphone warms up; a queued toggle used to
-        // stop the recording the instant it finally started.
-        guard !audio.isStartingRecording else {
-            CaptureDiagnostics.record(
-                .microphoneTapRejectedStarting,
-                state: audio.controlState.rawValue
-            )
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            return
-        }
+    private func appendTake(_ take: VoiceTake) {
+        let result = DictationMergePolicy.appending(
+            take.text,
+            to: note,
+            limit: EntryComposerPolicy.maximumNoteLength
+        )
+        if result.wasTruncated { localError = VoiceCopy.reachedLengthLimit }
+        guard let record = result.record else { return }
+        note = result.note
+        lastDictation = record
+        dictatedTakeCount += 1
+        dictatedEngine = take.engine
+    }
+
+    private func undoLastDictation() {
+        guard let record = lastDictation,
+              let restored = DictationMergePolicy.undoing(record, in: note) else { return }
+        note = restored
+        lastDictation = nil
+        dictatedTakeCount = max(0, dictatedTakeCount - 1)
+        if dictatedTakeCount == 0 { dictatedEngine = nil }
         localError = nil
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        if audio.isRecording {
-            CaptureDiagnostics.record(
-                .microphoneTapAcceptedStop,
-                state: audio.controlState.rawValue
-            )
-            audio.stopRecording()
-        } else {
-            CaptureDiagnostics.record(
-                .microphoneTapAcceptedStart,
-                state: audio.controlState.rawValue
-            )
-            _ = await audio.startRecording()
-        }
     }
 
     private func preparePickedImages(_ items: [PhotosPickerItem]) {
@@ -564,7 +497,7 @@ struct EntryComposerView: View {
                     images.append(contentsOf: preparedImages.prefix(remainingSlots))
                 }
                 Perf.mark("photo.thumbs.visible")
-                CaptureDiagnostics.record(.photosPrepared, state: audio.controlState.rawValue)
+                CaptureDiagnostics.record(.photosPrepared, state: voice.controlState)
                 localError = preparedImages.count < selectedItems.count
                     ? "Some photos couldn’t be loaded."
                     : nil
@@ -656,19 +589,6 @@ struct EntryComposerView: View {
 
     private func submit() {
         Perf.mark("entry.submit.tap")
-        settleVoiceCapture()
-        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        // The user's own words lead; scanned label facts follow so the first
-        // line stays a natural meal title and the model reads the labels as
-        // supporting facts.
-        let scanText = BarcodeNutrition.submissionText(for: scannedPortions)
-        let combined = [trimmed, scanText]
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
-        let text = combined.isEmpty
-            ? nil
-            : EntryComposerPolicy.boundedNote(combined)
-        let audioData = audio.recordedData()
         let hasSelectedImages = !images.isEmpty
         let selectedImages = images
         let encodeTask = uploadEncodeTask
@@ -676,6 +596,33 @@ struct EntryComposerView: View {
         isSubmitting = true
         localError = nil
         Task {
+            // A take still in flight finishes first (capped, so a slow final
+            // pass keeps the words already on screen) and lands in the note
+            // like any other take.
+            if voice.isBusy {
+                if let take = await voice.stop(finalizationTimeout: 1.5) { appendTake(take) }
+            } else if let take = voice.collectReadyTake() {
+                appendTake(take)
+            }
+
+            let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            // The user's own words lead; scanned label facts follow so the
+            // first line stays a natural meal title and the model reads the
+            // labels as supporting facts.
+            let scanText = BarcodeNutrition.submissionText(for: scannedPortions)
+            let combined = [trimmed, scanText]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            let text = combined.isEmpty
+                ? nil
+                : EntryComposerPolicy.boundedNote(combined)
+            guard text != nil || hasSelectedImages else {
+                isSubmitting = false
+                localError = VoiceCopy.didNotCatchThat
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                return
+            }
+
             // The upload JPEG is normally ready before the tap; otherwise wait
             // for the in-flight background encode instead of re-rendering here.
             var imageJPEG = await encodeTask?.value
@@ -685,31 +632,27 @@ struct EntryComposerView: View {
                 }.value
             }
             if hasSelectedImages && imageJPEG == nil {
-                await MainActor.run {
-                    isSubmitting = false
-                    localError = "Those photos couldn’t be prepared. Remove them and try again."
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
+                isSubmitting = false
+                localError = "Those photos couldn’t be prepared. Remove them and try again."
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
-            await MainActor.run {
-                // Locally accepted: the Today screen owns the upload from
-                // here (its card shows progress and any retryable failure),
-                // so the sheet closes now instead of holding through the
-                // network round trip.
-                onSubmit(text, audioData, imageJPEG, clientRequestId)
-                audio.discardRecording()
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                isSubmitting = false
-                dismiss()
-            }
+            // Locally accepted: the Today screen owns the upload from here
+            // (its card shows progress and any retryable failure), so the
+            // sheet closes now instead of holding through the network round
+            // trip.
+            onSubmit(EntryCaptureDraft(
+                text: text,
+                speechEngine: text != nil && dictatedTakeCount > 0 ? dictatedEngine : nil,
+                imageJPEG: imageJPEG,
+                clientRequestId: clientRequestId
+            ))
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            isSubmitting = false
+            dismiss()
         }
     }
 
-    private func formatTime(_ duration: TimeInterval) -> String {
-        let total = max(0, Int(duration.rounded(.down)))
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
 }
 
 /// A scanned packaged food shown as a removable card: the label's macros
@@ -945,27 +888,4 @@ private struct ScannedFoodCard: View {
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
-}
-
-private struct AudioMeterView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let levels: [CGFloat]
-    let isActive: Bool
-
-    var body: some View {
-        GeometryReader { geometry in
-            let spacing: CGFloat = 4
-            let barWidth = max(2, (geometry.size.width - spacing * CGFloat(levels.count - 1)) / CGFloat(levels.count))
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
-                    Capsule()
-                        .fill(isActive ? Design.Color.accentPrimary : Design.Color.subtle.opacity(0.55))
-                        .frame(width: barWidth, height: max(4, geometry.size.height * level))
-                        .animation(reduceMotion ? nil : .linear(duration: 0.055), value: level)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .accessibilityHidden(true)
-    }
 }

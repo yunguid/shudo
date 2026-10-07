@@ -17,7 +17,7 @@ private final class CorrectionServiceFake: EntryReanalysisServing {
     struct RecordedCorrection: Equatable {
         let entryId: UUID
         let text: String?
-        let audioByteCount: Int?
+        let speechEngine: SpeechEngineID?
         let imageByteCount: Int?
         let usesImageForEstimate: Bool
         let clientRequestId: UUID
@@ -42,7 +42,7 @@ private final class CorrectionServiceFake: EntryReanalysisServing {
     func correctEntry(
         id: UUID,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         usesImageForEstimate: Bool,
         clientRequestId: UUID
@@ -50,7 +50,7 @@ private final class CorrectionServiceFake: EntryReanalysisServing {
         corrections.append(RecordedCorrection(
             entryId: id,
             text: text,
-            audioByteCount: audioData?.count,
+            speechEngine: speechEngine,
             imageByteCount: imageJPEG?.count,
             usesImageForEstimate: usesImageForEstimate,
             clientRequestId: clientRequestId
@@ -156,7 +156,7 @@ struct EntryCorrectionFlowTests {
     }
 
     private func typedSubmission(_ text: String) -> EntryCorrectionSubmission {
-        EntryCorrectionSubmission(text: text, audioData: nil, clientRequestId: UUID())
+        EntryCorrectionSubmission(text: text, clientRequestId: UUID())
     }
 
     @Test func submissionImmediatelyShowsUpdatingStateWithoutTouchingTotals() async throws {
@@ -226,19 +226,19 @@ struct EntryCorrectionFlowTests {
         #expect(service.corrections.count == 1)
     }
 
-    @Test func typedAndSpokenCorrectionsFollowTheSamePath() async throws {
+    @Test func typedAndDictatedCorrectionsFollowTheSamePath() async throws {
         for submission in [
             EntryCorrectionSubmission(
                 text: "Half the rice",
-                audioData: nil,
                 clientRequestId: UUID()
             ),
             EntryCorrectionSubmission(
-                text: nil,
-                audioData: Data([0x01, 0x02, 0x03]),
+                text: "Only one cup of rice, transcribed on the phone",
+                speechEngine: .speechTranscriber,
                 clientRequestId: UUID()
             ),
         ] {
+            #expect(submission.updatesEstimate)
             let meal = makeEntry(summary: "Chicken bowl", calories: 500)
             let service = CorrectionServiceFake()
             let corrected = makeEntry(
@@ -256,7 +256,7 @@ struct EntryCorrectionFlowTests {
 
             let recorded = try #require(service.corrections.first)
             #expect(recorded.text == submission.text)
-            #expect(recorded.audioByteCount == submission.audioData?.count)
+            #expect(recorded.speechEngine == submission.speechEngine)
             #expect(recorded.clientRequestId == submission.clientRequestId)
             #expect(vm.entries.first?.status == .complete)
             #expect(vm.entries.first?.caloriesKcal == 420)
@@ -278,7 +278,6 @@ struct EntryCorrectionFlowTests {
         let photo = Data([0xFF, 0xD8, 0xFF, 0xD9])
         let submission = EntryCorrectionSubmission(
             text: nil,
-            audioData: nil,
             imageJPEG: photo,
             clientRequestId: requestID
         )
@@ -315,7 +314,7 @@ struct EntryCorrectionFlowTests {
         let requestID = UUID()
         let submission = EntryCorrectionSubmission(
             text: "The photo shows half the rice",
-            audioData: Data([0x01, 0x02]),
+            speechEngine: .speechTranscriber,
             imageJPEG: Data([0xFF, 0xD8, 0xFF, 0xD9]),
             clientRequestId: requestID
         )
@@ -328,7 +327,7 @@ struct EntryCorrectionFlowTests {
 
         #expect(service.corrections.count == 2)
         #expect(service.corrections.allSatisfy { $0.text == submission.text })
-        #expect(service.corrections.allSatisfy { $0.audioByteCount == 2 })
+        #expect(service.corrections.allSatisfy { $0.speechEngine == .speechTranscriber })
         #expect(service.corrections.allSatisfy { $0.imageByteCount == 4 })
         #expect(service.corrections.allSatisfy { $0.usesImageForEstimate })
         #expect(vm.entries.first?.caloriesKcal == 420)

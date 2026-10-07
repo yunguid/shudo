@@ -5,7 +5,7 @@ protocol EntryReanalysisServing {
     func correctEntry(
         id: UUID,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         usesImageForEstimate: Bool,
         clientRequestId: UUID
@@ -16,12 +16,12 @@ extension EntryReanalysisServing {
     func correctEntry(
         id: UUID,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         usesImageForEstimate: Bool,
         clientRequestId: UUID
     ) async throws -> APIService.ReanalysisResult {
-        guard imageJPEG == nil, audioData == nil, let text else {
+        guard imageJPEG == nil, let text else {
             throw APIService.APIError.invalidCorrection
         }
         return try await reanalyzeEntry(id: id, context: text)
@@ -57,7 +57,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
             switch self {
             case .server(_, let message): return message
             case .invalidResponse: return "The server returned an unexpected response."
-            case .invalidCorrection: return "Record or type what should change."
+            case .invalidCorrection: return "Say or type what should change."
             }
         }
     }
@@ -72,9 +72,12 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         self.sessionJWTProvider = sessionJWTProvider
     }
 
-    public func createEntry(
+    /// Voice is transcribed on the iPhone, so a capture is text (plus the
+    /// recognizer that produced any dictated words) and an optional photo.
+    /// The server rejects audio uploads with 415.
+    func createEntry(
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         timezone: String,
         localDay: String,
@@ -92,7 +95,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         req.httpBody = makeMultipart(
             boundary: boundary,
             text: text,
-            audioData: audioData,
+            speechEngine: speechEngine,
             imageJPEG: imageJPEG,
             timezone: timezone,
             localDay: localDay,
@@ -139,10 +142,10 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         )
     }
 
-    public func correctEntry(
+    func correctEntry(
         id: UUID,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         usesImageForEstimate: Bool,
         clientRequestId: UUID
@@ -151,7 +154,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         let request = try makeCorrectionRequest(
             entryId: id,
             text: text,
-            audioData: audioData,
+            speechEngine: speechEngine,
             imageJPEG: imageJPEG,
             usesImageForEstimate: usesImageForEstimate,
             clientRequestId: clientRequestId,
@@ -214,7 +217,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
     func makeCorrectionRequest(
         entryId: UUID,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         usesImageForEstimate: Bool,
         clientRequestId: UUID,
@@ -222,21 +225,12 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
     ) throws -> URLRequest {
         let normalizedText = text.map(EntryCorrectionPolicy.normalized)
         let hasText = normalizedText?.isEmpty == false
-        let hasAudio = audioData?.isEmpty == false
         let hasImage = imageJPEG?.isEmpty == false
         guard EntryCorrectionPolicy.canSubmit(
             text: normalizedText ?? "",
-            hasAudio: hasAudio,
             hasImage: hasImage
         ) else {
             throw APIError.invalidCorrection
-        }
-        if let audioData,
-           !EntryCorrectionPolicy.audioIsWithinUploadLimit(audioData.count) {
-            throw APIError.server(
-                statusCode: 413,
-                message: "That voice correction is too large. Record a shorter one."
-            )
         }
 
         var request = URLRequest(url: supabaseUrl.appendingPathComponent("/functions/v1/correct_entry"))
@@ -250,7 +244,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
             boundary: boundary,
             entryId: entryId,
             text: hasText ? normalizedText : nil,
-            audioData: audioData,
+            speechEngine: speechEngine,
             imageJPEG: imageJPEG,
             usesImageForEstimate: hasImage && usesImageForEstimate,
             clientRequestId: clientRequestId
@@ -262,7 +256,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         boundary: String,
         entryId: UUID,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         usesImageForEstimate: Bool,
         clientRequestId: UUID
@@ -276,16 +270,11 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         part("entry_id", entryId.uuidString.lowercased())
         part("client_request_id", clientRequestId.uuidString.lowercased())
         part("photo_intent", usesImageForEstimate ? "evidence" : "memory")
-        if let text, !text.isEmpty { part("text", text) }
-        if let audioData, !audioData.isEmpty {
-            data.append("--\(boundary)\r\n".data(using: .utf8)!)
-            data.append(
-                "Content-Disposition: form-data; name=\"audio\"; filename=\"correction.m4a\"\r\n"
-                    .data(using: .utf8)!
-            )
-            data.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)
-            data.append(audioData)
-            data.append("\r\n".data(using: .utf8)!)
+        if let text, !text.isEmpty {
+            part("text", text)
+            // Only meaningful alongside text; the server stores it as the
+            // correction's transcription model.
+            if let speechEngine { part("speech_engine", speechEngine.rawValue) }
         }
         if let imageJPEG, !imageJPEG.isEmpty {
             data.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -361,7 +350,7 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
     func makeMultipart(
         boundary: String,
         text: String?,
-        audioData: Data?,
+        speechEngine: SpeechEngineID?,
         imageJPEG: Data?,
         timezone: String,
         localDay: String,
@@ -378,13 +367,11 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         part("client_request_id", clientRequestId.uuidString.lowercased())
         if let text {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { part("text", trimmed) }
-        }
-        if let raw = audioData {
-            data.append("--\(boundary)\r\n".data(using: .utf8)!)
-            data.append("Content-Disposition: form-data; name=\"audio\"; filename=\"voice.m4a\"\r\n".data(using: .utf8)!)
-            data.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)
-            data.append(raw); data.append("\r\n".data(using: .utf8)!)
+            if !trimmed.isEmpty {
+                part("text", trimmed)
+                // Stored as entries.transcription_model; only sent with text.
+                if let speechEngine { part("speech_engine", speechEngine.rawValue) }
+            }
         }
         if let imageJPEG, !imageJPEG.isEmpty {
             data.append("--\(boundary)\r\n".data(using: .utf8)!)

@@ -261,26 +261,19 @@ struct NativeExperienceTests {
     @Test func correctionPolicyTrimsBoundsAndRejectsEmptyContext() {
         #expect(!EntryCorrectionPolicy.canSubmit("   \n"))
         #expect(EntryCorrectionPolicy.canSubmit("The rice was one cup"))
-        #expect(EntryCorrectionPolicy.canSubmit(text: "", hasAudio: true))
-        #expect(!EntryCorrectionPolicy.canSubmit(text: "", hasAudio: false))
-        #expect(EntryCorrectionPolicy.canSubmit(text: "", hasAudio: false, hasImage: true))
+        #expect(EntryCorrectionPolicy.canSubmit(text: "", hasLiveDictation: true))
+        #expect(!EntryCorrectionPolicy.canSubmit(text: ""))
+        #expect(EntryCorrectionPolicy.canSubmit(text: "", hasImage: true))
         #expect(!EntryCorrectionPolicy.canSubmit(
             text: "",
-            hasAudio: false,
             hasImage: true,
             isPreparingImage: true
         ))
-        #expect(!EntryCorrectionPolicy.usesPhotoForEstimate(text: "", hasAudio: false))
-        #expect(EntryCorrectionPolicy.usesPhotoForEstimate(text: "Half the rice", hasAudio: false))
-        #expect(EntryCorrectionPolicy.usesPhotoForEstimate(text: "", hasAudio: true))
+        #expect(!EntryCorrectionPolicy.usesPhotoForEstimate(text: ""))
+        #expect(EntryCorrectionPolicy.usesPhotoForEstimate(text: "Half the rice"))
+        #expect(EntryCorrectionPolicy.usesPhotoForEstimate(text: "", hasLiveDictation: true))
         #expect(EntryCorrectionPolicy.removingPhoto(at: 1, from: ["first", "second"]) == ["first"])
         #expect(EntryCorrectionPolicy.removingPhoto(at: 4, from: ["first"]) == ["first"])
-        #expect(EntryCorrectionPolicy.audioIsWithinUploadLimit(1))
-        #expect(!EntryCorrectionPolicy.audioIsWithinUploadLimit(0))
-        #expect(
-            !EntryCorrectionPolicy.audioIsWithinUploadLimit(
-                EntryCorrectionPolicy.maximumAudioBytes + 1
-            ))
         let oversized = "🍚" + String(repeating: "x", count: 4_100)
         let normalized = EntryCorrectionPolicy.normalized("  \(oversized)  ")
         #expect(normalized.count == EntryCorrectionPolicy.maximumCharacters)
@@ -554,7 +547,7 @@ struct NativeExperienceTests {
         #expect(result == APIService.ReanalysisResult(entryId: id, status: .analyzing))
     }
 
-    @Test func voiceCorrectionUsesAuthenticatedBoundedMultipartContract() throws {
+    @Test func dictatedCorrectionSendsTextAndTheOnDeviceEngineNeverAudio() throws {
         let entryID = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
         let requestID = try #require(UUID(uuidString: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"))
         let service = APIService(
@@ -566,7 +559,7 @@ struct NativeExperienceTests {
         let request = try service.makeCorrectionRequest(
             entryId: entryID,
             text: "  The bowl also had steak.  ",
-            audioData: Data([0x01, 0x02, 0x03]),
+            speechEngine: .dictationTranscriber,
             imageJPEG: nil,
             usesImageForEstimate: false,
             clientRequestId: requestID,
@@ -584,9 +577,29 @@ struct NativeExperienceTests {
                 == true)
         #expect(body.contains("name=\"entry_id\"\r\n\r\n11111111-2222-3333-4444-555555555555"))
         #expect(body.contains("name=\"client_request_id\"\r\n\r\naaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"))
-        #expect(body.contains("The bowl also had steak."))
-        #expect(body.contains("name=\"audio\"; filename=\"correction.m4a\""))
-        #expect(body.contains("Content-Type: audio/m4a"))
+        #expect(body.contains("name=\"text\"\r\n\r\nThe bowl also had steak.\r\n"))
+        #expect(body.contains("name=\"speech_engine\"\r\n\r\napple.dictation_transcriber\r\n"))
+        #expect(!body.contains("name=\"audio\""))
+        #expect(!body.contains("audio/"))
+    }
+
+    @Test func correctionWithoutWordsOrPhotoIsRejectedLocally() throws {
+        let service = APIService(
+            supabaseUrl: try #require(URL(string: "https://example.supabase.co")),
+            supabaseAnonKey: "sb_publishable_example",
+            sessionJWTProvider: { "session-token" }
+        )
+        #expect(throws: APIService.APIError.self) {
+            try service.makeCorrectionRequest(
+                entryId: UUID(),
+                text: "   ",
+                speechEngine: .speechTranscriber,
+                imageJPEG: nil,
+                usesImageForEstimate: false,
+                clientRequestId: UUID(),
+                jwt: "session-token"
+            )
+        }
     }
 
     @Test func existingMealPhotoMultipartMakesMemoryIntentExplicit() throws {
@@ -601,7 +614,7 @@ struct NativeExperienceTests {
         let request = try service.makeCorrectionRequest(
             entryId: entryID,
             text: nil,
-            audioData: nil,
+            speechEngine: .speechTranscriber,
             imageJPEG: Data([0xFF, 0xD8, 0xFF, 0xD9]),
             usesImageForEstimate: false,
             clientRequestId: requestID,
@@ -613,6 +626,8 @@ struct NativeExperienceTests {
         #expect(body.contains("name=\"image\"; filename=\"meal-update.jpg\""))
         #expect(body.contains("Content-Type: image/jpeg"))
         #expect(!body.contains("name=\"text\""))
+        // The engine only rides along with words.
+        #expect(!body.contains("name=\"speech_engine\""))
         #expect(!body.contains("name=\"audio\""))
     }
 

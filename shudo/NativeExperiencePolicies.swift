@@ -528,7 +528,6 @@ private struct NutrientAccumulator {
 
 enum EntryCorrectionPolicy {
     static let maximumCharacters = 4_000
-    static let maximumAudioBytes = 8 * 1_024 * 1_024
 
     static func normalized(_ value: String) -> String {
         String(
@@ -539,12 +538,14 @@ enum EntryCorrectionPolicy {
     }
 
     static func canSubmit(_ value: String, isSubmitting: Bool = false) -> Bool {
-        canSubmit(text: value, hasAudio: false, isSubmitting: isSubmitting)
+        canSubmit(text: value, isSubmitting: isSubmitting)
     }
 
+    /// `hasLiveDictation`: words from a take still in flight are on screen;
+    /// submitting finishes the take and appends them to the note first.
     static func canSubmit(
         text: String,
-        hasAudio: Bool,
+        hasLiveDictation: Bool = false,
         hasImage: Bool = false,
         isPreparingImage: Bool = false,
         isSubmitting: Bool = false
@@ -552,12 +553,14 @@ enum EntryCorrectionPolicy {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return !isSubmitting
             && !isPreparingImage
-            && (hasAudio || hasImage || !trimmed.isEmpty)
+            && (hasLiveDictation || hasImage || !trimmed.isEmpty)
             && trimmed.count <= maximumCharacters
     }
 
-    static func usesPhotoForEstimate(text: String, hasAudio: Bool) -> Bool {
-        hasAudio || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// A photo is estimate evidence only when words explain what changed;
+    /// alone it is saved as a meal memory and nutrition stays put.
+    static func usesPhotoForEstimate(text: String, hasLiveDictation: Bool = false) -> Bool {
+        hasLiveDictation || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     static func removingPhoto<Element>(at offset: Int, from photos: [Element]) -> [Element] {
@@ -565,10 +568,6 @@ enum EntryCorrectionPolicy {
         var updated = photos
         updated.remove(at: offset)
         return updated
-    }
-
-    static func audioIsWithinUploadLimit(_ byteCount: Int) -> Bool {
-        byteCount > 0 && byteCount <= maximumAudioBytes
     }
 }
 

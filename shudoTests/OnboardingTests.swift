@@ -56,25 +56,24 @@ struct OnboardingTests {
         #expect(ProfileLaunchPolicy.destination(for: established) == .loading)
     }
 
-    @Test func capturePolicyRequiresVoiceOrTextAndBoundsTypedContext() {
+    @Test func capturePolicyRequiresWordsAndBoundsTheDescription() {
         #expect(!OnboardingCapturePolicy.canSubmit(
             text: " \n ",
-            hasAudio: false,
             isSubmitting: false
         ))
+        // Words still being dictated count: preparing finishes the take.
         #expect(OnboardingCapturePolicy.canSubmit(
             text: "",
-            hasAudio: true,
+            hasLiveDictation: true,
             isSubmitting: false
         ))
         #expect(OnboardingCapturePolicy.canSubmit(
             text: "Gain muscle slowly",
-            hasAudio: false,
             isSubmitting: false
         ))
         #expect(!OnboardingCapturePolicy.canSubmit(
             text: "Goal",
-            hasAudio: true,
+            hasLiveDictation: true,
             isSubmitting: true
         ))
 
@@ -84,7 +83,6 @@ struct OnboardingTests {
         )
         #expect(!OnboardingCapturePolicy.canSubmit(
             text: oversized,
-            hasAudio: false,
             isSubmitting: false
         ))
         #expect(
@@ -99,7 +97,7 @@ struct OnboardingTests {
         )
         let request = try OnboardingService.makeProposalRequest(
             text: "  I want to gain muscle.  ",
-            audioData: Data([0x01, 0x02, 0x03]),
+            speechEngine: .speechTranscriber,
             timezone: "America/New_York",
             clientRequestID: requestID,
             jwt: "session-token",
@@ -122,9 +120,24 @@ struct OnboardingTests {
         ))
         #expect(body.contains("name=\"timezone\"\r\n\r\nAmerica/New_York"))
         #expect(body.contains("name=\"text\"\r\n\r\nI want to gain muscle."))
-        #expect(body.contains(
-            "name=\"audio\"; filename=\"onboarding.m4a\"\r\nContent-Type: audio/mp4"
-        ))
+        #expect(body.contains("name=\"speech_engine\"\r\n\r\napple.speech_transcriber\r\n"))
+        #expect(!body.contains("name=\"audio\""))
+        #expect(!body.contains("audio/"))
+    }
+
+    @Test func proposalRequestNeedsWords() throws {
+        #expect(throws: OnboardingService.ServiceError.invalidCapture) {
+            try OnboardingService.makeProposalRequest(
+                text: "  ",
+                speechEngine: .speechTranscriber,
+                timezone: "UTC",
+                clientRequestID: UUID(),
+                jwt: "session-token",
+                supabaseURL: try #require(URL(string: "https://example.supabase.co")),
+                publishableKey: "sb_publishable_example",
+                boundary: "b"
+            )
+        }
     }
 
     @Test func proposalResponseDecodesEveryEditableRecommendationField() throws {
