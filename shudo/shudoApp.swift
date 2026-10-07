@@ -15,6 +15,10 @@ struct shudoApp: App {
     init() {
         CaptureDiagnostics.beginSession()
         DayNotificationScheduler.migrateLegacyPreference()
+        // Warm the on-device speech model (locale reservation + first-run
+        // download) before any mic tap. `.current` is SpeechAssetPreparer.shared
+        // in production and the scripted assets under DEBUG UI-test launch args.
+        VoiceEnvironment.current.assets.prepare()
         // Meal photos are served from stable signed URLs; a right-sized URL
         // cache lets repeat visits render them without any network work.
         URLCache.shared = URLCache(
