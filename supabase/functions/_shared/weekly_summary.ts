@@ -8,6 +8,7 @@ import {
   assertNeutralGeneratedCopy,
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
+import { postWeeklyRecapMessage } from "./coach_recap.ts";
 import { runWeeklyMicronutrientAgents } from "./weekly_micronutrient_agents.ts";
 
 export const WEEKLY_SUMMARY_MODEL = CLAUDE_MODELS.opus;
@@ -502,6 +503,28 @@ export async function generateClaimedSummary(
       .select("id")
       .maybeSingle();
     if (updateError) throw updateError;
+    if (updated !== null) {
+      // The coach points Luke at the new recap; a refreshed week never
+      // re-posts (dedupe weekly:<week_start>). Never fails the summary.
+      await postWeeklyRecapMessage(admin, {
+        userId: profile.user_id,
+        summaryId: claim.summary_id,
+        weekStart,
+        headline: narrative.headline,
+        metrics: {
+          days_logged: adherence.days_logged,
+          average_calories_kcal: adherence.average_calories_kcal,
+          average_protein_g: adherence.average_protein_g,
+          target_calories_kcal: adherence.target_calories_kcal,
+          target_protein_g: adherence.target_protein_g,
+        },
+      }).catch((recapError) => {
+        console.error("weekly_recap_message_failed", {
+          userId: profile.user_id,
+          message: String(recapError).slice(0, 200),
+        });
+      });
+    }
     return updated !== null;
   } catch (error) {
     await admin.from("weekly_summaries").update({

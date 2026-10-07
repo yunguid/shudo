@@ -97,7 +97,8 @@ export function sameSnapshot(left: GoalSnapshot, right: GoalSnapshot): boolean {
   return left.goal_type === right.goal_type &&
     left.goal_date === right.goal_date &&
     (left.target_weight_kg === null) === (right.target_weight_kg === null) &&
-    Math.abs((left.target_weight_kg ?? 0) - (right.target_weight_kg ?? 0)) < 0.05 &&
+    Math.abs((left.target_weight_kg ?? 0) - (right.target_weight_kg ?? 0)) <
+      0.05 &&
     Math.round(left.calories_kcal) === Math.round(right.calories_kcal) &&
     Math.round(left.protein_g) === Math.round(right.protein_g) &&
     Math.round(left.carbs_g) === Math.round(right.carbs_g) &&
@@ -196,7 +197,8 @@ export function planGoalChange(
         : request.goal_weight.value) * 100,
     ) / 100
     : before.target_weight_kg;
-  const currentKg = options.currentWeightKg ?? nullableNumber(profile.weight_kg) ??
+  const currentKg = options.currentWeightKg ??
+    nullableNumber(profile.weight_kg) ??
     baseContext.weight_kg;
   let goalDate = request.goal_date ?? (request.phase ? null : before.goal_date);
   if (goalDate && !/^\d{4}-\d{2}-\d{2}$/u.test(goalDate)) goalDate = null;
@@ -206,7 +208,9 @@ export function planGoalChange(
   if (goalDate && goal !== "maintain" && currentKg && targetWeightKg) {
     const weeks = weeksBetween(options.today, goalDate);
     if (weeks <= 0) {
-      warnings.push("That goal date has already passed, so the pace stays as set.");
+      warnings.push(
+        "That goal date has already passed, so the pace stays as set.",
+      );
       goalDate = null;
     } else {
       rate = Math.abs(targetWeightKg - currentKg) / currentKg * 100 / weeks;
@@ -229,7 +233,9 @@ export function planGoalChange(
     goal === "gain" && targetWeightKg !== null && currentKg !== null &&
     targetWeightKg < currentKg
   ) {
-    warnings.push("The goal weight is below the current weight for a gain phase.");
+    warnings.push(
+      "The goal weight is below the current weight for a gain phase.",
+    );
   }
   if (
     goal === "lose" && targetWeightKg !== null && currentKg !== null &&
@@ -250,7 +256,8 @@ export function planGoalChange(
     training_days_per_week: request.training_days_per_week ??
       baseContext.training_days_per_week,
     goal_rate_percent_per_week: goal === "maintain" ? null : rate,
-    protein_bias: request.protein_bias ?? phase?.proteinBias ?? baseContext.protein_bias,
+    protein_bias: request.protein_bias ?? phase?.proteinBias ??
+      baseContext.protein_bias,
     fat_bias: request.fat_bias ?? baseContext.fat_bias,
   };
 
@@ -272,7 +279,9 @@ export function planGoalChange(
       projected_goal_date: null,
       warnings: [
         ...warnings,
-        error instanceof Error ? error.message : "Those targets are outside the supported range.",
+        error instanceof Error
+          ? error.message
+          : "Those targets are outside the supported range.",
       ],
       rate_percent_per_week: rate,
     };
@@ -313,9 +322,10 @@ export async function loadTargetContext(
     goal_type: goalType(profile.goal_type),
     height_cm: nullableNumber(profile.height_cm),
     weight_kg: nullableNumber(profile.weight_kg),
-    activity_level: ACTIVITY_LEVELS.includes(profile.activity_level as ActivityLevel)
-      ? profile.activity_level as ActivityLevel
-      : "moderate",
+    activity_level:
+      ACTIVITY_LEVELS.includes(profile.activity_level as ActivityLevel)
+        ? profile.activity_level as ActivityLevel
+        : "moderate",
     age_years: null,
     sex_for_equation: "unspecified",
     training_days_per_week: null,
@@ -331,8 +341,9 @@ export async function loadTargetContext(
       .order("created_at", { ascending: false })
       .limit(1);
     if (error) throw error;
-    const recommendation = (data?.[0] as { recommendation?: unknown } | undefined)
-      ?.recommendation as Record<string, unknown> | undefined;
+    const recommendation =
+      (data?.[0] as { recommendation?: unknown } | undefined)
+        ?.recommendation as Record<string, unknown> | undefined;
     const stored = recommendation?._target_context as
       | Partial<TargetEngineInput>
       | undefined;
@@ -346,14 +357,18 @@ export async function loadTargetContext(
         : "unspecified",
       height_cm: fallback.height_cm ?? nullableNumber(stored.height_cm),
       training_days_per_week: nullableNumber(stored.training_days_per_week),
-      goal_rate_percent_per_week: nullableNumber(stored.goal_rate_percent_per_week),
+      goal_rate_percent_per_week: nullableNumber(
+        stored.goal_rate_percent_per_week,
+      ),
       protein_bias: stored.protein_bias === "higher" ? "higher" : "standard",
       fat_bias: stored.fat_bias === "lower" || stored.fat_bias === "higher"
         ? stored.fat_bias
         : "standard",
     };
   } catch (error) {
-    console.warn("coach_target_context_unavailable", { message: String(error) });
+    console.warn("coach_target_context_unavailable", {
+      message: String(error),
+    });
     return fallback;
   }
 }

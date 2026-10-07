@@ -6,6 +6,7 @@ import {
   RESULT_SCHEMA,
 } from "./analysis.ts";
 import { AnalysisPreviewPublisher } from "./analysis_preview.ts";
+import { dispatchCoachJob } from "./coach_dispatch.ts";
 import {
   type Anthropic,
   type BetaContentBlockParam,
@@ -515,6 +516,13 @@ export async function processStoredEntry(
       processed_at: new Date().toISOString(),
       lease_expires_at: null,
     });
+    // The coach reacts to the finished meal and re-plans the rest of the day
+    // in its own worker (fire-and-forget; never blocks or fails the meal).
+    runInBackground(dispatchCoachJob({
+      job: "plan",
+      user_id: userId,
+      payload: { trigger: "meal_complete", entry_id: entryId },
+    }));
     // A meal logged for a past day that just finished processing makes that
     // week's stored overview stale; re-run it without holding this worker's
     // durability or cleanup paths (same-week completions no-op inside the

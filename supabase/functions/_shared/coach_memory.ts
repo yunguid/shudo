@@ -76,7 +76,15 @@ function weekdays(value: unknown): Weekday[] | null {
 export function parseSchedule(value: unknown): CoachSchedule {
   const object = record(value);
   const schedule: CoachSchedule = {};
-  for (const key of ["wake", "office_start", "lift_time", "bed", "target_bed"] as const) {
+  for (
+    const key of [
+      "wake",
+      "office_start",
+      "lift_time",
+      "bed",
+      "target_bed",
+    ] as const
+  ) {
     const clock = clockOrNull(object[key]);
     if (clock) schedule[key] = clock;
   }
@@ -100,7 +108,9 @@ export function parseMemorySections(value: unknown): CoachMemorySections {
   }
   const notes: Record<string, string> = {};
   for (const [key, text] of Object.entries(record(object.notes))) {
-    if (typeof text === "string" && text.trim() && /^[a-z0-9_]{1,40}$/u.test(key)) {
+    if (
+      typeof text === "string" && text.trim() && /^[a-z0-9_]{1,40}$/u.test(key)
+    ) {
       notes[key] = text.trim().slice(0, MAX_NOTE_CHARACTERS);
     }
   }
@@ -140,7 +150,9 @@ export function describeSchedule(schedule: CoachSchedule): string {
 
 /// Notes are keyed `n_<yyyymmdd>_<n>`; sorted keys render oldest first.
 function orderedNotes(notes: Record<string, string>): Array<[string, string]> {
-  return Object.entries(notes).sort(([left], [right]) => left.localeCompare(right));
+  return Object.entries(notes).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
 }
 
 /** Deterministic markdown rendering of the memory sections. */
@@ -184,7 +196,10 @@ export function addMemoryNote(
   let index = 1;
   while (sections.notes[`${prefix}${index}`]) index += 1;
   const key = `${prefix}${index}`;
-  const notes = { ...sections.notes, [key]: text.trim().slice(0, MAX_NOTE_CHARACTERS) };
+  const notes = {
+    ...sections.notes,
+    [key]: text.trim().slice(0, MAX_NOTE_CHARACTERS),
+  };
   const kept = orderedNotes(notes).slice(-MAX_NOTES);
   return { sections: { ...sections, notes: Object.fromEntries(kept) }, key };
 }
@@ -209,7 +224,10 @@ export function applyNoteOperations(
       operation.op === "update" && operation.key &&
       next.notes[operation.key] && operation.text?.trim()
     ) {
-      next.notes[operation.key] = operation.text.trim().slice(0, MAX_NOTE_CHARACTERS);
+      next.notes[operation.key] = operation.text.trim().slice(
+        0,
+        MAX_NOTE_CHARACTERS,
+      );
     } else if (operation.op === "remove" && operation.key) {
       delete next.notes[operation.key];
     }
@@ -294,7 +312,12 @@ export async function updateCoachMemory(
     const previousVersion = current?.version ?? 0;
     const change = mutate(sections);
     if (!change) {
-      return { status: "unchanged", version: previousVersion, previousVersion, sections };
+      return {
+        status: "unchanged",
+        version: previousVersion,
+        previousVersion,
+        sections,
+      };
     }
     const document = renderMemoryDocument(change.sections);
     const saved = await saveCoachMemoryRpc(admin, {

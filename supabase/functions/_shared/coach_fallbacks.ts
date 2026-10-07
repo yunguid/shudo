@@ -50,24 +50,30 @@ export function fallbackSlotCopy(
       };
     case "snack":
       return {
-        body: "Desk snack window. Yogurt, a shake, or a banana with peanut butter.",
+        body:
+          "Desk snack window. Yogurt, a shake, or a banana with peanut butter.",
         push_body: "Desk snack window. Yogurt, a shake, or a banana with PB.",
       };
     case "lunch":
       if (snapshot.mealsLogged === 0) {
         return {
-          body: "Nothing logged yet today. Anything you ate that I don't know about?",
-          push_body: "Nothing logged yet today. Anything you ate that I don't know about?",
+          body:
+            "Nothing logged yet today. Anything you ate that I don't know about?",
+          push_body:
+            "Nothing logged yet today. Anything you ate that I don't know about?",
         };
       }
       if ((snapshot.minutesSinceLastLog ?? 0) < 180) return null;
       return {
-        body: "Lunch logged while it's fresh keeps the trend honest. Make it a real one.",
+        body:
+          "Lunch logged while it's fresh keeps the trend honest. Make it a real one.",
         push_body: "Log lunch while it's fresh. Make it a real one.",
       };
     case "protein_gap": {
       const { logged, target, remaining } = snapshot.protein;
-      if (snapshot.mealsLogged === 0 || target <= 0 || logged >= target * 0.45) {
+      if (
+        snapshot.mealsLogged === 0 || target <= 0 || logged >= target * 0.45
+      ) {
         return null;
       }
       const text = `${name}${grams(logged)}g protein logged so far. ${
@@ -85,18 +91,24 @@ export function fallbackSlotCopy(
       const text = `About ${
         kcal(snapshot.calories.remaining)
       } cal left on today's number. Make dinner the big meal.`;
-      return snapshot.calories.remaining >= 300 ? { body: text, push_body: text } : null;
+      return snapshot.calories.remaining >= 300
+        ? { body: text, push_body: text }
+        : null;
     }
     case "closeout": {
       const { logged, target, remaining } = snapshot.calories;
-      if (snapshot.mealsLogged > 0 && target > 0 && remaining >= Math.min(target * 0.25, 400)) {
+      if (
+        snapshot.mealsLogged > 0 && target > 0 &&
+        remaining >= Math.min(target * 0.25, 400)
+      ) {
         const text = `${kcal(logged)} cal logged, about ${
           kcal(remaining)
         } under your number. Anything still to log?`;
         return { body: text, push_body: text };
       }
       return {
-        body: "Kitchen's closing. Something with milk if you're short, then bed on time.",
+        body:
+          "Kitchen's closing. Something with milk if you're short, then bed on time.",
         push_body: "Kitchen's closing. Milk if you're short, then bed on time.",
       };
     }
@@ -129,7 +141,8 @@ export function fallbackReactionCopy(
       return { body: text, push_body: text };
     }
     case "workout_ack": {
-      const text = "Session logged. Get protein in over the next couple hours, then sleep.";
+      const text =
+        "Session logged. Get protein in over the next couple hours, then sleep.";
       return { body: text, push_body: text };
     }
     case "weigh_in_ack": {
@@ -137,7 +150,8 @@ export function fallbackReactionCopy(
       return { body: text, push_body: text };
     }
     case "photo_feedback": {
-      const text = "Photo's in. Same light, same pose, and we compare over weeks, not days.";
+      const text =
+        "Photo's in. Same light, same pose, and we compare over weeks, not days.";
       return { body: text, push_body: text };
     }
   }
@@ -159,7 +173,11 @@ export const WELLBEING_RESOURCES = [
     detail: "(888) 375-7767, Mon–Fri",
     url: "https://anad.org/get-support/eating-disorders-helpline/",
   },
-  { name: "988 Lifeline", detail: "Call or text 988, any time", url: "https://988lifeline.org" },
+  {
+    name: "988 Lifeline",
+    detail: "Call or text 988, any time",
+    url: "https://988lifeline.org",
+  },
 ];
 
 export const WELLBEING_CARD_BODY =

@@ -84,7 +84,11 @@ const SLOT_SHAPE: Record<
   { kind: "plan" | "checkpoint" | "recap"; topic: SlotTopic; mode: CoachMode }
 > = {
   wake: { kind: "plan", topic: "morning_plan", mode: "morning_plan" },
-  breakfast: { kind: "checkpoint", topic: "breakfast", mode: "checkpoint_nudge" },
+  breakfast: {
+    kind: "checkpoint",
+    topic: "breakfast",
+    mode: "checkpoint_nudge",
+  },
   mid_morning: { kind: "checkpoint", topic: "snack", mode: "checkpoint_nudge" },
   lunch: { kind: "checkpoint", topic: "lunch", mode: "checkpoint_nudge" },
   afternoon: {
@@ -272,7 +276,10 @@ export function slotTimesForDay(
 
 /// Expected share of the day's food by a local time, for a bulk where the
 /// big risk is under-eating (13:00 35%, 16:00 55%, 19:45 80%).
-export function expectedPaceShare(minutes: number, wakeMinutes = 7 * 60): number {
+export function expectedPaceShare(
+  minutes: number,
+  wakeMinutes = 7 * 60,
+): number {
   const points: Array<[number, number]> = [
     [wakeMinutes, 0],
     [13 * 60, 0.35],
@@ -414,7 +421,10 @@ export function planCoachSlots(input: SlotPlanInput): PlannedSlot[] {
   for (const slot of byPriority) {
     if (accepted.length >= remaining) break;
     const at = Date.parse(slot.deliver_at);
-    const tooClose = [...anchors, ...accepted.map((kept) => Date.parse(kept.deliver_at))]
+    const tooClose = [
+      ...anchors,
+      ...accepted.map((kept) => Date.parse(kept.deliver_at)),
+    ]
       .some((other) => Math.abs(other - at) < gapMs);
     if (tooClose) continue;
     accepted.push(slot);

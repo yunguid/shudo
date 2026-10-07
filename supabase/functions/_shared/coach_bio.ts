@@ -49,8 +49,16 @@ export const BIO_MERGE_SCHEMA = {
           properties: {
             wake: { type: ["string", "null"] },
             office_start: { type: ["string", "null"] },
-            office_days: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
-            lift_days: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
+            office_days: {
+              anyOf: [{ type: "array", items: { type: "string" } }, {
+                type: "null",
+              }],
+            },
+            lift_days: {
+              anyOf: [{ type: "array", items: { type: "string" } }, {
+                type: "null",
+              }],
+            },
             lift_time: { type: ["string", "null"] },
             bed: { type: ["string", "null"] },
             target_bed: { type: ["string", "null"] },
@@ -75,16 +83,28 @@ export const BIO_MERGE_SCHEMA = {
         target_weight_lb: { type: ["number", "null"] },
         phase: {
           anyOf: [
-            { type: "string", enum: ["cut", "lean_bulk", "bulk", "maintain", "recomp"] },
+            {
+              type: "string",
+              enum: ["cut", "lean_bulk", "bulk", "maintain", "recomp"],
+            },
             { type: "null" },
           ],
         },
         training_days_per_week: { type: ["integer", "null"] },
         bedtime_target: { type: ["string", "null"] },
       },
-      required: ["target_weight_lb", "phase", "training_days_per_week", "bedtime_target"],
+      required: [
+        "target_weight_lb",
+        "phase",
+        "training_days_per_week",
+        "bedtime_target",
+      ],
     },
-    unclear: { type: "array", maxItems: 3, items: { type: "string", maxLength: 160 } },
+    unclear: {
+      type: "array",
+      maxItems: 3,
+      items: { type: "string", maxLength: 160 },
+    },
   },
   required: ["changes", "schedule", "goal_signals", "unclear"],
 } as const;
@@ -103,7 +123,9 @@ export type BioMergeResult = {
   usage: ClaudeUsage | null;
 };
 
-export function parseBioMerge(value: unknown): Omit<BioMergeResult, "model" | "usage"> {
+export function parseBioMerge(
+  value: unknown,
+): Omit<BioMergeResult, "model" | "usage"> {
   const object = value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
@@ -111,11 +133,17 @@ export function parseBioMerge(value: unknown): Omit<BioMergeResult, "model" | "u
     .flatMap((item): BioChange[] => {
       if (!item || typeof item !== "object") return [];
       const change = item as Record<string, unknown>;
-      if (!BIO_SECTION_KEYS.includes(change.section as BioSectionKey)) return [];
-      if (change.op !== "add" && change.op !== "replace" && change.op !== "remove") {
+      if (!BIO_SECTION_KEYS.includes(change.section as BioSectionKey)) {
         return [];
       }
-      const text = typeof change.text === "string" ? change.text.trim().slice(0, 2000) : null;
+      if (
+        change.op !== "add" && change.op !== "replace" && change.op !== "remove"
+      ) {
+        return [];
+      }
+      const text = typeof change.text === "string"
+        ? change.text.trim().slice(0, 2000)
+        : null;
       if (change.op !== "remove" && !text) return [];
       return [{
         section: change.section as BioSectionKey,
@@ -148,7 +176,9 @@ export function parseBioMerge(value: unknown): Omit<BioMergeResult, "model" | "u
         : null,
     },
     unclear: (Array.isArray(object.unclear) ? object.unclear : [])
-      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .filter((item): item is string =>
+        typeof item === "string" && item.trim().length > 0
+      )
       .map((item) => item.trim().slice(0, 160)).slice(0, 3),
   };
 }
@@ -165,7 +195,9 @@ export async function mergeBioDictation(
     system: systemBlocks([{ text: COACH_BIO_MERGE_INSTRUCTIONS, cache: true }]),
     messages: [{
       role: "user",
-      content: `<current_bio>\n${renderMemoryDocument(sections)}\n</current_bio>\n\n<dictation>\n${
+      content: `<current_bio>\n${
+        renderMemoryDocument(sections)
+      }\n</current_bio>\n\n<dictation>\n${
         dictation.slice(0, 12_000)
       }\n</dictation>\n\nReturn the changes to merge this dictation into the bio.`,
     }],
@@ -175,7 +207,11 @@ export async function mergeBioDictation(
     timeoutMs: BIO_MERGE_TIMEOUT_MS,
     client: options.client,
   });
-  return { ...parseBioMerge(result.output), model: result.model, usage: result.usage };
+  return {
+    ...parseBioMerge(result.output),
+    model: result.model,
+    usage: result.usage,
+  };
 }
 
 /// Structured schedule facts overwrite only the fields he mentioned.

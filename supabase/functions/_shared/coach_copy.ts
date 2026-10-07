@@ -43,7 +43,9 @@ export class CoachCopyViolation extends Error {
     readonly field: string,
     detail = "",
   ) {
-    super(`Coach copy violation ${code} in ${field}${detail ? `: ${detail}` : ""}`);
+    super(
+      `Coach copy violation ${code} in ${field}${detail ? `: ${detail}` : ""}`,
+    );
   }
 }
 
@@ -121,7 +123,8 @@ const DOSING_PATTERN =
   /\b\d+(?:\.\d+)?\s?(?:g|grams?|scoops?)\s+(?:of\s+)?(?:creatine|caffeine|pre-?workout)\b/iu;
 const MEDICAL_REFERRAL_PATTERN =
   /\b(?:doctor|get it (?:checked|looked at)|professional|physician|clinic)\b/iu;
-const MEDICAL_ASSERTION_PATTERN = /\byou (?:probably |likely |might |may )?have\b/iu;
+const MEDICAL_ASSERTION_PATTERN =
+  /\byou (?:probably |likely |might |may )?have\b/iu;
 const POLITICS_PATTERN =
   /\b(?:democrats?|republicans?|liberals?|leftists?|woke|maga|trump|biden|harris|feminis\w*|alpha males?|beta males?|sigma|red ?pill\w*|manosphere|conservatives?)\b/iu;
 const IMPERSONATION_PATTERNS = [
@@ -328,7 +331,11 @@ export function coachCopyViolation(
     if (violation) return violation;
   }
   if (characters > total) {
-    return new CoachCopyViolation("length", "bubbles", `${characters} > ${total}`);
+    return new CoachCopyViolation(
+      "length",
+      "bubbles",
+      `${characters} > ${total}`,
+    );
   }
   if (output.push_body !== null) {
     const push = output.push_body;

@@ -17,8 +17,8 @@ import { assertCoachText, coachCardCopyGuard } from "./coach_copy.ts";
 import type { CoachJobRequest } from "./coach_dispatch.ts";
 import {
   applyGoalSnapshot,
-  type GoalChangeRequest,
   goalChangeCard,
+  type GoalChangeRequest,
   loadTargetContext,
   planGoalChange,
 } from "./coach_goals.ts";
@@ -147,12 +147,22 @@ export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
   tool(
     "draft_training_plan",
     "Start building (or rebuilding) Luke's training plan in the background. Returns immediately; the plan arrives as a card. Use when he asks for a plan or a change to his split.",
-    { instructions: nullable({ type: "string", description: "His constraints and wishes, in his words." }) },
+    {
+      instructions: nullable({
+        type: "string",
+        description: "His constraints and wishes, in his words.",
+      }),
+    },
   ),
   tool(
     "find_nearby_food",
     "Research food options near Luke right now that fit what's left of his day. Posts a snack card. Use when he asks what to grab nearby.",
-    { query: nullable({ type: "string", description: "What he's in the mood for, if he said." }) },
+    {
+      query: nullable({
+        type: "string",
+        description: "What he's in the mood for, if he said.",
+      }),
+    },
   ),
   tool(
     "get_day_state",
@@ -173,9 +183,15 @@ export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
     "log_meal_text",
     "Log a meal or snack Luke described. The app estimates macros in the background and posts a meal card; never state macros for it yourself.",
     {
-      description: { type: "string", description: "Everything he said he ate, with quantities." },
+      description: {
+        type: "string",
+        description: "Everything he said he ate, with quantities.",
+      },
       local_day: DATE,
-      time_local: nullable({ type: "string", description: "HH:MM if he said when." }),
+      time_local: nullable({
+        type: "string",
+        description: "HH:MM if he said when.",
+      }),
     },
   ),
   tool(
@@ -192,7 +208,10 @@ export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
     "Keep a short fact about Luke on file (preferences, commitments, wins, running jokes). Not for numbers the app tracks.",
     {
       note: { type: "string" },
-      kind: { type: "string", enum: ["fact", "commitment", "win", "running_joke"] },
+      kind: {
+        type: "string",
+        enum: ["fact", "commitment", "win", "running_joke"],
+      },
     },
   ),
   tool(
@@ -224,11 +243,17 @@ export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
     "update_goals",
     "Change Luke's goal (phase, goal weight, date, pace, activity, training days, macro biases or explicit targets). The app computes and bounds the targets and decides whether to apply now or ask him to confirm on a card. Null means unchanged.",
     {
-      phase: nullable({ type: "string", enum: ["cut", "lean_bulk", "bulk", "maintain", "recomp"] }),
+      phase: nullable({
+        type: "string",
+        enum: ["cut", "lean_bulk", "bulk", "maintain", "recomp"],
+      }),
       goal_weight: nullable({
         type: "object",
         additionalProperties: false,
-        properties: { value: { type: "number" }, unit: { type: "string", enum: ["lb", "kg"] } },
+        properties: {
+          value: { type: "number" },
+          unit: { type: "string", enum: ["lb", "kg"] },
+        },
         required: ["value", "unit"],
       }),
       goal_date: nullable(DATE),
@@ -239,7 +264,10 @@ export const COACH_TOOL_DEFINITIONS: BetaToolUnion[] = [
       }),
       training_days_per_week: nullable({ type: "integer" }),
       protein_bias: nullable({ type: "string", enum: ["standard", "higher"] }),
-      fat_bias: nullable({ type: "string", enum: ["lower", "standard", "higher"] }),
+      fat_bias: nullable({
+        type: "string",
+        enum: ["lower", "standard", "higher"],
+      }),
       explicit_targets: nullable({
         type: "object",
         additionalProperties: false,
@@ -273,7 +301,9 @@ function str(value: unknown, label: string, max = 4000): string {
 }
 
 function optionalStr(value: unknown, max = 4000): string | null {
-  return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, max)
+    : null;
 }
 
 function optionalNumber(value: unknown): number | null {
@@ -285,7 +315,10 @@ function dayInput(environment: CoachToolEnvironment, value: unknown): string {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) {
     throw new ToolInputError("local_day must be YYYY-MM-DD");
   }
-  if (day > addDays(environment.localDay, 1) || day < addDays(environment.localDay, -90)) {
+  if (
+    day > addDays(environment.localDay, 1) ||
+    day < addDays(environment.localDay, -90)
+  ) {
     throw new ToolInputError("local_day must be within the last 90 days");
   }
   return day;
@@ -299,10 +332,12 @@ export async function deterministicUuid(seed: string): Promise<string> {
   ).slice(0, 16);
   digest[6] = (digest[6] & 0x0f) | 0x50;
   digest[8] = (digest[8] & 0x3f) | 0x80;
-  const hex = Array.from(digest).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${
-    hex.slice(20)
-  }`;
+  const hex = Array.from(digest).map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${
+    hex.slice(16, 20)
+  }-${hex.slice(20)}`;
 }
 
 function ok(value: unknown): CoachToolResult {
@@ -332,7 +367,9 @@ async function getDayState(
     targets: pack.targets,
     today: pack.today,
     log_completeness: logCompleteness(context),
-    coach_texts: context.thread.filter((row) => row.local_day === day && row.role === "coach")
+    coach_texts: context.thread.filter((row) =>
+      row.local_day === day && row.role === "coach"
+    )
       .slice(-8).map((row) => row.body.slice(0, 280)),
   };
   environment.facts.push(result);
@@ -343,7 +380,9 @@ async function getWeightTrend(
   environment: CoachToolEnvironment,
   raw: Record<string, unknown>,
 ): Promise<CoachToolResult> {
-  const window = [14, 30, 90].includes(Number(raw.window_days)) ? Number(raw.window_days) : 30;
+  const window = [14, 30, 90].includes(Number(raw.window_days))
+    ? Number(raw.window_days)
+    : 30;
   const { data, error } = await environment.admin.from("weight_checkins")
     .select("id,local_day,weight_kg,progress_photo_path,updated_at")
     .eq("user_id", environment.userId)
@@ -360,11 +399,15 @@ async function getWeightTrend(
   const targetKg = Number(environment.context.profile.target_weight_kg);
   let projected: string | null = null;
   if (
-    trend.change_per_week_kg && trend.latest_kg !== null && Number.isFinite(targetKg) &&
-    Math.sign(targetKg - trend.latest_kg) === Math.sign(trend.change_per_week_kg)
+    trend.change_per_week_kg && trend.latest_kg !== null &&
+    Number.isFinite(targetKg) &&
+    Math.sign(targetKg - trend.latest_kg) ===
+      Math.sign(trend.change_per_week_kg)
   ) {
     const weeks = (targetKg - trend.latest_kg) / trend.change_per_week_kg;
-    if (weeks > 0 && weeks < 260) projected = addDays(environment.localDay, Math.ceil(weeks * 7));
+    if (weeks > 0 && weeks < 260) {
+      projected = addDays(environment.localDay, Math.ceil(weeks * 7));
+    }
   }
   const result = {
     unit: imperial ? "lb" : "kg",
@@ -393,23 +436,29 @@ async function updateGoals(
   const weight = raw.goal_weight && typeof raw.goal_weight === "object"
     ? raw.goal_weight as Record<string, unknown>
     : null;
-  const explicit = raw.explicit_targets && typeof raw.explicit_targets === "object"
-    ? raw.explicit_targets as Record<string, unknown>
-    : null;
+  const explicit =
+    raw.explicit_targets && typeof raw.explicit_targets === "object"
+      ? raw.explicit_targets as Record<string, unknown>
+      : null;
   const request: GoalChangeRequest = {
     phase: (["cut", "lean_bulk", "bulk", "maintain", "recomp"] as const)
       .find((phase) => phase === raw.phase) ?? null,
     goal_weight: weight && optionalNumber(weight.value) !== null
-      ? { value: Number(weight.value), unit: weight.unit === "kg" ? "kg" : "lb" }
+      ? {
+        value: Number(weight.value),
+        unit: weight.unit === "kg" ? "kg" : "lb",
+      }
       : null,
     goal_date: optionalStr(raw.goal_date, 10),
     weekly_rate_pct: optionalNumber(raw.weekly_rate_pct),
-    activity_level: (["sedentary", "light", "moderate", "active", "extra_active"] as const)
-      .find((level) => level === raw.activity_level) ?? null,
+    activity_level:
+      (["sedentary", "light", "moderate", "active", "extra_active"] as const)
+        .find((level) => level === raw.activity_level) ?? null,
     training_days_per_week: optionalNumber(raw.training_days_per_week),
-    protein_bias: raw.protein_bias === "higher" || raw.protein_bias === "standard"
-      ? raw.protein_bias
-      : null,
+    protein_bias:
+      raw.protein_bias === "higher" || raw.protein_bias === "standard"
+        ? raw.protein_bias
+        : null,
     fat_bias: raw.fat_bias === "lower" || raw.fat_bias === "standard" ||
         raw.fat_bias === "higher"
       ? raw.fat_bias
@@ -425,7 +474,11 @@ async function updateGoals(
     reason: optionalStr(raw.reason, 500) ?? "",
   };
   const profile = environment.context.profile;
-  const baseContext = await loadTargetContext(environment.admin, environment.userId, profile);
+  const baseContext = await loadTargetContext(
+    environment.admin,
+    environment.userId,
+    profile,
+  );
   const currentWeightKg = environment.context.weightTrend.latest_kg ??
     (Number.isFinite(Number(profile.weight_kg)) && profile.weight_kg !== null
       ? Number(profile.weight_kg)
@@ -450,7 +503,9 @@ async function updateGoals(
   if (status !== "rejected") {
     environment.cards.push({
       kind: "goal_change",
-      body: status === "applied" ? "Goals updated." : "New goals, ready when you are.",
+      body: status === "applied"
+        ? "Goals updated."
+        : "New goals, ready when you are.",
       payload: goalChangeCard({ ...proposal, status }, status),
     });
   }
@@ -459,8 +514,14 @@ async function updateGoals(
     kg === null ? null : Math.round((imperial ? kg * LB_PER_KG : kg) * 10) / 10;
   const result = {
     status,
-    before: { ...proposal.before, target_weight: toDisplay(proposal.before.target_weight_kg) },
-    after: { ...proposal.after, target_weight: toDisplay(proposal.after.target_weight_kg) },
+    before: {
+      ...proposal.before,
+      target_weight: toDisplay(proposal.before.target_weight_kg),
+    },
+    after: {
+      ...proposal.after,
+      target_weight: toDisplay(proposal.after.target_weight_kg),
+    },
     weight_unit: imperial ? "lb" : "kg",
     projected_goal_date: proposal.projected_goal_date,
     weekly_rate_pct: proposal.rate_percent_per_week,
@@ -489,18 +550,24 @@ async function updateBio(
       if (!item || typeof item !== "object") return [];
       const value = item as Record<string, unknown>;
       if (!BIO_SECTION_KEYS.includes(value.section as BioSectionKey)) return [];
-      if (value.op !== "add" && value.op !== "replace" && value.op !== "remove") return [];
+      if (
+        value.op !== "add" && value.op !== "replace" && value.op !== "remove"
+      ) return [];
       const text = optionalStr(value.text, 2000);
       if (value.op !== "remove" && !text) return [];
       return [{
         section: value.section as BioSectionKey,
         op: value.op,
         text,
-        summary: `${value.op === "remove" ? "Removed" : "Updated"} ${value.section}`,
+        summary: `${
+          value.op === "remove" ? "Removed" : "Updated"
+        } ${value.section}`,
       }];
     });
   } else {
-    if (!environment.userText.trim()) throw new ToolInputError("Nothing to merge");
+    if (!environment.userText.trim()) {
+      throw new ToolInputError("Nothing to merge");
+    }
     const memory = environment.context.memory;
     const merged = await environment.services.mergeBioDictation(
       memory?.sections ?? { bio: {}, notes: {}, schedule: {}, equipment: [] },
@@ -529,7 +596,9 @@ async function updateBio(
     }),
     { source: "bio_update", messageId: environment.userMessageId },
   );
-  if (saved.status !== "saved") return fail("The bio changed at the same time; try again.");
+  if (saved.status !== "saved") {
+    return fail("The bio changed at the same time; try again.");
+  }
   environment.changed.add("bio");
   environment.cards.push({
     kind: "profile_update",
@@ -546,7 +615,11 @@ async function updateBio(
           summary: change.summary,
         })),
         ...(schedule
-          ? [{ section: "schedule", op: "replace", summary: "Schedule times updated" }]
+          ? [{
+            section: "schedule",
+            op: "replace",
+            summary: "Schedule times updated",
+          }]
           : []),
       ],
     },
@@ -570,7 +643,9 @@ async function remember(
     environment.admin,
     environment.userId,
     (sections) => {
-      const text = kind === "fact" ? note : `${kind.replace("_", " ")}: ${note}`;
+      const text = kind === "fact"
+        ? note
+        : `${kind.replace("_", " ")}: ${note}`;
       if (Object.values(sections.notes).includes(text)) return null;
       return {
         sections: addMemoryNote(sections, text, environment.now).sections,
@@ -596,7 +671,9 @@ async function logMealText(
   let occurredAt: string | null = null;
   if (time !== null) {
     const instant = localWallTimeToInstant(day, time, environment.timezone);
-    occurredAt = new Date(Math.min(instant.getTime(), environment.now.getTime())).toISOString();
+    occurredAt = new Date(
+      Math.min(instant.getTime(), environment.now.getTime()),
+    ).toISOString();
   }
   const clientRequestId = await deterministicUuid(
     `${environment.clientRequestId}:meal:${day}:${description.toLowerCase()}`,
@@ -604,7 +681,13 @@ async function logMealText(
   const created = await environment.services.createTextEntry(
     environment.admin,
     environment.userId,
-    { clientRequestId, localDay: day, timezone: environment.timezone, text: description, occurredAt },
+    {
+      clientRequestId,
+      localDay: day,
+      timezone: environment.timezone,
+      text: description,
+      occurredAt,
+    },
     environment.dispatchEntry,
   );
   // The meal shows in the day thread as its own card; the coach reacts with
@@ -613,7 +696,8 @@ async function logMealText(
   return ok({
     status: created.status,
     entry_id: created.entryId,
-    note: "The estimate lands in about a minute on the meal card. Don't state macros for it.",
+    note:
+      "The estimate lands in about a minute on the meal card. Don't state macros for it.",
   });
 }
 
@@ -654,8 +738,11 @@ async function logWeight(
   const value = optionalNumber(raw.value);
   if (value === null) throw new ToolInputError("value is required");
   const day = dayInput(environment, raw.local_day);
-  const kg = Math.round((raw.unit === "kg" ? value : value * KG_PER_LB) * 100) / 100;
-  if (kg < 20 || kg > 500) throw new ToolInputError("That weight is outside the supported range");
+  const kg = Math.round((raw.unit === "kg" ? value : value * KG_PER_LB) * 100) /
+    100;
+  if (kg < 20 || kg > 500) {
+    throw new ToolInputError("That weight is outside the supported range");
+  }
   const { error } = await environment.admin.from("weight_checkins")
     .upsert(
       { user_id: environment.userId, local_day: day, weight_kg: kg },
@@ -710,7 +797,9 @@ async function findNearbyFood(
         fat_g: Math.max(0, remaining.fat_g),
       },
       requestId: await deterministicUuid(
-        `${environment.clientRequestId}:nearby:${optionalStr(raw.query, 200) ?? ""}`,
+        `${environment.clientRequestId}:nearby:${
+          optionalStr(raw.query, 200) ?? ""
+        }`,
       ),
     },
     { client: environment.client, copyGuard: coachCardCopyGuard },
@@ -753,10 +842,14 @@ async function findNearbyFood(
   });
 }
 
-function collectFigures(value: unknown, into: Set<number> = new Set()): Set<number> {
+function collectFigures(
+  value: unknown,
+  into: Set<number> = new Set(),
+): Set<number> {
   if (typeof value === "number" && Number.isFinite(value)) into.add(value);
-  else if (Array.isArray(value)) value.forEach((item) => collectFigures(item, into));
-  else if (value && typeof value === "object") {
+  else if (Array.isArray(value)) {
+    value.forEach((item) => collectFigures(item, into));
+  } else if (value && typeof value === "object") {
     Object.values(value).forEach((item) => collectFigures(item, into));
   }
   return into;
@@ -774,8 +867,13 @@ async function draftTrainingPlanTool(
       reason: environment.context.trainingPlan ? "user_request" : "first_plan",
     },
   });
-  if (accepted === false) return fail("Couldn't start the plan right now. Try again in a bit.");
-  return ok({ status: "started", note: "The plan arrives as a card in a minute or two." });
+  if (accepted === false) {
+    return fail("Couldn't start the plan right now. Try again in a bit.");
+  }
+  return ok({
+    status: "started",
+    note: "The plan arrives as a card in a minute or two.",
+  });
 }
 
 async function requestPhysiqueReview(
@@ -783,7 +881,10 @@ async function requestPhysiqueReview(
   raw: Record<string, unknown>,
 ): Promise<CoachToolResult> {
   if (!environment.context.settings.physiqueReview) {
-    return ok({ status: "disabled", note: "Photo reviews are off in settings." });
+    return ok({
+      status: "disabled",
+      note: "Photo reviews are off in settings.",
+    });
   }
   const day = raw.local_day === null || raw.local_day === undefined
     ? environment.localDay
@@ -793,13 +894,18 @@ async function requestPhysiqueReview(
     user_id: environment.userId,
     payload: { anchor_day: day, kind: "on_demand" },
   });
-  if (accepted === false) return fail("Couldn't queue the review right now. Try again in a bit.");
+  if (accepted === false) {
+    return fail("Couldn't queue the review right now. Try again in a bit.");
+  }
   return ok({ status: "started", note: "Feedback arrives as a card shortly." });
 }
 
 const HANDLERS: Record<
   string,
-  (environment: CoachToolEnvironment, raw: Record<string, unknown>) => Promise<CoachToolResult>
+  (
+    environment: CoachToolEnvironment,
+    raw: Record<string, unknown>,
+  ) => Promise<CoachToolResult>
 > = {
   draft_training_plan: draftTrainingPlanTool,
   find_nearby_food: findNearbyFood,

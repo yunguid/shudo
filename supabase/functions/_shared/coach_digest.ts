@@ -51,7 +51,11 @@ export const DAY_DIGEST_SCHEMA = {
       maxItems: 4,
       items: { type: "string", maxLength: 200 },
     },
-    misses: { type: "array", maxItems: 4, items: { type: "string", maxLength: 200 } },
+    misses: {
+      type: "array",
+      maxItems: 4,
+      items: { type: "string", maxLength: 200 },
+    },
     tomorrow_focus: {
       type: "array",
       maxItems: 3,
@@ -63,13 +67,19 @@ export const DAY_DIGEST_SCHEMA = {
       additionalProperties: false,
       properties: {
         theme: { type: "string", maxLength: 80 },
-        focus: { type: "array", maxItems: 3, items: { type: "string", maxLength: 120 } },
+        focus: {
+          type: "array",
+          maxItems: 3,
+          items: { type: "string", maxLength: 120 },
+        },
         training: {
           anyOf: [
             {
               type: "object",
               additionalProperties: false,
-              properties: { session_name: { type: ["string", "null"], maxLength: 80 } },
+              properties: {
+                session_name: { type: ["string", "null"], maxLength: 80 },
+              },
               required: ["session_name"],
             },
             { type: "null" },
@@ -127,7 +137,11 @@ function safeText(value: unknown, max: number): string | null {
   return trimmed;
 }
 
-function safeList(value: unknown, maxItems: number, maxChars: number): string[] {
+function safeList(
+  value: unknown,
+  maxItems: number,
+  maxChars: number,
+): string[] {
   return (Array.isArray(value) ? value : [])
     .map((item) => safeText(item, maxChars))
     .filter((item): item is string => item !== null)
@@ -149,9 +163,10 @@ export function parseDigestOutput(value: unknown): DayDigestOutput {
   const training = plan.training && typeof plan.training === "object"
     ? plan.training as Record<string, unknown>
     : null;
-  const score = typeof object.score === "number" && Number.isFinite(object.score)
-    ? Math.max(0, Math.min(100, Math.round(object.score)))
-    : null;
+  const score =
+    typeof object.score === "number" && Number.isFinite(object.score)
+      ? Math.max(0, Math.min(100, Math.round(object.score)))
+      : null;
   return {
     headline,
     summary,
@@ -176,7 +191,9 @@ export function parseDigestOutput(value: unknown): DayDigestOutput {
         if (op !== "remove" && !text) return [];
         return [{
           op,
-          key: typeof key === "string" && /^[a-z0-9_]{1,40}$/u.test(key) ? key : null,
+          key: typeof key === "string" && /^[a-z0-9_]{1,40}$/u.test(key)
+            ? key
+            : null,
           text,
         }];
       }).slice(0, 6),
@@ -205,7 +222,9 @@ export type DigestMetrics = {
 export function digestMetrics(context: CoachContext): DigestMetrics {
   const complete = context.meals.filter((meal) => meal.status === "complete");
   const target = context.targets;
-  const dayMessages = context.thread.filter((row) => row.local_day === context.localDay);
+  const dayMessages = context.thread.filter((row) =>
+    row.local_day === context.localDay
+  );
   const incomplete = complete.length < 2 ||
     context.totals.calories_kcal < target.calories_kcal * 0.6;
   return {
@@ -221,7 +240,9 @@ export function digestMetrics(context: CoachContext): DigestMetrics {
       context.totals.calories_kcal <= target.calories_kcal * 1.1,
     protein_hit: target.protein_g > 0 &&
       context.totals.protein_g >= target.protein_g * 0.9,
-    sessions: context.activities.filter((activity) => activity.status === "complete").length,
+    sessions:
+      context.activities.filter((activity) => activity.status === "complete")
+        .length,
     checkin_photo: Boolean(context.checkin?.progress_photo_path),
     weight_kg: context.checkin?.weight_kg === null || context.checkin === null
       ? null
@@ -233,8 +254,13 @@ export function digestMetrics(context: CoachContext): DigestMetrics {
 }
 
 async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0"))
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest)).map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  )
     .join("");
 }
 
@@ -304,7 +330,9 @@ export async function runDayDigest(
     v: COACH_PERSONA_VERSION,
     day: digestDay,
     meals: context.meals.map((meal) => [meal.id, meal.updated_at]),
-    activities: context.activities.map((activity) => [activity.id, activity.updated_at]),
+    activities: context.activities.map((
+      activity,
+    ) => [activity.id, activity.updated_at]),
     checkin: context.checkin?.updated_at ?? null,
     memory: context.memory?.version ?? 0,
   }));
@@ -319,7 +347,12 @@ export async function runDayDigest(
     leaseSeconds: 150,
   });
   if (!isClaimed(claim)) {
-    return { status: claim.status, runId: claim.run_id, digestDay, gamePlan: null };
+    return {
+      status: claim.status,
+      runId: claim.run_id,
+      digestDay,
+      gamePlan: null,
+    };
   }
 
   try {
@@ -327,11 +360,14 @@ export async function runDayDigest(
       day: digestDay,
       weekday: localClock(new Date(`${digestDay}T12:00:00Z`), "UTC").weekday,
       next_day: addDays(digestDay, 1),
-      next_weekday: localClock(new Date(`${addDays(digestDay, 1)}T12:00:00Z`), "UTC")
-        .weekday,
+      next_weekday:
+        localClock(new Date(`${addDays(digestDay, 1)}T12:00:00Z`), "UTC")
+          .weekday,
       scorecard: metrics,
       targets: context.targets,
-      meals: context.meals.filter((meal) => meal.status === "complete").map((meal) => ({
+      meals: context.meals.filter((meal) => meal.status === "complete").map((
+        meal,
+      ) => ({
         title: meal.title,
         calories_kcal: numeric(meal.calories_kcal),
         protein_g: numeric(meal.protein_g),
@@ -345,14 +381,23 @@ export async function runDayDigest(
       })),
       checkin: context.checkin
         ? {
-          weight_kg: context.checkin.weight_kg === null ? null : numeric(context.checkin.weight_kg),
+          weight_kg: context.checkin.weight_kg === null
+            ? null
+            : numeric(context.checkin.weight_kg),
           photo: Boolean(context.checkin.progress_photo_path),
         }
         : null,
       thread: context.thread.filter((row) => row.local_day === digestDay)
-        .map((row) => ({ role: row.role, kind: row.kind, text: row.body.slice(0, 500) })),
+        .map((row) => ({
+          role: row.role,
+          kind: row.kind,
+          text: row.body.slice(0, 500),
+        })),
       training_plan: context.trainingPlan
-        ? { name: context.trainingPlan.name, sessions: context.trainingPlan.sessions }
+        ? {
+          name: context.trainingPlan.name,
+          sessions: context.trainingPlan.sessions,
+        }
         : null,
     };
     const system = coachSystemBlocks(
@@ -360,10 +405,17 @@ export async function runDayDigest(
       COACH_DAY_DIGEST_INSTRUCTIONS,
       renderMemoryBlock(context),
     );
-    const content = `<day_log>\n${JSON.stringify(dayLog)}\n</day_log>\n\nWrite the digest for ${digestDay}.`;
+    const content = `<day_log>\n${
+      JSON.stringify(dayLog)
+    }\n</day_log>\n\nWrite the digest for ${digestDay}.`;
     let result: StructuredCallResult;
     try {
-      result = await callDigestModel(DAY_DIGEST_MODEL, system, content, dependencies.client);
+      result = await callDigestModel(
+        DAY_DIGEST_MODEL,
+        system,
+        content,
+        dependencies.client,
+      );
     } catch (error) {
       // Fable requires 30-day retention; an org-config 400 falls back to Opus.
       if (error instanceof Anthropic.BadRequestError) {
@@ -385,22 +437,34 @@ export async function runDayDigest(
       claim.run_id,
     );
     const digest = parseDigestOutput(result.output);
-    const saved = await saveDayDigestRpc(admin, claim.run_id, claim.claim_token, {
-      headline: digest.headline,
-      summary: digest.summary,
-      metrics,
-      highlights: digest.highlights,
-      misses: digest.misses,
-      tomorrow_focus: digest.tomorrow_focus,
-      score: metrics.log_completeness === "possibly_incomplete" ? null : digest.score,
-      input_fingerprint: fingerprint,
-      digest_version: 1,
-      model: result.model,
-      provider_response_id: result.messageId,
-      game_plan: digest.game_plan,
-    });
+    const saved = await saveDayDigestRpc(
+      admin,
+      claim.run_id,
+      claim.claim_token,
+      {
+        headline: digest.headline,
+        summary: digest.summary,
+        metrics,
+        highlights: digest.highlights,
+        misses: digest.misses,
+        tomorrow_focus: digest.tomorrow_focus,
+        score: metrics.log_completeness === "possibly_incomplete"
+          ? null
+          : digest.score,
+        input_fingerprint: fingerprint,
+        digest_version: 1,
+        model: result.model,
+        provider_response_id: result.messageId,
+        game_plan: digest.game_plan,
+      },
+    );
     if (saved !== "saved") {
-      return { status: saved || "stale", runId: claim.run_id, digestDay, gamePlan: null };
+      return {
+        status: saved || "stale",
+        runId: claim.run_id,
+        digestDay,
+        gamePlan: null,
+      };
     }
     if (digest.memory_ops.length > 0) {
       await updateCoachMemory(
@@ -408,7 +472,8 @@ export async function runDayDigest(
         request.userId,
         (sections) => ({
           sections: applyNoteOperations(sections, digest.memory_ops, now),
-          summary: `Nightly digest ${digestDay}: ${digest.memory_ops.length} note change(s)`,
+          summary:
+            `Nightly digest ${digestDay}: ${digest.memory_ops.length} note change(s)`,
         }),
         {
           source: "day_digest",
@@ -423,7 +488,11 @@ export async function runDayDigest(
       runId: claim.run_id,
       claimToken: claim.claim_token,
       status: "complete",
-      result: { digest_day: digestDay, game_plan: digest.game_plan, score: digest.score },
+      result: {
+        digest_day: digestDay,
+        game_plan: digest.game_plan,
+        score: digest.score,
+      },
       messages: [],
       supersedeSlotKeys: [],
       model: result.model,
@@ -438,7 +507,9 @@ export async function runDayDigest(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("coach_digest_failed", { userId: request.userId, message });
-    await failCoachRun(admin, claim.run_id, claim.claim_token, message).catch(() => undefined);
+    await failCoachRun(admin, claim.run_id, claim.claim_token, message).catch(
+      () => undefined,
+    );
     return { status: "failed", runId: claim.run_id, digestDay, gamePlan: null };
   }
 }

@@ -25,6 +25,7 @@ import {
   parseEntryCorrectionForm,
   validateCorrectionContentLength,
 } from "../_shared/entry_correction.ts";
+import { dispatchCoachJob } from "../_shared/coach_dispatch.ts";
 import { NEUTRAL_PRODUCT_COPY_INSTRUCTION } from "../_shared/generated_copy.ts";
 import {
   authenticate,
@@ -420,6 +421,13 @@ Deno.serve(async (req: Request) => {
       );
     }
     ownsReservation = false;
+
+    // The coach re-plans around the corrected numbers (reaction optional).
+    runInBackground(dispatchCoachJob({
+      job: "plan",
+      user_id: userId,
+      payload: { trigger: "meal_corrected", entry_id: entryId },
+    }));
 
     // A corrected meal in an already-summarized past week makes that week's
     // stored overview stale; re-run it after responding.

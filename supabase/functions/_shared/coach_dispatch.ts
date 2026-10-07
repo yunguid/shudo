@@ -4,7 +4,11 @@ import { requiredEnv, runInBackground } from "./http.ts";
 /// runs each job in a fresh worker with its own wall clock. Authenticated by
 /// the existing weekly maintenance secret; no user credentials travel.
 
-export type CoachJobName = "day_digest" | "training_plan" | "body_review" | "plan";
+export type CoachJobName =
+  | "day_digest"
+  | "training_plan"
+  | "body_review"
+  | "plan";
 
 export type CoachJob =
   | { mode: "daily" }
@@ -60,12 +64,14 @@ export async function dispatchCoachJob(
   request: CoachJob,
   dependencies: CoachDispatchDependencies = {},
 ): Promise<boolean> {
-  const env = dependencies.env ?? ((name: string) => Deno.env.get(name)?.trim());
+  const env = dependencies.env ??
+    ((name: string) => Deno.env.get(name)?.trim());
   const send = dependencies.fetch ?? fetch;
   try {
     const supabaseUrl = (env("SUPABASE_URL") ?? requiredEnv("SUPABASE_URL"))
       .replace(/\/+$/u, "");
-    const secret = env("SHUDO_WEEKLY_SECRET") ?? requiredEnv("SHUDO_WEEKLY_SECRET");
+    const secret = env("SHUDO_WEEKLY_SECRET") ??
+      requiredEnv("SHUDO_WEEKLY_SECRET");
     const anonKey = env("SUPABASE_ANON_KEY");
     const response = await send(`${supabaseUrl}/functions/v1/coach_tick`, {
       method: "POST",

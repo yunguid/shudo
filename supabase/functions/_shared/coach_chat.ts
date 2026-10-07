@@ -40,7 +40,12 @@ import {
   WELLBEING_RESOURCES,
 } from "./coach_fallbacks.ts";
 import { COACH_CHAT_RULES, COACH_PERSONA_VERSION } from "./coach_persona.ts";
-import { addDays, formatClock, isValidTimezone, localClock } from "./coach_policy.ts";
+import {
+  addDays,
+  formatClock,
+  isValidTimezone,
+  localClock,
+} from "./coach_policy.ts";
 import {
   claimCoachRun,
   COACH_MESSAGE_COLUMNS,
@@ -132,7 +137,10 @@ export class SseChannel {
   constructor(keepaliveMs = KEEPALIVE_INTERVAL_MS) {
     const stream = new TransformStream<Uint8Array, Uint8Array>();
     this.#writer = stream.writable.getWriter();
-    this.response = new Response(stream.readable, { status: 200, headers: SSE_HEADERS });
+    this.response = new Response(stream.readable, {
+      status: 200,
+      headers: SSE_HEADERS,
+    });
     this.#keepalive = keepaliveMs > 0
       ? setInterval(() => this.#write(SSE_KEEPALIVE), keepaliveMs)
       : null;
@@ -184,14 +192,16 @@ export type CoachSendRequest = {
 
 export type CoachChatBody =
   | { kind: "send"; request: CoachSendRequest }
-  | { kind: "action"; clientRequestId: string; action: ReturnType<typeof parseCardAction> };
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
+  | {
+    kind: "action";
+    clientRequestId: string;
+    action: ReturnType<typeof parseCardAction>;
+  };
 
 function shortText(value: unknown, max: number): string | null {
-  return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, max)
+    : null;
 }
 
 /// LocationContext arrives from the phone; lane B3's sanitizer rebuilds it
@@ -215,21 +225,37 @@ export function parseCoachChatBody(value: unknown): CoachChatBody {
   const clientRequestId = typeof object.client_request_id === "string"
     ? object.client_request_id.trim().toLowerCase()
     : "";
-  if (!isUuid(clientRequestId)) throw new HttpError(400, "client_request_id must be a UUID");
+  if (!isUuid(clientRequestId)) {
+    throw new HttpError(400, "client_request_id must be a UUID");
+  }
   if (object.action !== undefined) {
-    return { kind: "action", clientRequestId, action: parseCardAction(object.action) };
+    return {
+      kind: "action",
+      clientRequestId,
+      action: parseCardAction(object.action),
+    };
   }
   const text = typeof object.text === "string" ? object.text.trim() : "";
-  if (text.length > MAX_TEXT_CHARACTERS) throw new HttpError(413, "That message is too long");
+  if (text.length > MAX_TEXT_CHARACTERS) {
+    throw new HttpError(413, "That message is too long");
+  }
   const attachmentPath = shortText(object.attachment_path, 200);
-  if (!text && !attachmentPath) throw new HttpError(400, "Say something to the coach");
-  const localDay = typeof object.local_day === "string" ? object.local_day.trim() : "";
+  if (!text && !attachmentPath) {
+    throw new HttpError(400, "Say something to the coach");
+  }
+  const localDay = typeof object.local_day === "string"
+    ? object.local_day.trim()
+    : "";
   if (
     !/^\d{4}-\d{2}-\d{2}$/u.test(localDay) ||
     new Date(`${localDay}T00:00:00Z`).toISOString().slice(0, 10) !== localDay
   ) throw new HttpError(400, "local_day must use YYYY-MM-DD");
-  const timezone = typeof object.timezone === "string" ? object.timezone.trim() : "";
-  if (!isValidTimezone(timezone)) throw new HttpError(400, "timezone is not a valid IANA timezone");
+  const timezone = typeof object.timezone === "string"
+    ? object.timezone.trim()
+    : "";
+  if (!isValidTimezone(timezone)) {
+    throw new HttpError(400, "timezone is not a valid IANA timezone");
+  }
   const inputMode = object.input_mode === "dictated" ||
       object.input_mode === "notification_reply"
     ? object.input_mode
@@ -253,14 +279,20 @@ export function parseCoachChatBody(value: unknown): CoachChatBody {
   };
 }
 
-export function validateAttachmentPath(userId: string, path: string | null): void {
+export function validateAttachmentPath(
+  userId: string,
+  path: string | null,
+): void {
   if (path === null) return;
   const pattern = new RegExp(
     `^${userId}/\\d{4}-\\d{2}-\\d{2}/chat-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.jpg$`,
     "u",
   );
   if (!pattern.test(path) || path.length > 160) {
-    throw new HttpError(400, "attachment_path is not a coach photo you uploaded");
+    throw new HttpError(
+      400,
+      "attachment_path is not a coach photo you uploaded",
+    );
   }
 }
 
@@ -292,7 +324,8 @@ export function detectWellbeingSignal(text: string): boolean {
 
 // ------------------------------------------------------------ history
 
-const THREAD_STUB = "(thread resumes; earlier days are summarized in your memory)";
+const THREAD_STUB =
+  "(thread resumes; earlier days are summarized in your memory)";
 
 /// Prior turns as plain text: no thinking, no tool blocks, so the history
 /// only ever grows by appending. The window starts at yesterday so the
@@ -317,7 +350,9 @@ export function renderHistory(
     if (last && last.role === role) last.text = `${last.text}\n\n${text}`;
     else turns.push({ role, text });
   }
-  if (turns[0]?.role === "assistant") turns.unshift({ role: "user", text: THREAD_STUB });
+  if (turns[0]?.role === "assistant") {
+    turns.unshift({ role: "user", text: THREAD_STUB });
+  }
   return turns;
 }
 
@@ -376,7 +411,9 @@ class StreamingReply {
     if (!piece) return;
     this.body += piece;
     this.emit({ type: "delta", message_id: this.messageId, text: piece });
-    if (this.clock() - this.#lastWrite >= STREAM_WRITE_INTERVAL_MS) this.#schedule();
+    if (this.clock() - this.#lastWrite >= STREAM_WRITE_INTERVAL_MS) {
+      this.#schedule();
+    }
   }
 
   #schedule(): void {
@@ -420,7 +457,12 @@ const CHAT_REWRITE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    bubbles: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", maxLength: 450 } },
+    bubbles: {
+      type: "array",
+      minItems: 1,
+      maxItems: 3,
+      items: { type: "string", maxLength: 450 },
+    },
   },
   required: ["bubbles"],
 } as const;
@@ -434,10 +476,17 @@ function chatEffort(request: CoachSendRequest): ClaudeEffort {
   return request.contextHint === "bio" || words > 120 ? "medium" : "low";
 }
 
-function userTurnText(request: CoachSendRequest, context: CoachContext): string {
+function userTurnText(
+  request: CoachSendRequest,
+  context: CoachContext,
+): string {
   const clock = localClock(context.now, request.timezone);
-  const meta = `(${clock.weekday} ${request.localDay} ${formatClock(clock.minutes)} · ${
-    request.inputMode === "typed" ? "typed" : request.inputMode === "dictated"
+  const meta = `(${clock.weekday} ${request.localDay} ${
+    formatClock(clock.minutes)
+  } · ${
+    request.inputMode === "typed"
+      ? "typed"
+      : request.inputMode === "dictated"
       ? "dictated, may contain transcription slips"
       : "replied from a notification"
   }${request.contextHint === "bio" ? " · from the Bio screen" : ""})`;
@@ -460,7 +509,9 @@ async function rewriteReply(
       system,
       messages: [{
         role: "user",
-        content: `<live_state>${JSON.stringify(statePack)}</live_state>\n\nLuke wrote:\n${userText}\n\nYour draft reply broke a rule (${violation}):\n${draft}\n\nRewrite the reply so it follows every rule. Use only figures from the live state. Return bubbles.`,
+        content: `<live_state>${
+          JSON.stringify(statePack)
+        }</live_state>\n\nLuke wrote:\n${userText}\n\nYour draft reply broke a rule (${violation}):\n${draft}\n\nRewrite the reply so it follows every rule. Use only figures from the live state. Return bubbles.`,
       }],
       schema: CHAT_REWRITE_SCHEMA,
       schemaName: "submit_reply",
@@ -470,12 +521,16 @@ async function rewriteReply(
     });
     const object = result.output as { bubbles?: unknown };
     const bubbles = Array.isArray(object?.bubbles)
-      ? object.bubbles.filter((item): item is string => typeof item === "string")
+      ? object.bubbles.filter((item): item is string =>
+        typeof item === "string"
+      )
         .map(sanitizeCoachText).filter(Boolean)
       : [];
     return bubbles.length ? { bubbles, usage: result.usage } : null;
   } catch (error) {
-    console.warn("coach_reply_rewrite_failed", { message: String((error as Error)?.message ?? error) });
+    console.warn("coach_reply_rewrite_failed", {
+      message: String((error as Error)?.message ?? error),
+    });
     return null;
   }
 }
@@ -508,12 +563,16 @@ export async function runCoachTurn(
   const toolCalls: string[] = [];
 
   try {
-    const context = await (dependencies.loadContext ?? loadCoachContext)(admin, userId, {
-      now: input.now,
-      timezone: request.timezone,
-      localDay: request.localDay,
-      threadLimit: HISTORY_LIMIT,
-    });
+    const context = await (dependencies.loadContext ?? loadCoachContext)(
+      admin,
+      userId,
+      {
+        now: input.now,
+        timezone: request.timezone,
+        localDay: request.localDay,
+        threadLimit: HISTORY_LIMIT,
+      },
+    );
     const wellbeing = detectWellbeingSignal(request.text);
     const services: CoachToolServices = {
       createActivityFromText,
@@ -550,11 +609,15 @@ export async function runCoachTurn(
     );
     const statePack = buildStatePack(context, {
       wellbeing_signal: wellbeing,
-      message: { input_mode: request.inputMode, context_hint: request.contextHint },
+      message: {
+        input_mode: request.inputMode,
+        context_hint: request.contextHint,
+      },
     });
     const userContent: BetaContentBlockParam[] = [];
     if (request.attachmentPath && dependencies.signedPhotoUrl) {
-      const url = await dependencies.signedPhotoUrl(request.attachmentPath).catch(() => null);
+      const url = await dependencies.signedPhotoUrl(request.attachmentPath)
+        .catch(() => null);
       if (url) userContent.push(imageFromUrl(url));
     }
     userContent.push({ type: "text", text: userTurnText(request, context) });
@@ -577,7 +640,10 @@ export async function runCoachTurn(
     messages.push({ role: "user", content: userContent });
     // Volatile state rides as a mid-conversation system message after his
     // words, so his history and the cached prefix are never edited.
-    messages.push({ role: "system", content: `<live_state>${JSON.stringify(statePack)}</live_state>` });
+    messages.push({
+      role: "system",
+      content: `<live_state>${JSON.stringify(statePack)}</live_state>`,
+    });
 
     const tools = [...COACH_TOOL_DEFINITIONS, webSearchTool(3)];
     const effort = chatEffort(request);
@@ -610,7 +676,8 @@ export async function runCoachTurn(
               if (label) emit({ type: "status", label });
             }
           } else if (
-            event.type === "content_block_delta" && event.delta.type === "text_delta"
+            event.type === "content_block_delta" &&
+            event.delta.type === "text_delta"
           ) {
             let piece = event.delta.text;
             if (first && separator && piece.trim()) {
@@ -629,7 +696,13 @@ export async function runCoachTurn(
       const message = await stream.finalMessage();
       const requestUsage = usageOf("coach_reply", message);
       usage = addUsage(usage, requestUsage);
-      await recordCoachUsage(admin, userId, "coach_reply", requestUsage, input.runId);
+      await recordCoachUsage(
+        admin,
+        userId,
+        "coach_reply",
+        requestUsage,
+        input.runId,
+      );
       lastResponseId = message.id ?? lastResponseId;
       lastModel = message.model ?? lastModel;
 
@@ -644,7 +717,9 @@ export async function runCoachTurn(
         continue;
       }
       if (message.stop_reason !== "tool_use") break;
-      const calls = message.content.filter((block) => block.type === "tool_use");
+      const calls = message.content.filter((block) =>
+        block.type === "tool_use"
+      );
       if (calls.length === 0) break;
       messages.push({ role: "assistant", content: message.content });
       const results = await Promise.all(calls.map(async (call) => {
@@ -653,7 +728,9 @@ export async function runCoachTurn(
           return {
             type: "tool_result" as const,
             tool_use_id: call.id,
-            content: JSON.stringify({ error: "Tool budget for this message is used up." }),
+            content: JSON.stringify({
+              error: "Tool budget for this message is used up.",
+            }),
             is_error: true,
           };
         }
@@ -667,7 +744,9 @@ export async function runCoachTurn(
           timeout,
           call.name,
         ).catch(() => ({
-          content: JSON.stringify({ error: "That took too long. Tell him to try again." }),
+          content: JSON.stringify({
+            error: "That took too long. Tell him to try again.",
+          }),
           isError: true,
         }));
         return {
@@ -689,14 +768,18 @@ export async function runCoachTurn(
       finalText = CHAT_REFUSAL_FALLBACK;
     } else if (!finalText) {
       fallback = "empty";
-      finalText = environment.cards.length > 0 ? "Done. It's on the card." : CHAT_FAILURE_FALLBACK;
+      finalText = environment.cards.length > 0
+        ? "Done. It's on the card."
+        : CHAT_FAILURE_FALLBACK;
     }
     let bubbles = splitBubbles(finalText, 3);
     const policy: CoachCopyPolicy = {
       mode: "chat_reply",
       profanity: context.settings.profanity,
       emojiAllowed: context.settings.emoji,
-      allowedFigures: wellbeing ? [] : allowedFiguresFor(context, ...environment.facts),
+      allowedFigures: wellbeing
+        ? []
+        : allowedFiguresFor(context, ...environment.facts),
       pushCapable: false,
       longForm: wantsLongForm(request.text),
     };
@@ -716,11 +799,21 @@ export async function runCoachTurn(
         : null;
       if (rewrite) {
         usage = addUsage(usage, rewrite.usage);
-        await recordCoachUsage(admin, userId, "coach_reply", rewrite.usage, input.runId);
+        await recordCoachUsage(
+          admin,
+          userId,
+          "coach_reply",
+          rewrite.usage,
+          input.runId,
+        );
       }
       if (
         rewrite &&
-        !coachCopyViolation({ skip: false, bubbles: rewrite.bubbles, push_body: null }, policy)
+        !coachCopyViolation({
+          skip: false,
+          bubbles: rewrite.bubbles,
+          push_body: null,
+        }, policy)
       ) {
         bubbles = rewrite.bubbles;
         rewritten = true;
@@ -751,7 +844,11 @@ export async function runCoachTurn(
       cards.push({
         kind: "text",
         body: WELLBEING_CARD_BODY,
-        payload: { safety_flag: "wellbeing", resources: WELLBEING_RESOURCES, static: true },
+        payload: {
+          safety_flag: "wellbeing",
+          resources: WELLBEING_RESOURCES,
+          static: true,
+        },
         local_day: request.localDay,
         notify: false,
         reply_to_id: input.userMessageId,
@@ -786,7 +883,11 @@ export async function runCoachTurn(
       ...completion.message_ids,
     ]);
     for (const row of rows) emit({ type: "message", message: row });
-    emit({ type: "done", run_id: input.runId, message_ids: rows.map((row) => row.id) });
+    emit({
+      type: "done",
+      run_id: input.runId,
+      message_ids: rows.map((row) => row.id),
+    });
 
     if (
       environment.changed.has("goals") || environment.changed.has("bio") ||
@@ -809,13 +910,21 @@ export async function runCoachTurn(
   } catch (error) {
     const lost = error instanceof LostRunFenceError;
     const message = error instanceof Error ? error.message : String(error);
-    console.error("coach_turn_failed", { userId, lost, message: message.slice(0, 300) });
+    console.error("coach_turn_failed", {
+      userId,
+      lost,
+      message: message.slice(0, 300),
+    });
     if (!lost) {
       await reply.finish(
-        reply.body.trim() ? `${sanitizeCoachText(reply.body)}\n\n${CHAT_FAILURE_FALLBACK}` : CHAT_FAILURE_FALLBACK,
+        reply.body.trim()
+          ? `${sanitizeCoachText(reply.body)}\n\n${CHAT_FAILURE_FALLBACK}`
+          : CHAT_FAILURE_FALLBACK,
         { persona_version: COACH_PERSONA_VERSION, fallback: "failed" },
       ).catch(() => undefined);
-      await failCoachRun(admin, input.runId, input.claimToken, message).catch(() => undefined);
+      await failCoachRun(admin, input.runId, input.claimToken, message).catch(
+        () => undefined,
+      );
     }
     emit({
       type: "error",
@@ -875,13 +984,21 @@ export async function tailCoachRun(
       if (row.payload?.streaming !== true) continue;
       const previous = sent.get(row.id) ?? "";
       if (row.body.startsWith(previous) && row.body.length > previous.length) {
-        emit({ type: "delta", message_id: row.id, text: row.body.slice(previous.length) });
+        emit({
+          type: "delta",
+          message_id: row.id,
+          text: row.body.slice(previous.length),
+        });
         sent.set(row.id, row.body);
       }
     }
     if (!run || run.status === "complete" || run.status === "skipped") {
       for (const row of rows) emit({ type: "message", message: row });
-      emit({ type: "done", run_id: runId, message_ids: rows.map((row) => row.id) });
+      emit({
+        type: "done",
+        run_id: runId,
+        message_ids: rows.map((row) => row.id),
+      });
       return;
     }
     if (run.status === "failed" || !run.live) {
@@ -922,9 +1039,15 @@ export type CoachChatDependencies = CoachTurnDependencies & {
 function claimError(status: string): HttpError {
   switch (status) {
     case "capacity":
-      return new HttpError(429, "The coach is still on your last few messages. Try again in a moment.");
+      return new HttpError(
+        429,
+        "The coach is still on your last few messages. Try again in a moment.",
+      );
     case "exhausted":
-      return new HttpError(409, "That message couldn't be answered. Send it again as a new message.");
+      return new HttpError(
+        409,
+        "That message couldn't be answered. Send it again as a new message.",
+      );
     default:
       return new HttpError(409, "That message conflicts with an earlier one.");
   }
@@ -935,7 +1058,10 @@ export function quotaHttpError(error: unknown): HttpError | null {
   if (mapped) return mapped;
   const message = String((error as { message?: string })?.message ?? error);
   if (message.includes("project_ai_spend_exceeded")) {
-    return new HttpError(429, "The shared beta AI limit has been reached. Try again later.");
+    return new HttpError(
+      429,
+      "The shared beta AI limit has been reached. Try again later.",
+    );
   }
   return null;
 }
@@ -964,10 +1090,16 @@ export async function startCoachSend(
     attachmentPath: request.attachmentPath,
   });
   if (posted.status === "conflict") {
-    throw new HttpError(409, "That message id was already used for a different message.");
+    throw new HttpError(
+      409,
+      "That message id was already used for a different message.",
+    );
   }
   if (posted.status === "quota") {
-    throw new HttpError(429, "That's a lot of messages today. Try again later.");
+    throw new HttpError(
+      429,
+      "That's a lot of messages today. Try again later.",
+    );
   }
   let claim;
   try {
@@ -1000,7 +1132,12 @@ export async function startCoachSend(
   const emit = (event: CoachStreamEvent) => channel.send(event);
   const duplicate = posted.status === "existing" || !isClaimed(claim) ||
     claim.status === "reclaimed";
-  emit({ type: "accepted", run_id: runId, user_message: userMessage ?? null, duplicate });
+  emit({
+    type: "accepted",
+    run_id: runId,
+    user_message: userMessage ?? null,
+    duplicate,
+  });
 
   let work: Promise<unknown>;
   if (isClaimed(claim)) {
@@ -1024,7 +1161,11 @@ export async function startCoachSend(
   } else if (claim.status === "complete" || claim.status === "skipped") {
     work = runMessages(admin, userId, runId).then((rows) => {
       for (const row of rows) emit({ type: "message", message: row });
-      emit({ type: "done", run_id: runId, message_ids: rows.map((row) => row.id) });
+      emit({
+        type: "done",
+        run_id: runId,
+        message_ids: rows.map((row) => row.id),
+      });
     });
   } else if (claim.status === "running") {
     work = tailCoachRun(admin, userId, runId, emit);
@@ -1041,7 +1182,12 @@ export async function startCoachSend(
   dependencies.observe(
     work.catch((error) => {
       console.error("coach_chat_stream_failed", { message: String(error) });
-      emit({ type: "error", code: "stream_failed", message: CHAT_FAILURE_FALLBACK, retryable: true });
+      emit({
+        type: "error",
+        code: "stream_failed",
+        message: CHAT_FAILURE_FALLBACK,
+        retryable: true,
+      });
     }).finally(() => channel.close()),
   );
   return channel.response;

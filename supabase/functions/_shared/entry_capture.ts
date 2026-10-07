@@ -162,7 +162,12 @@ export async function publishEntryUpload(
 
 export async function failEntryUpload(
   admin: SupabaseClient,
-  args: { entryId: string; userId: string; uploadToken: string; message: string },
+  args: {
+    entryId: string;
+    userId: string;
+    uploadToken: string;
+    message: string;
+  },
 ): Promise<void> {
   const { error } = await admin.rpc("fail_entry_upload", {
     p_entry_id: args.entryId,
@@ -220,7 +225,9 @@ export async function createTextEntry(
 ): Promise<TextEntryResult> {
   const text = input.text.trim();
   if (!text) throw new HttpError(400, "Describe the meal to log it");
-  if (text.length > 12_000) throw new HttpError(413, "Meal description is too long");
+  if (text.length > 12_000) {
+    throw new HttpError(413, "Meal description is too long");
+  }
   const prepared = await prepareEntry(
     admin,
     userId,
@@ -234,7 +241,11 @@ export async function createTextEntry(
     input.occurredAt ?? null,
   );
   if (prepared.kind === "existing") {
-    return { entryId: prepared.entryId, status: prepared.status, duplicate: true };
+    return {
+      entryId: prepared.entryId,
+      status: prepared.status,
+      duplicate: true,
+    };
   }
   const entryId = prepared.entry.id;
   try {

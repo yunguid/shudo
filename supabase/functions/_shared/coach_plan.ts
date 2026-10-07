@@ -27,9 +27,9 @@ import {
   splitBubbles,
 } from "./coach_copy.ts";
 import {
-  type FallbackSnapshot,
   fallbackReactionCopy,
   fallbackSlotCopy,
+  type FallbackSnapshot,
   type ReactionKind,
 } from "./coach_fallbacks.ts";
 import { addMemoryNote, updateCoachMemory } from "./coach_memory.ts";
@@ -43,8 +43,8 @@ import {
   isBehindPace,
   isQuietMinute,
   parseClock,
-  type PlannedSlot,
   planCoachSlots,
+  type PlannedSlot,
   SLOT_KEYS,
 } from "./coach_policy.ts";
 import {
@@ -197,7 +197,9 @@ export function parsePlanOutput(value: unknown): PlanOutput {
     slots: slots.flatMap((item) => {
       if (!item || typeof item !== "object") return [];
       const slot = item as Record<string, unknown>;
-      if (!SLOT_KEYS.includes(slot.slot_key as typeof SLOT_KEYS[number])) return [];
+      if (!SLOT_KEYS.includes(slot.slot_key as typeof SLOT_KEYS[number])) {
+        return [];
+      }
       return [{
         slot_key: text(slot.slot_key),
         deliver_local: text(slot.deliver_local),
@@ -280,7 +282,13 @@ export async function resolveReaction(
     );
     if (!activity) return null;
     if (
-      await hasAck(admin, context.userId, "workout_ack", "activity_id", activity.id)
+      await hasAck(
+        admin,
+        context.userId,
+        "workout_ack",
+        "activity_id",
+        activity.id,
+      )
     ) return null;
     const details = activity.details ?? {};
     const prs = Array.isArray(details.prs) ? details.prs.slice(0, 5) : [];
@@ -305,7 +313,13 @@ export async function resolveReaction(
   }
   if (request.trigger === "checkin" && context.checkin) {
     if (
-      await hasAck(admin, context.userId, "weigh_in_ack", "local_day", context.localDay)
+      await hasAck(
+        admin,
+        context.userId,
+        "weigh_in_ack",
+        "local_day",
+        context.localDay,
+      )
     ) return null;
     const weight = context.checkin.weight_kg === null
       ? null
@@ -359,7 +373,9 @@ export function planFingerprint(
       activity.status,
       activity.updated_at,
     ]),
-    checkin: context.checkin ? [context.checkin.id, context.checkin.updated_at] : null,
+    checkin: context.checkin
+      ? [context.checkin.id, context.checkin.updated_at]
+      : null,
     memory: context.memory?.version ?? 0,
     digest: context.digests.at(-1)?.local_day ?? null,
     settings: context.settings,
@@ -373,9 +389,12 @@ export function planFingerprint(
 function fallbackSnapshot(context: CoachContext): FallbackSnapshot {
   return {
     name: context.profile.display_name?.trim().split(/\s+/u)[0] ?? null,
-    mealsLogged: context.meals.filter((meal) => meal.status === "complete").length,
+    mealsLogged:
+      context.meals.filter((meal) => meal.status === "complete").length,
     minutesSinceLastLog: context.lastLogAt
-      ? Math.round((context.now.getTime() - context.lastLogAt.getTime()) / 60_000)
+      ? Math.round(
+        (context.now.getTime() - context.lastLogAt.getTime()) / 60_000,
+      )
       : null,
     calories: {
       logged: context.totals.calories_kcal,
@@ -446,13 +465,17 @@ function slotMessage(
 ): CoachMessageInput {
   let deliverAt = slot.deliver_at;
   if (shiftMinutes !== 0) {
-    const shifted = new Date(Date.parse(slot.deliver_at) + shiftMinutes * 60_000);
+    const shifted = new Date(
+      Date.parse(slot.deliver_at) + shiftMinutes * 60_000,
+    );
     if (shifted.getTime() > context.now.getTime() + 2 * 60_000) {
       deliverAt = shifted.toISOString();
     }
   }
   const notify = slot.notify && push !== null;
-  const remaining = slot.day === "tomorrow" ? context.targets : context.remaining;
+  const remaining = slot.day === "tomorrow"
+    ? context.targets
+    : context.remaining;
   const payload: Record<string, unknown> = {
     slot_key: slot.slot_key,
     topic: slot.topic,
@@ -503,7 +526,8 @@ function reactionMessage(
   push: string | null,
   notifyAllowed: boolean,
 ): CoachMessageInput {
-  const notify = notifyAllowed && push !== null && reaction.kind !== "weigh_in_ack";
+  const notify = notifyAllowed && push !== null &&
+    reaction.kind !== "weigh_in_ack";
   return {
     kind: reaction.kind,
     body: bubbles.join("\n\n"),
@@ -564,7 +588,11 @@ function templateCopy(
     const copy = fallbackSlotCopy(slot.topic, snapshot);
     const violation = copy
       ? coachCopyViolation(
-        { skip: false, bubbles: [copy.body], push_body: slot.notify ? copy.push_body : null },
+        {
+          skip: false,
+          bubbles: [copy.body],
+          push_body: slot.notify ? copy.push_body : null,
+        },
         copyPolicy(context, slot.mode, allowedFigures, slot.notify),
       )
       : null;
@@ -611,7 +639,10 @@ export async function writePlanCopy(
   const allowedFigures = allowedFiguresFor(context, reaction?.subject ?? null);
   const usedOpeners: string[] = [];
   const requestSlots = slots.map((slot) => {
-    const shape = pickShape(`${options.seed}:${slot.day}:${slot.slot_key}`, usedOpeners);
+    const shape = pickShape(
+      `${options.seed}:${slot.day}:${slot.slot_key}`,
+      usedOpeners,
+    );
     usedOpeners.push(shape.opener);
     return {
       slot_key: slot.slot_key,
@@ -647,8 +678,9 @@ export async function writePlanCopy(
     COACH_DAY_PLAN_INSTRUCTIONS,
     renderMemoryBlock(context),
   );
-  const userContent =
-    `<context_pack>\n${JSON.stringify(pack)}\n</context_pack>\n\nWrite the batch described in request: the reaction (if requested) and one entry per requested slot, in the same order.`;
+  const userContent = `<context_pack>\n${
+    JSON.stringify(pack)
+  }\n</context_pack>\n\nWrite the batch described in request: the reaction (if requested) and one entry per requested slot, in the same order.`;
 
   let output: PlanOutput;
   let model: string | null = null;
@@ -675,7 +707,13 @@ export async function writePlanCopy(
       refusal: error instanceof ClaudeRefusalError,
       message: String((error as Error)?.message ?? error),
     });
-    return templateCopy(context, slots, reaction, options.reactionNotify, allowedFigures);
+    return templateCopy(
+      context,
+      slots,
+      reaction,
+      options.reactionNotify,
+      allowedFigures,
+    );
   }
 
   const collect = (candidateOutput: PlanOutput) => {
@@ -736,7 +774,8 @@ export async function writePlanCopy(
           content: `${userContent}\n\n<previous_output>\n${
             JSON.stringify(output)
           }\n</previous_output>\n\nThese items broke the copy rules: ${
-            [...failures.entries()].map(([key, reason]) => `${key} (${reason})`).join("; ")
+            [...failures.entries()].map(([key, reason]) => `${key} (${reason})`)
+              .join("; ")
           }. Rewrite only those items so they follow every rule (use only figures from the pack). Return the same JSON shape containing just the rewritten items; reaction null unless it is one of them.`,
         }],
         schema: COACH_PLAN_SCHEMA,
@@ -775,7 +814,10 @@ export async function writePlanCopy(
         ),
       });
     } else {
-      const copy = fallbackReactionCopy(reaction.kind, fallbackSnapshot(context));
+      const copy = fallbackReactionCopy(
+        reaction.kind,
+        fallbackSnapshot(context),
+      );
       messages.push({
         key: "reaction",
         message: {
@@ -808,8 +850,14 @@ export async function writePlanCopy(
         candidate.bubbles,
         candidate.push,
         candidate.dayTheme,
-        written ? shiftedMinutes(slot.deliver_local, written.deliver_local) ?? 0 : 0,
-        { shape: requestSlots.find((item) => item.slot_key === slot.slot_key && item.day === slot.day)?.shape },
+        written
+          ? shiftedMinutes(slot.deliver_local, written.deliver_local) ?? 0
+          : 0,
+        {
+          shape: requestSlots.find((item) =>
+            item.slot_key === slot.slot_key && item.day === slot.day
+          )?.shape,
+        },
       ),
     });
   }
@@ -841,14 +889,22 @@ export async function runCoachPlan(
     { now, timezone: request.timezone ?? null },
   );
   if (!context.settings.enabled) {
-    return { status: "disabled", runId: null, generated: false, messageIds: [] };
+    return {
+      status: "disabled",
+      runId: null,
+      generated: false,
+      messageIds: [],
+    };
   }
   const slots = planCoachSlots({
     now,
     timezone: context.timezone,
     schedule: context.schedule,
     intensity: context.settings.intensity,
-    quietHours: { start: context.settings.quietStart, end: context.settings.quietEnd },
+    quietHours: {
+      start: context.settings.quietStart,
+      end: context.settings.quietEnd,
+    },
     lastLogAt: context.lastLogAt,
     lastProactiveAt: context.lastProactiveAt,
     deliveredToday: context.proactiveDeliveredToday,
@@ -932,7 +988,9 @@ export async function runCoachPlan(
           claimToken: claim.claim_token,
         },
       ).catch((error) => {
-        console.warn("coach_plan_memory_note_failed", { message: String(error) });
+        console.warn("coach_plan_memory_note_failed", {
+          message: String(error),
+        });
       });
     }
 
@@ -983,7 +1041,12 @@ export async function runCoachPlan(
     await failCoachRun(admin, claim.run_id, claim.claim_token, message).catch(
       () => undefined,
     );
-    return { status: "failed", runId: claim.run_id, generated: false, messageIds: [] };
+    return {
+      status: "failed",
+      runId: claim.run_id,
+      generated: false,
+      messageIds: [],
+    };
   }
 }
 

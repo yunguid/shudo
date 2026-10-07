@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js@2.110.7/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2.110.7";
-import { json, requiredEnv } from "../_shared/http.ts";
+import { dispatchCoachJob } from "../_shared/coach_dispatch.ts";
+import { json, requiredEnv, runInBackground } from "../_shared/http.ts";
 import { secretMatches } from "../_shared/secrets.ts";
 import {
   generateClaimedSummary,
@@ -16,8 +17,16 @@ type Profile = {
 
 type Claim = WeeklySummaryClaim;
 
+/// The daily cron also drives the coach: once this run is authenticated,
+/// coach_tick's daily mode is dispatched after the weekly work, whether or
+/// not the summaries succeeded (fire-and-forget, never blocks the response).
+function dispatchDailyCoach(): void {
+  runInBackground(dispatchCoachJob({ mode: "daily" }));
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  let authenticated = false;
   try {
     const expected = requiredEnv("SHUDO_WEEKLY_SECRET");
     if (expected.length < 32) {
@@ -29,6 +38,7 @@ Deno.serve(async (req: Request) => {
     if (!supplied || !await secretMatches(supplied, expected)) {
       return json({ error: "Authentication required" }, 401);
     }
+    authenticated = true;
     const payload = await req.json().catch(() => null) as
       | { limit?: unknown }
       | null;
@@ -96,6 +106,7 @@ Deno.serve(async (req: Request) => {
         generateClaimedSummary(admin, job.profile, job.weekStart, job.claim)
       ),
     );
+    dispatchDailyCoach();
     return json({
       claimed: jobs.length,
       completed: outcomes.filter(Boolean).length,
@@ -106,6 +117,7 @@ Deno.serve(async (req: Request) => {
     console.error("scheduled_weekly_summaries_failed", {
       message: String(error),
     });
+    if (authenticated) dispatchDailyCoach();
     return json({ error: "Could not generate weekly summaries" }, 500);
   }
 });
