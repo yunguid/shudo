@@ -64,13 +64,14 @@ struct CoachViewModelTests {
 
     // MARK: Send
 
-    @Test func sendShowsAnOptimisticBubbleThenTheStreamedReply() async {
+    @Test func sendShowsAnOptimisticBubbleThenTheStreamedReply() async throws {
         let service = FakeCoachService(now: { [now] in now })
         let background = RecordingBackgroundTasks()
         let vm = makeViewModel(service: service, background: background)
 
-        let id = vm.send(text: "  What should I eat?  ", mode: .dictated, speechEngine: "apple.speech_transcriber")
-        let clientRequestId = try? #require(id)
+        let clientRequestId = try #require(
+            vm.send(text: "  What should I eat?  ", mode: .dictated, speechEngine: "apple.speech_transcriber")
+        )
         #expect(vm.pendingSends.map(\.clientRequestId) == [clientRequestId])
         #expect(vm.pendingSends.first?.text == "What should I eat?")
         #expect(vm.pendingSends.first?.state == .sending)
@@ -90,7 +91,7 @@ struct CoachViewModelTests {
         #expect(sent.first?.inputMode == .dictated)
         #expect(sent.first?.speechEngine == "apple.speech_transcriber")
         #expect(sent.first?.localDay == today)
-        #expect(sent.first?.timezone == "UTC")
+        #expect(sent.first?.timezone == utc.identifier)
         #expect(background.begun == 1 && background.ended == 1)
     }
 
@@ -293,6 +294,22 @@ struct CoachViewModelTests {
         #expect(vm.messages.map(\.id) == [old.id])
         await vm.refresh(day: today)
         #expect(vm.messages.count == CoachFixtures.day(today, now: now).count)
+    }
+
+    @Test func aReplyStreamingElsewhereIsPolledUntilItSettles() async {
+        let replyId = UUID()
+        let partial = CoachMessage(
+            id: replyId, role: .coach, kind: "text", body: "Good. Now",
+            rawPayload: .object(["streaming": .bool(true)]), localDay: today, deliverAt: now
+        )
+        let service = FakeCoachService(messages: [partial], now: { [now] in now })
+        let vm = makeViewModel(service: service)
+        await vm.refresh()
+        #expect(vm.message(id: replyId)?.isStreaming == true)
+
+        service.insert(CoachMessage(id: replyId, role: .coach, kind: "text", body: "Good. Now drink water.", localDay: today, deliverAt: now))
+        #expect(await waitUntil { vm.message(id: replyId)?.isStreaming == false })
+        #expect(vm.message(id: replyId)?.body == "Good. Now drink water.")
     }
 
     @Test func mergeKeepsLocalStreamingTextAheadOfTheDatabase() {

@@ -791,6 +791,7 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 var turnMessages: [CoachMessage] = []
+                var seenDeltaIds = Set<UUID>()
                 for step in steps {
                     if Task.isCancelled { break }
                     if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000) }
@@ -801,7 +802,12 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
                         continuation.finish(throwing: error)
                         return
                     case .event(let event):
-                        self.record(event, request: request, turnMessages: &turnMessages)
+                        self.record(
+                            event,
+                            request: request,
+                            turnMessages: &turnMessages,
+                            seenDeltaIds: &seenDeltaIds
+                        )
                         continuation.yield(event)
                     }
                 }
@@ -811,10 +817,13 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
         }
     }
 
+    /// Mirrors what the server persists: whole-text bodies (a tail's first
+    /// delta may restate the text so far), finalized when the run completes.
     private func record(
         _ event: CoachStreamEvent,
         request: CoachSendRequest,
-        turnMessages: inout [CoachMessage]
+        turnMessages: inout [CoachMessage],
+        seenDeltaIds: inout Set<UUID>
     ) {
         lock.withLock {
             switch event {
@@ -834,14 +843,25 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
                     localDay: request.localDay,
                     deliverAt: clock()
                 )
-                message.body += text
+                let firstInThisSend = seenDeltaIds.insert(id).inserted
+                message.body = CoachThreadMerge.resumedBody(
+                    existing: message.body,
+                    delta: text,
+                    mayRestate: firstInThisSend
+                )
                 message.isStreaming = true
                 stored[id] = message
             case .message(let message):
                 stored[message.id] = message
                 turnMessages.removeAll { $0.id == message.id }
                 turnMessages.append(message)
-            case .done:
+            case .done(_, let ids):
+                for id in seenDeltaIds.union(ids) {
+                    guard var message = stored[id] else { continue }
+                    message.isStreaming = false
+                    stored[id] = message
+                    if !turnMessages.contains(where: { $0.id == id }) { turnMessages.append(message) }
+                }
                 completedTurns[request.clientRequestId] = turnMessages
             case .status, .error:
                 break

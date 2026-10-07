@@ -215,8 +215,12 @@ final class CoachViewModel: ObservableObject {
     private var loadGeneration = UUID()
     private var pinnedToToday = true
     private var syncObserver: NSObjectProtocol?
+    private var remoteStreamPoll: Task<Void, Never>?
+    private var remoteStreamPollStartedAt: Date?
+    private var remoteStreamPollCount = 0
 
     static let recentlyStreamedRetention: TimeInterval = 120
+    static let remoteStreamPollLimit: TimeInterval = 120
 
     init(
         service: any CoachServing,
@@ -301,15 +305,22 @@ final class CoachViewModel: ObservableObject {
             guard loadGeneration == generation else { return }
             pruneRecentlyStreamed()
             let local = Array((store[target] ?? [:]).values)
-            let merged = CoachThreadMerge.merge(
+            var merged = CoachThreadMerge.merge(
                 local: local,
                 fetched: fetched,
                 keepingLocal: keptLocalIds()
             )
+            // A reply this device saw break stays "not live" even while the
+            // database still says streaming (until housekeeping marks it).
+            let settled = interruptedMessageIds()
+            for index in merged.indices where settled.contains(merged[index].id) {
+                merged[index].isStreaming = false
+            }
             store[target] = Dictionary(merged.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             reconcilePendingSends(with: fetched)
             errorMessage = nil
             publish()
+            scheduleRemoteStreamPollIfNeeded()
         } catch {
             guard loadGeneration == generation else { return }
             if !(error is CancellationError) {
@@ -492,8 +503,8 @@ final class CoachViewModel: ObservableObject {
             turns[id]?.locationResolved = true
         }
         guard let request = turns[id]?.request else { return .cancelled }
-        if (turns[id]?.attempts ?? 0) > 0 {
-            turns[id]?.resumedMessageIds = turns[id]?.streamedMessageIds ?? []
+        if let previous = turns[id], previous.attempts > 0 {
+            turns[id]?.resumedMessageIds = previous.streamedMessageIds
         }
         turns[id]?.attempts += 1
 
@@ -744,6 +755,50 @@ final class CoachViewModel: ObservableObject {
         }
         let sorted = CoachThreadOrdering.sorted(visible)
         if sorted != messages { messages = sorted }
+    }
+
+    private func interruptedMessageIds() -> Set<UUID> {
+        var ids = Set<UUID>()
+        for id in interruptions.keys {
+            ids.formUnion(turns[id]?.streamedMessageIds ?? [])
+        }
+        return ids
+    }
+
+    /// A reply streaming server-side that this device isn't receiving (a
+    /// lock-screen reply, or a turn sent before a relaunch): reload until it
+    /// settles, the same 650 ms → 3 s backoff as meal polling, ≤ 2 min.
+    private func scheduleRemoteStreamPollIfNeeded() {
+        let local = activeLocalStreamIds()
+        let remoteStreaming = messages.contains { $0.isStreaming && !local.contains($0.id) }
+        guard remoteStreaming else {
+            remoteStreamPoll?.cancel()
+            remoteStreamPoll = nil
+            remoteStreamPollStartedAt = nil
+            remoteStreamPollCount = 0
+            return
+        }
+        guard remoteStreamPoll == nil else { return }
+        let started = remoteStreamPollStartedAt ?? Date()
+        remoteStreamPollStartedAt = started
+        let elapsed = Date().timeIntervalSince(started)
+        guard elapsed < Self.remoteStreamPollLimit else { return }
+        let delay = min(3.0, 0.65 * pow(1.5, Double(remoteStreamPollCount)))
+        remoteStreamPollCount += 1
+        remoteStreamPoll = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.remoteStreamPoll = nil
+            await self.refresh()
+        }
+    }
+
+    private func activeLocalStreamIds() -> Set<UUID> {
+        var ids = Set<UUID>()
+        for turn in turns.values where turn.task != nil {
+            ids.formUnion(turn.streamedMessageIds)
+        }
+        return ids
     }
 
     private func keptLocalIds() -> Set<UUID> {
