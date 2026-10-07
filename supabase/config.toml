@@ -473,6 +473,11 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/log_activity/index.ts"
 
+[functions.transcribe]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/transcribe/index.ts"
+
 [functions.coach_tick]
 enabled = true
 # Dispatched by generate_weekly_summaries (daily) and by coach jobs. Every

@@ -219,6 +219,7 @@ fi
 
 required_secret_names=(
   ANTHROPIC_API_KEY
+  OPENAI_API_KEY
   SHUDO_CLEANUP_SECRET
   SHUDO_WEEKLY_SECRET
 )
@@ -244,6 +245,7 @@ authenticated_functions=(
   coach_chat
   coach_sync
   log_activity
+  transcribe
 )
 
 maintenance_functions=(
@@ -434,7 +436,7 @@ jq -e '
   def authenticated:
     ["create_entry", "correct_entry", "delete_entry", "delete_account",
      "process_entry", "onboard_profile", "reanalyze_entry", "resume_entry",
-     "coach_chat", "coach_sync", "log_activity"];
+     "coach_chat", "coach_sync", "log_activity", "transcribe"];
   def maintenance:
     ["drain_storage_cleanup", "generate_weekly_summaries", "coach_tick"];
   (.functions // .) as $all |

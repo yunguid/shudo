@@ -158,6 +158,7 @@ export function occurredAt(localDay: string, timezone: string): string {
 
 /// On-device speech engines the phone may report for a dictated capture.
 export const SPEECH_ENGINES = new Set([
+  "openai.gpt-4o-transcribe",
   "apple.speech_transcriber",
   "apple.dictation_transcriber",
   "apple.sf_speech_on_device",
