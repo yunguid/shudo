@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct shudoApp: App {
+    @UIApplicationDelegateAdaptor(ShudoAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -37,15 +38,22 @@ struct shudoApp: App {
                 switch newPhase {
                 case .active:
                     CaptureDiagnostics.record(.appBecameActive, state: "active")
-                    Task { await AuthSessionManager.shared.refreshIfNeeded() }
+                    Task {
+                        await AuthSessionManager.shared.refreshIfNeeded()
+                        await CoachSync.shared.handleForeground()
+                    }
                 case .inactive:
                     CaptureDiagnostics.record(.appBecameInactive, state: "inactive")
                 case .background:
                     CaptureDiagnostics.record(.appEnteredBackground, state: "background")
+                    CoachSync.scheduleAppRefresh()
                 @unknown default:
                     break
                 }
             }
+        }
+        .backgroundTask(.appRefresh(CoachSync.backgroundRefreshIdentifier)) {
+            await CoachSync.shared.handleBackgroundRefresh()
         }
     }
 }
