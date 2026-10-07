@@ -909,7 +909,7 @@ struct DayNudgePolicyTests {
             context: context(now: day(at: 9), protein: 0, kcal: 0, meals: 0)
         )
         #expect(nudges.map(\.id) == ["lunch"])
-        #expect(nudges[0].body.contains("No meals were logged"))
+        #expect(nudges[0].body == "Nothing logged yet today. Add what you’ve eaten when you can.")
         #expect(nudges.allSatisfy { $0.fireAt > day(at: 9) })
     }
 
@@ -943,9 +943,10 @@ struct DayNudgePolicyTests {
             )
         )
 
-        #expect(copy.body.contains("smoothed trend is down 2.6 lb toward your goal"))
-        #expect(copy.body.contains("220 kcal below target"))
+        #expect(copy.body.contains("Trend: down 2.6 lb, toward your goal"))
+        #expect(copy.body.contains("Logged intake ran 220 kcal under target."))
         #expect(copy.body.contains("from target"))
+        #expect(copy.body.hasSuffix("Today’s weight?"))
     }
 
     @Test func proteinNudgeUsesLoggedNumbersWithoutInferringNutrientDeficiency() {
@@ -956,9 +957,7 @@ struct DayNudgePolicyTests {
         )
 
         let nutrition = nudges.first { $0.id == "nutrition" }
-        #expect(nutrition?.title == "Protein check-in")
-        #expect(nutrition?.body.contains("20g protein logged; 158g more") == true)
-        #expect(nutrition?.body.contains("unlogged meals first") == true)
+        #expect(nutrition?.body == "As of your last log: 20g protein, 158g to 178g. Anything unlogged?")
     }
 
     @Test func onTrackAfternoonStaysCompletelyQuiet() {
@@ -987,8 +986,7 @@ struct DayNudgePolicyTests {
             )
         )
         #expect(nudges.map(\.id) == ["closeout"])
-        #expect(nudges[0].title == "Evening check-in")
-        #expect(nudges[0].body.contains("600 below your target"))
+        #expect(nudges[0].body.contains("about 600 under target"))
     }
 
     @Test func aMealLoggedJustBeforeLunchSilencesTheLunchNudge() {
@@ -1002,7 +1000,6 @@ struct DayNudgePolicyTests {
             )
         )
         #expect(nudges.map(\.id) == ["closeout"])
-        #expect(nudges[0].title == "Evening check-in")
     }
 
     @Test func overTargetEveningDoesNotInstructTheUserToStopEating() {
@@ -1045,16 +1042,17 @@ struct DayNudgePolicyTests {
         )
 
         #expect(nudges.map(\.id) == ["closeout"])
-        #expect(nudges[0].title == "Evening check-in")
-        #expect(nudges[0].body.contains("Anything still to log?"))
+        #expect(nudges[0].body.hasPrefix("As of your last log:"))
+        #expect(nudges[0].body.hasSuffix("Anything still to log?"))
     }
 
-    @Test func proteinReminderUsesProfileNameAndSnapshotLanguage() {
+    @Test func proteinReminderReadsLikeAShortSnapshotText() {
         var input = context(now: day(at: 14), protein: 43, kcal: 900, meals: 2)
         input.displayName = "Luke"
         let nudges = DayNudgePolicy.plannedNudges(context: input)
         #expect(nudges.count <= 2)
-        #expect(nudges.first?.body.contains("Luke, your last update had 43g protein logged; 135g more") == true)
+        #expect(nudges.first?.body == "As of your last log: 43g protein, 135g to 178g. Anything unlogged?")
+        #expect(nudges.allSatisfy { $0.body.count <= 110 })
     }
 
     @Test func recentDinnerSilencesCloseout() {

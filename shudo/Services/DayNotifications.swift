@@ -2,16 +2,15 @@ import Foundation
 import UserNotifications
 
 /// One planned local notification for today. Identifiers are stable per
-/// checkpoint so a reschedule replaces, never duplicates.
+/// checkpoint so a reschedule replaces, never duplicates. Like the coach's
+/// texts, every nudge is sent by "Shudo"; the body says what it's about.
 struct PlannedNudge: Equatable, Sendable {
     let id: String
     let fireAt: Date
-    let title: String
     let body: String
 }
 
 struct NotificationCopy: Equatable, Sendable {
-    let title: String
     let body: String
 }
 
@@ -32,6 +31,8 @@ struct DayNudgeContext {
     let weightCheckIns: [WeightCheckIn]
     let recentNutrition: [DailyNutritionTotal]
     let targetHistory: [DailyMacroTargetSnapshot]
+    /// Not used in copy (a text from Shudo doesn't open with his name);
+    /// kept so callers stay source-compatible.
     var displayName: String? = nil
 }
 
@@ -39,8 +40,10 @@ struct DayNudgeContext {
 /// interpreting one noisy weigh-in and falls back to a plain reminder until
 /// both weight and meal coverage are useful.
 enum WeightReminderPolicy {
+    static let plainBody = "Weigh-in time. Say the number and you’re done."
+
     static func copy(context: DayNudgeContext) -> NotificationCopy {
-        let fallback = NotificationCopy(title: "Weigh-in", body: "Say your weight and you’re done.")
+        let fallback = NotificationCopy(body: WeightReminderPolicy.plainBody)
         let allWeights = context.weightCheckIns.filter { $0.weightKG != nil }.sorted { $0.localDay < $1.localDay }
         guard let latestDay = allWeights.last?.localDay else { return fallback }
         let cutoffDay = day(latestDay, adding: -27) ?? latestDay
@@ -61,10 +64,7 @@ enum WeightReminderPolicy {
             $0.localDay >= firstDay && $0.localDay <= lastDay && $0.entryCount > 0
         }
         guard matchingNutrition.count >= 5 else {
-            return NotificationCopy(
-                title: "Weigh-in",
-                body: "Keep the weight trend useful—say today’s weight and you’re done."
-            )
+            return NotificationCopy(body: "Weigh-in time. One number keeps the trend honest.")
         }
         let calorieDelta = matchingNutrition.reduce(0.0) { result, day in
             let target = NutritionProgressPolicy.effectiveTarget(
@@ -87,14 +87,14 @@ enum WeightReminderPolicy {
             alignment = "away from your goal"
         }
         let trendText = direction == "steady"
-            ? "Your smoothed trend is steady \(alignment)"
-            : "Your smoothed trend is \(direction) \(weightChange) \(alignment)"
+            ? "Trend: steady, \(alignment)"
+            : "Trend: \(direction) \(weightChange), \(alignment)"
         let intakeText: String
         if abs(calorieDelta) < 50 {
-            intakeText = "logged intake averaged near target"
+            intakeText = "Logged intake ran near target."
         } else {
-            let relation = calorieDelta < 0 ? "below" : "above"
-            intakeText = "logged intake averaged \(roundedKcal(abs(calorieDelta))) kcal \(relation) target"
+            let relation = calorieDelta < 0 ? "under" : "over"
+            intakeText = "Logged intake ran \(roundedKcal(abs(calorieDelta))) kcal \(relation) target."
         }
         let goalText: String
         if let targetWeight = context.targetWeightKG {
@@ -102,10 +102,7 @@ enum WeightReminderPolicy {
         } else {
             goalText = ""
         }
-        return NotificationCopy(
-            title: "Weigh-in",
-            body: "\(trendText)\(goalText); \(intakeText). Add today’s reading."
-        )
+        return NotificationCopy(body: "\(trendText)\(goalText). \(intakeText) Today’s weight?")
     }
 
     private static func daysBetween(_ first: String, _ last: String) -> Int {
@@ -145,8 +142,9 @@ enum WeightReminderPolicy {
 /// Decides which of today's remaining checkpoints deserve a notification and
 /// writes their copy. Pure and deterministic: same context, same plan.
 ///
-/// Copy describes the last logged snapshot, not assumed complete intake.
-/// Silence wins for empty-day nutrition gaps and recently logged meals.
+/// Copy describes the last logged snapshot ("as of your last log"), not
+/// assumed complete intake, and reads like a short text: one fact, one
+/// question. Silence wins for empty-day nutrition gaps and recent meals.
 enum DayNudgePolicy {
     static let lunchCheckpointMinutes = 12 * 60 + 45
     static let proteinCheckpointMinutes = 15 * 60 + 30
@@ -171,8 +169,7 @@ enum DayNudgePolicy {
                 nudges.append(PlannedNudge(
                     id: "lunch",
                     fireAt: lunchAt,
-                    title: "Meal check-in",
-                    body: "No meals were logged at your last update. Add anything you’ve eaten when convenient."
+                    body: "Nothing logged yet today. Add what you’ve eaten when you can."
                 ))
             } else if let lastMealAt = context.lastMealAt,
                 lunchAt.timeIntervalSince(lastMealAt) > 3 * 60 * 60
@@ -180,8 +177,7 @@ enum DayNudgePolicy {
                 nudges.append(PlannedNudge(
                     id: "lunch",
                     fireAt: lunchAt,
-                    title: "Keep the trend accurate",
-                    body: "Lunch logged while it’s fresh makes the weight-and-intake trend more useful."
+                    body: "Log lunch while it’s fresh."
                 ))
             }
         }
@@ -212,13 +208,10 @@ enum DayNudgePolicy {
         let logged = max(0, Int(context.totals.proteinG.rounded()))
         let target = max(0, Int(context.target.proteinG.rounded()))
         let gap = max(0, target - logged)
-        let name = context.displayName?.split(whereSeparator: { $0.isWhitespace }).first.map(String.init)
-        let greeting = name.map { "\($0), " } ?? ""
         return PlannedNudge(
             id: "nutrition",
             fireAt: fireAt,
-            title: "Protein check-in",
-            body: "\(greeting)your last update had \(logged)g protein logged; \(gap)g more would reach your \(target)g target. Add any unlogged meals first."
+            body: "As of your last log: \(logged)g protein, \(gap)g to \(target)g. Anything unlogged?"
         )
     }
 
@@ -236,8 +229,7 @@ enum DayNudgePolicy {
             return PlannedNudge(
                 id: "closeout",
                 fireAt: fireAt,
-                title: "Evening check-in",
-                body: "Your last update had \(roundedKcal(context.totals.caloriesKcal)) kcal logged, about \(roundedKcal(remaining)) below your target. Anything still to log?"
+                body: "As of your last log: \(roundedKcal(context.totals.caloriesKcal).formatted()) kcal, about \(roundedKcal(remaining).formatted()) under target. Anything still to log?"
             )
         }
         return nil
@@ -288,7 +280,7 @@ enum DayNotificationScheduler {
             await removeAllOwnedNotifications(center)
             return
         }
-        let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+        let granted = await CoachNotificationAuthorization.request()
         guard granted else {
             throw NSError(
                 domain: "DayNotifications",
@@ -302,7 +294,7 @@ enum DayNotificationScheduler {
         await scheduleWeighInReminder(
             center,
             secondsFromMidnight: weighInSecondsFromMidnight,
-            copy: NotificationCopy(title: "Weigh-in", body: "Say your weight and you’re done.")
+            copy: NotificationCopy(body: WeightReminderPolicy.plainBody)
         )
     }
 
@@ -337,10 +329,7 @@ enum DayNotificationScheduler {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = context.timezone
         for nudge in DayNudgePolicy.plannedNudges(context: context) {
-            let content = UNMutableNotificationContent()
-            content.title = nudge.title
-            content.body = nudge.body
-            content.sound = .default
+            let content = textContent(body: nudge.body)
             var components = calendar.dateComponents(
                 [.year, .month, .day, .hour, .minute],
                 from: nudge.fireAt
@@ -365,10 +354,7 @@ enum DayNotificationScheduler {
         components.hour = bounded / 3_600
         components.minute = (bounded % 3_600) / 60
 
-        let content = UNMutableNotificationContent()
-        content.title = copy.title
-        content.body = copy.body
-        content.sound = .default
+        let content = textContent(body: copy.body)
 
         let request = UNNotificationRequest(
             identifier: weighInIdentifier,
@@ -377,6 +363,17 @@ enum DayNotificationScheduler {
         )
         center.removePendingNotificationRequests(withIdentifiers: legacyIdentifiers)
         try? await center.add(request)
+    }
+
+    /// The coach texts' look: from "Shudo", in Shudo's thread, soft chime.
+    static func textContent(body: String) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = CoachNotificationIdentifiers.title
+        content.body = body
+        content.threadIdentifier = CoachNotificationIdentifiers.threadIdentifier
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(CoachNotificationIdentifiers.soundName))
+        content.interruptionLevel = .active
+        return content
     }
 
     private static func removePendingNudges(_ center: UNUserNotificationCenter) async {

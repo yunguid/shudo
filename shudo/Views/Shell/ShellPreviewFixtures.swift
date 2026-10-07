@@ -390,7 +390,11 @@ enum ShellPreviewFixtures {
         entryDetail: SupabaseService.EntryDetail,
         composerSeedImages: [UIImage]
     ) -> ShellDependencies {
-        let coach = coachService(cards: variant == .todayCards)
+        // `-shudoNotificationDemo` shares one fake server between this
+        // thread and the real notification scheduler, so a tapped banner
+        // lands on its message.
+        let demo = CoachNotificationDemo.isEnabled
+        let coach = demo ? CoachNotificationDemo.service : coachService(cards: variant == .todayCards)
         let train = trainService()
         let body = bodyService()
         return ShellDependencies(
@@ -401,7 +405,9 @@ enum ShellPreviewFixtures {
                     service: coach,
                     localDay: today,
                     timeZone: { TimeZone(identifier: timezone) ?? .autoupdatingCurrent },
-                    now: { ShellPreviewFixtures.now() }
+                    now: { ShellPreviewFixtures.now() },
+                    notifier: demo ? LiveCoachThreadNotifier.shared : nil,
+                    observesSyncNotifications: demo
                 )
             },
             coachService: coach,
