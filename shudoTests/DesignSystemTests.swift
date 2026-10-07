@@ -3,45 +3,43 @@ import UIKit
 @testable import shudo
 
 struct DesignSystemTests {
-    @Test func callToActionGradientMeetsWCAGAAForWhiteText() throws {
-        for theme in AppTheme.allCases {
-            for color in [theme.palette.ctaPrimary, theme.palette.ctaSecondary] {
-                let ratio = try contrastRatio(
-                    foreground: .white,
-                    background: UIColor(color)
-                )
-                #expect(ratio >= 4.5, "\(theme.title) CTA contrast was \(ratio)")
-            }
+    @Test func emberFillsCarryDarkInkAboveWCAGAA() throws {
+        for fill in [Design.Color.ember, Design.Color.bubbleMeTop, Design.Color.bubbleMeBottom] {
+            let ratio = try contrastRatio(
+                foreground: UIColor(Design.Color.onEmber),
+                background: UIColor(fill)
+            )
+            #expect(ratio >= 4.5, "onEmber contrast was \(ratio)")
         }
     }
 
-    @Test func secondaryCopyMeetsWCAGAAOnAppSurfaces() throws {
-        for theme in AppTheme.allCases {
-            let foreground = UIColor(theme.palette.muted)
-            for background in [theme.palette.paper, theme.palette.elevated] {
+    @Test func readableTextTonesMeetWCAGAAOnEverySurface() throws {
+        for foreground in [Design.Color.textPrimary, Design.Color.textSecondary, Design.Color.textTertiary] {
+            for background in [Design.Color.canvas, Design.Color.surface1, Design.Color.surface2] {
                 let ratio = try contrastRatio(
-                    foreground: foreground,
+                    foreground: UIColor(foreground),
                     background: UIColor(background)
                 )
-                #expect(ratio >= 4.5, "\(theme.title) secondary contrast was \(ratio)")
+                #expect(ratio >= 4.5, "text contrast was \(ratio)")
             }
         }
     }
 
-    @Test func themeSelectionHasAStableGrooveboxDefault() {
-        #expect(AppTheme.defaultTheme == .groovebox)
-        #expect(Set(AppTheme.allCases.map(\.rawValue)).count == AppTheme.allCases.count)
+    @Test func legacyTokenNamesResolveToTheNewPalette() {
+        #expect(UIColor(Design.Color.ink) == UIColor(Design.Color.textPrimary))
+        #expect(UIColor(Design.Color.muted) == UIColor(Design.Color.textSecondary))
+        #expect(UIColor(Design.Color.accentPrimary) == UIColor(Design.Color.ember))
+        #expect(UIColor(Design.Color.ringProtein) == UIColor(Design.Color.macroProtein))
     }
 
     @Test func radiusVocabularyIsStableAndMonotonic() {
-        #expect(Design.Radius.s == 8)
-        #expect(Design.Radius.m == 12)
-        #expect(Design.Radius.l == 16)
-        #expect(Design.Radius.panel == 18)
-        #expect(Design.Radius.xl == 20)
+        #expect(Design.Radius.tail < Design.Radius.chip)
+        #expect(Design.Radius.chip < Design.Radius.control)
+        #expect(Design.Radius.control < Design.Radius.bubble)
+        #expect(Design.Radius.bubble < Design.Radius.card)
+        #expect(Design.Radius.card < Design.Radius.cardLarge)
+        #expect(Design.Radius.cardLarge < Design.Radius.sheet)
         #expect(Design.Radius.card == 22)
-        #expect(Design.Radius.hero == 24)
-        #expect(Design.Radius.sheet == 28)
     }
 
     private func contrastRatio(

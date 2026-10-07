@@ -7,11 +7,15 @@ private final class OAuthPresentationContext: NSObject,
     ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows.first(where: \.isKeyWindow)
-            ?? scenes.first?.windows.first
-            ?? ASPresentationAnchor()
+        let activeScene = scenes.first(where: { $0.activationState == .foregroundActive })
+        if let window = activeScene?.windows.first(where: \.isKeyWindow) ?? scenes.first?.windows.first {
+            return window
+        }
+        // A scene always exists while auth UI is on screen.
+        guard let scene = activeScene ?? scenes.first else {
+            preconditionFailure("OAuth presented without a connected window scene")
+        }
+        return ASPresentationAnchor(windowScene: scene)
     }
 }
 

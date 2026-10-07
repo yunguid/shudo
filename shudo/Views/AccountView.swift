@@ -41,7 +41,6 @@ struct AccountView: View {
     @State private var isLoadingProfilePhoto = false
     @State private var isSavingProfilePhoto = false
     @State private var isShowingRemovePhotoConfirmation = false
-    @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
     @AppStorage(DayNotificationScheduler.enabledDefaultsKey) private var notificationsEnabled = false
     @AppStorage(DayNotificationScheduler.weighInSecondsDefaultsKey) private var weighInSeconds =
         DayNotificationScheduler.defaultWeighInSecondsFromMidnight
@@ -93,7 +92,6 @@ struct AccountView: View {
         ScrollView {
             VStack(spacing: 24) {
                 profileHeader
-                themeSelector
                 profileDetails
                 weightReminderSettings
                 targetEditor
@@ -339,68 +337,6 @@ struct AccountView: View {
         .overlay(Circle().stroke(Design.Color.rule, lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(profile.avatarPath == nil ? "No profile photo" : "Profile photo")
-    }
-
-    private var themeSelector: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("APPEARANCE")
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 96), spacing: 10)],
-                alignment: .leading,
-                spacing: 10
-            ) {
-                ForEach(AppTheme.allCases) { theme in
-                    let isSelected = selectedTheme == theme.rawValue
-                    Button {
-                        selectedTheme = theme.rawValue
-                        UISelectionFeedbackGenerator().selectionChanged()
-                    } label: {
-                        VStack(alignment: .leading, spacing: 11) {
-                            LinearGradient(
-                                colors: [
-                                    theme.palette.accentPrimary,
-                                    theme.palette.accentSecondary,
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                            .frame(height: 5)
-                            .clipShape(Capsule())
-
-                            HStack(spacing: 6) {
-                                Text(theme.title)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(theme.palette.ink)
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                                if isSelected {
-                                    Image(systemName: "checkmark")
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(theme.palette.accentPrimary)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(
-                            theme.palette.elevated,
-                            in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
-                        )
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
-                                .stroke(
-                                    isSelected ? theme.palette.accentPrimary : Design.Color.rule,
-                                    lineWidth: 1
-                                )
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(theme.title) theme")
-                    .accessibilityValue(isSelected ? "Selected" : theme.accessibilityDescription)
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
-                }
-            }
-        }
     }
 
     private var profileDetails: some View {

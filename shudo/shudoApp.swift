@@ -10,7 +10,6 @@ import SwiftUI
 @main
 struct shudoApp: App {
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
 
     init() {
         CaptureDiagnostics.beginSession()

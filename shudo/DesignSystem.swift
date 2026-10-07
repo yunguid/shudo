@@ -1,154 +1,179 @@
 import SwiftUI
 
-enum AppTheme: String, CaseIterable, Identifiable {
-    case groovebox
-    case moss
-    case dusk
+// MARK: - Shudo 2.0 design system: "Chalk · Iron · Ember"
+//
+// The palette is sampled from the app icon (amber → honey → cream pads on
+// warm black) so the inside of the app matches the outside. Dark only.
 
-    static let storageKey = "shudo.appearance.theme"
-    static let defaultTheme: AppTheme = .groovebox
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .groovebox: "Studio"
-        case .moss: "Carbon"
-        case .dusk: "Oxide"
-        }
-    }
-
-    var accessibilityDescription: String {
-        switch self {
-        case .groovebox: "Warm neutral on charcoal"
-        case .moss: "Cool silver on near black"
-        case .dusk: "Muted copper on warm black"
-        }
-    }
-
-    /// Palettes are built once per process. `Design.Color` resolves one of
-    /// these on every color access during every body evaluation, so this must
-    /// not allocate 13 fresh Colors each time (recording UI re-renders at
-    /// ~16Hz and touches dozens of colors per pass).
-    var palette: Design.Palette {
-        switch self {
-        case .groovebox: Self.grooveboxPalette
-        case .moss: Self.mossPalette
-        case .dusk: Self.duskPalette
-        }
-    }
-
-    private static let grooveboxPalette = Design.Palette(
-                paper: Color(red: 0.035, green: 0.037, blue: 0.040),
-                elevated: Color(red: 0.082, green: 0.084, blue: 0.089),
-                ink: Color(red: 0.935, green: 0.925, blue: 0.895),
-                muted: Color(red: 0.610, green: 0.600, blue: 0.570),
-                subtle: Color(red: 0.340, green: 0.340, blue: 0.330),
-                accentPrimary: Color(red: 0.790, green: 0.735, blue: 0.610),
-                accentSecondary: Color(red: 0.670, green: 0.625, blue: 0.535),
-                ctaPrimary: Color(red: 0.315, green: 0.295, blue: 0.250),
-                ctaSecondary: Color(red: 0.225, green: 0.215, blue: 0.190),
-                success: Color(red: 0.380, green: 0.690, blue: 0.505),
-                ringProtein: Color(red: 0.515, green: 0.650, blue: 0.705),
-                ringCarb: Color(red: 0.500, green: 0.665, blue: 0.555),
-                ringFat: Color(red: 0.735, green: 0.625, blue: 0.445)
-            )
-
-    private static let mossPalette = Design.Palette(
-                paper: Color(red: 0.025, green: 0.027, blue: 0.030),
-                elevated: Color(red: 0.072, green: 0.077, blue: 0.081),
-                ink: Color(red: 0.915, green: 0.925, blue: 0.920),
-                muted: Color(red: 0.565, green: 0.590, blue: 0.585),
-                subtle: Color(red: 0.315, green: 0.335, blue: 0.335),
-                accentPrimary: Color(red: 0.735, green: 0.765, blue: 0.760),
-                accentSecondary: Color(red: 0.555, green: 0.605, blue: 0.610),
-                ctaPrimary: Color(red: 0.235, green: 0.265, blue: 0.270),
-                ctaSecondary: Color(red: 0.175, green: 0.195, blue: 0.200),
-                success: Color(red: 0.385, green: 0.680, blue: 0.535),
-                ringProtein: Color(red: 0.500, green: 0.625, blue: 0.690),
-                ringCarb: Color(red: 0.475, green: 0.650, blue: 0.555),
-                ringFat: Color(red: 0.710, green: 0.620, blue: 0.465)
-            )
-
-    private static let duskPalette = Design.Palette(
-                paper: Color(red: 0.045, green: 0.037, blue: 0.033),
-                elevated: Color(red: 0.100, green: 0.082, blue: 0.073),
-                ink: Color(red: 0.930, green: 0.900, blue: 0.855),
-                muted: Color(red: 0.625, green: 0.575, blue: 0.535),
-                subtle: Color(red: 0.355, green: 0.305, blue: 0.280),
-                accentPrimary: Color(red: 0.710, green: 0.500, blue: 0.360),
-                accentSecondary: Color(red: 0.635, green: 0.545, blue: 0.455),
-                ctaPrimary: Color(red: 0.335, green: 0.220, blue: 0.160),
-                ctaSecondary: Color(red: 0.245, green: 0.165, blue: 0.125),
-                success: Color(red: 0.415, green: 0.675, blue: 0.500),
-                ringProtein: Color(red: 0.505, green: 0.625, blue: 0.670),
-                ringCarb: Color(red: 0.505, green: 0.650, blue: 0.535),
-                ringFat: Color(red: 0.735, green: 0.565, blue: 0.390)
-            )
-
-    static var selected: AppTheme {
-        guard let stored = UserDefaults.standard.string(forKey: storageKey),
-              let theme = AppTheme(rawValue: stored) else { return defaultTheme }
-        return theme
+extension Color {
+    init(hex: UInt32, alpha: Double = 1) {
+        self.init(
+            .sRGB,
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255,
+            opacity: alpha
+        )
     }
 }
 
-// MARK: - Design System
-
 enum Design {
-    struct Palette {
-        let paper: SwiftUI.Color
-        let elevated: SwiftUI.Color
-        let ink: SwiftUI.Color
-        let muted: SwiftUI.Color
-        let subtle: SwiftUI.Color
-        let accentPrimary: SwiftUI.Color
-        let accentSecondary: SwiftUI.Color
-        let ctaPrimary: SwiftUI.Color
-        let ctaSecondary: SwiftUI.Color
-        let success: SwiftUI.Color
-        let ringProtein: SwiftUI.Color
-        let ringCarb: SwiftUI.Color
-        let ringFat: SwiftUI.Color
+    enum Color {
+        // Iron: surfaces, warm-neutral blacks (icon background is #181512).
+        static let canvas = SwiftUI.Color(hex: 0x0C0B0A)
+        static let surface1 = SwiftUI.Color(hex: 0x161412)
+        static let surface2 = SwiftUI.Color(hex: 0x201D1A)
+        static let surface3 = SwiftUI.Color(hex: 0x2B2723)
+        static let hairline = SwiftUI.Color(hex: 0xF3ECE0, alpha: 0.10)
+        static let strokeStrong = SwiftUI.Color(hex: 0xF3ECE0, alpha: 0.18)
+
+        // Chalk: text.
+        static let textPrimary = SwiftUI.Color(hex: 0xF3ECE0)
+        static let textSecondary = SwiftUI.Color(hex: 0xADA597)
+        /// ≥4.7:1 on every surface — the faintest tone allowed for readable text.
+        static let textTertiary = SwiftUI.Color(hex: 0x908878)
+        static let textDisabled = SwiftUI.Color(hex: 0x4B463F)
+
+        // Ember: brand. Icon pads: #DE9D43 / #FAD597 / #F9E4CA.
+        static let ember = SwiftUI.Color(hex: 0xEFA04A)
+        static let emberDeep = SwiftUI.Color(hex: 0xC9782A)
+        static let honey = SwiftUI.Color(hex: 0xF7D39A)
+        static let cream = SwiftUI.Color(hex: 0xFAE7CE)
+        /// Ink on ember fills (8.7:1).
+        static let onEmber = SwiftUI.Color(hex: 0x1B1108)
+
+        // Macros: calories + protein are the hero pair, carbs/fat secondary.
+        static let macroKcal = cream
+        static let macroProtein = ember
+        static let macroCarbs = SwiftUI.Color(hex: 0x86B8D8)
+        static let macroFat = SwiftUI.Color(hex: 0xB7C77F)
+
+        // Signals. Gaining toward a bulk goal is progress (ember), never a warning.
+        static let positive = SwiftUI.Color(hex: 0x7FD1A8)
+        static let warning = honey
+        static let danger = SwiftUI.Color(hex: 0xF2665A)
+
+        // Thread.
+        static let bubbleCoach = surface2
+        static let bubbleMeTop = SwiftUI.Color(hex: 0xF3AE5E)
+        static let bubbleMeBottom = SwiftUI.Color(hex: 0xE38F38)
+        static var bubbleMe: LinearGradient {
+            LinearGradient(colors: [bubbleMeTop, bubbleMeBottom], startPoint: .top, endPoint: .bottom)
+        }
+        static var emberFill: LinearGradient {
+            LinearGradient(colors: [honey, ember, emberDeep], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+
+        // Heatmap ramp: the icon's pads, dark to bright.
+        static let heatmapRamp: [SwiftUI.Color] = [
+            surface3, SwiftUI.Color(hex: 0x6B4520), emberDeep, SwiftUI.Color(hex: 0xDE9D43), honey,
+        ]
+
+        // MARK: Legacy names (1.x views). New code uses the tokens above.
+        static var paper: SwiftUI.Color { canvas }
+        static var elevated: SwiftUI.Color { surface1 }
+        static var glassFill: SwiftUI.Color { surface1 }
+        static var ink: SwiftUI.Color { textPrimary }
+        static var muted: SwiftUI.Color { textSecondary }
+        static var subtle: SwiftUI.Color { textTertiary }
+        static var rule: SwiftUI.Color { hairline }
+        static var heatmapEmpty: SwiftUI.Color { surface3 }
+        static var heatmapBorder: SwiftUI.Color { strokeStrong }
+        static var accentPrimary: SwiftUI.Color { ember }
+        static var accentSecondary: SwiftUI.Color { honey }
+        static var ctaPrimary: SwiftUI.Color { ember }
+        static var ctaSecondary: SwiftUI.Color { emberDeep }
+        static var success: SwiftUI.Color { positive }
+        static var ringProtein: SwiftUI.Color { macroProtein }
+        static var ringCarb: SwiftUI.Color { macroCarbs }
+        static var ringFat: SwiftUI.Color { macroFat }
     }
 
-    enum Color {
-        private static var palette: Palette { AppTheme.selected.palette }
+    enum Typeface {
+        /// Every number in the app: SF Pro Rounded; add `.monospacedDigit()` at the call site.
+        static func numeral(_ style: SwiftUI.Font.TextStyle, weight: SwiftUI.Font.Weight = .semibold) -> SwiftUI.Font {
+            .system(style, design: .rounded, weight: weight)
+        }
+        /// Plate-stamp labels (GAME PLAN, NEARBY, KCAL LEFT). Use `eyebrowStyle()`.
+        static let eyebrow = SwiftUI.Font.system(.caption2, weight: .heavy).width(.expanded)
+        static let stamp = SwiftUI.Font.system(.subheadline, weight: .heavy).width(.expanded)
+        static let screenTitle = SwiftUI.Font.system(.title2, weight: .heavy).width(.expanded)
+        static let bubble = SwiftUI.Font.body
+        static let cardTitle = SwiftUI.Font.headline
+        static let meta = SwiftUI.Font.caption2.weight(.medium)
+    }
 
-        static var paper: SwiftUI.Color { palette.paper }
-        static var elevated: SwiftUI.Color { palette.elevated }
-        static var ink: SwiftUI.Color { palette.ink }
-        static var muted: SwiftUI.Color { palette.muted }
-        static var subtle: SwiftUI.Color { palette.subtle }
-        static var rule: SwiftUI.Color { palette.ink.opacity(0.14) }
-        static var glassFill: SwiftUI.Color { palette.elevated.opacity(0.94) }
-        static var heatmapEmpty: SwiftUI.Color { palette.ink.opacity(0.105) }
-        static var heatmapBorder: SwiftUI.Color { palette.ink.opacity(0.20) }
-        static var accentPrimary: SwiftUI.Color { palette.accentPrimary }
-        static var accentSecondary: SwiftUI.Color { palette.accentSecondary }
-        static var ctaPrimary: SwiftUI.Color { palette.ctaPrimary }
-        static var ctaSecondary: SwiftUI.Color { palette.ctaSecondary }
-        static var success: SwiftUI.Color { palette.success }
-        static var ringProtein: SwiftUI.Color { palette.ringProtein }
-        static var ringCarb: SwiftUI.Color { palette.ringCarb }
-        static var ringFat: SwiftUI.Color { palette.ringFat }
-        static let danger = SwiftUI.Color(red: 0.976, green: 0.318, blue: 0.380)
-        static let warning = SwiftUI.Color(red: 0.957, green: 0.757, blue: 0.263)
+    enum Space {
+        static let xxs: CGFloat = 2
+        static let xs: CGFloat = 4
+        static let s: CGFloat = 8
+        static let m: CGFloat = 12
+        static let l: CGFloat = 16
+        static let gutter: CGFloat = 20
+        static let xl: CGFloat = 24
+        static let xxl: CGFloat = 32
     }
 
     enum Radius {
+        static let tail: CGFloat = 6
+        static let chip: CGFloat = 10
+        static let control: CGFloat = 16
+        static let bubble: CGFloat = 20
+        /// Thread cards and content cards.
+        static let card: CGFloat = 22
+        /// Large hero cards (day header, body hero).
+        static let cardLarge: CGFloat = 26
+        static let sheet: CGFloat = 28
+
+        // Legacy names (1.x views).
         static let s: CGFloat = 8
         static let m: CGFloat = 12
         static let l: CGFloat = 16
         static let panel: CGFloat = 18
         static let xl: CGFloat = 20
-        static let card: CGFloat = 22
         static let hero: CGFloat = 24
-        static let sheet: CGFloat = 28
     }
 
     enum Stroke {
         static let hairline: CGFloat = 0.5
+    }
+
+    enum Motion {
+        static let snap = Animation.snappy(duration: 0.25)
+        static let settle = Animation.smooth(duration: 0.4)
+        static let arrive = Animation.bouncy(duration: 0.45, extraBounce: 0.08)
+        static let ring = Animation.spring(response: 0.9, dampingFraction: 0.8)
+        static func gated(_ animation: Animation, reduceMotion: Bool) -> Animation? {
+            reduceMotion ? nil : animation
+        }
+    }
+}
+
+// MARK: - Materials
+
+extension View {
+    /// Liquid Glass for floating chrome only (headers, capture bar, pills).
+    /// Content cards stay opaque (`cardSurface`).
+    func chromeGlass<S: Shape>(in shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape)
+    }
+
+    func cardSurface(radius: CGFloat = Design.Radius.card) -> some View {
+        background(
+            Design.Color.surface1,
+            in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(Design.Color.hairline, lineWidth: Design.Stroke.hairline)
+        )
+    }
+
+    func eyebrowStyle(_ color: Color = Design.Color.textTertiary) -> some View {
+        font(Design.Typeface.eyebrow)
+            .tracking(1.1)
+            .textCase(.uppercase)
+            .foregroundStyle(color)
     }
 }
 
@@ -157,7 +182,7 @@ enum Design {
 struct HairlineRule: View {
     var body: some View {
         Rectangle()
-            .fill(Design.Color.rule)
+            .fill(Design.Color.hairline)
             .frame(height: Design.Stroke.hairline)
     }
 }
@@ -206,16 +231,30 @@ struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(Design.Color.onEmber)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             .background(
-                LinearGradient(
-                    colors: [Design.Color.ctaPrimary, Design.Color.ctaSecondary],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ),
-                in: RoundedRectangle(cornerRadius: Design.Radius.m, style: .continuous)
+                Design.Color.emberFill,
+                in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
+            )
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+    }
+}
+
+struct SecondaryButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Design.Color.textPrimary)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(
+                Design.Color.surface3,
+                in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
             )
             .opacity(configuration.isPressed ? 0.82 : 1)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)

@@ -10,7 +10,7 @@ public distribution. It does not authorize changes to Luke's Apple account.
 
 - Product: `Shudo` / bundle identifier `luke.shudo`
 - Version: `1.0` / build `2`
-- Platform: iPhone, portrait, iOS 18.5 or later
+- Platform: iPhone, portrait, iOS 26 or later
 - Signing mode: automatic, with Luke's Personal Team selected and a dedicated
   local `ShudoSigning` keychain ahead of the stale login-keychain identity
 - Deep links: `shudo://capture` and the `shudo://auth/callback` OAuth callback

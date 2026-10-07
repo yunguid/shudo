@@ -288,13 +288,14 @@ struct EntryCard: View {
 
     private var completedCalorieText: some View {
         HStack(spacing: 5) {
-            Text("\(Int(entry.caloriesKcal.rounded()))")
+            let calories = Text("\(Int(entry.caloriesKcal.rounded()))")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Design.Color.ink)
                 .monospacedDigit()
-            + Text(" kcal")
+            let unit = Text(" kcal")
                 .font(.caption2)
                 .foregroundStyle(Design.Color.muted)
+            Text("\(calories)\(unit)")
 
             if wasCheckedOnline {
                 Image(systemName: "globe")

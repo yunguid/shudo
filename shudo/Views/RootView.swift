@@ -2,7 +2,6 @@ import SwiftUI
 
 struct RootView: View {
     @ObservedObject private var session = AuthSessionManager.shared
-    @AppStorage(AppTheme.storageKey) private var selectedTheme = AppTheme.defaultTheme.rawValue
     @State private var profile: Profile?
     @State private var refreshGeneration = UUID()
     @State private var profileError: String?
