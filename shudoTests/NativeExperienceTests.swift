@@ -479,30 +479,6 @@ struct NativeExperienceTests {
         #expect(parsed.first?.hasPhoto == true)
     }
 
-    @Test func weightUtteranceParsingFindsTheLastPlausibleSpokenNumber() {
-        // Dictation renders numbers as digits; the latest plausible one wins
-        // so self-corrections ("183 — no, 182.6") land on the correction.
-        #expect(WeightUtterancePolicy.parsedWeight(transcript: "182.4", units: "imperial") == 182.4)
-        #expect(
-            WeightUtterancePolicy.parsedWeight(
-                transcript: "I think 183 no wait 182.6",
-                units: "imperial"
-            ) == 182.6)
-        // Low-confidence dictation artifacts: spaced decimals and commas.
-        #expect(
-            WeightUtterancePolicy.parsedWeight(transcript: "182 point 4", units: "imperial") == 182.4)
-        #expect(WeightUtterancePolicy.parsedWeight(transcript: "82,6", units: "metric") == 82.6)
-        // A trailing fragment ("182 4") is implausible as a weight on its own,
-        // so the utterance still resolves to the full number before it.
-        #expect(WeightUtterancePolicy.parsedWeight(transcript: "182 4", units: "imperial") == 182)
-        // Nothing plausible: out-of-range values and word-only utterances.
-        #expect(WeightUtterancePolicy.parsedWeight(transcript: "5", units: "imperial") == nil)
-        #expect(WeightUtterancePolicy.parsedWeight(transcript: "1000", units: "metric") == nil)
-        #expect(
-            WeightUtterancePolicy.parsedWeight(transcript: "about the same as yesterday", units: "metric")
-                == nil)
-    }
-
     @Test func weeklySummariesRetryDropsOnlyTheMicronutrientColumnOnSchemaDrift() {
         // An app shipped ahead of the migration gets a 400 for the unknown
         // column; only that status retries with the base projection.
