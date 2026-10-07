@@ -32,7 +32,11 @@ struct BodyCheckInFlow: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var voice = WeightVoiceCapture()
+    /// On-device dictation for the spoken weight. Held unobserved so the
+    /// ~16 Hz meter ticks never re-render the photo and form; the flow
+    /// mirrors only the phase it needs.
+    @StateObject private var voiceHolder: UnobservedHolder<VoiceTranscriber>
+    @State private var voicePhase: VoiceTranscriber.Phase = .idle
     @State private var step: Step
     @State private var capture: PhysiqueCapture?
     @State private var ghost: UIImage?
@@ -70,6 +74,7 @@ struct BodyCheckInFlow: View {
         self.ghostPath = ghostPath ?? existing?.progressPhotoPath
         self.updatesProfileWeight = updatesProfileWeight
         self.onSaved = onSaved
+        _voiceHolder = StateObject(wrappedValue: UnobservedHolder(Self.makeVoice(units: units)))
         _step = State(initialValue: start == .weight ? .weight : .camera)
         let pose = existing?.photoPose ?? .frontRelaxed
         _pose = State(initialValue: pose == .front ? .frontRelaxed : pose)
@@ -86,6 +91,30 @@ struct BodyCheckInFlow: View {
             _capture = State(initialValue: PhysiqueCapture(image: image, capturedAt: Date(), fromLibrary: false))
         }
     #endif
+
+    /// A weigh-in transcriber that ends the take by itself once a plausible
+    /// weight has been heard and held (`VoiceProfile.weighIn`'s stable
+    /// interval), so "one eighty two point four" needs no Stop tap.
+    @MainActor
+    static func makeVoice(units: String, environment: VoiceEnvironment? = nil) -> VoiceTranscriber {
+        let voice = VoiceTranscriber(profile: .weighIn, environment: environment)
+        voice.autoStopCondition = autoStopCondition(units: units)
+        return voice
+    }
+
+    static func autoStopCondition(units: String) -> (LiveTranscript) -> Bool {
+        { WeightUtterancePolicy.parsedWeight(transcript: $0.displayText, units: units) != nil }
+    }
+
+    private var voice: VoiceTranscriber { voiceHolder.value }
+
+    /// Starting, listening, or finishing a take — the Stop affordances show.
+    private var isCapturing: Bool {
+        switch voicePhase {
+        case .starting, .listening, .finishing: return true
+        default: return false
+        }
+    }
 
     private var unitLabel: String { BodyUnits.label(units) }
 
@@ -122,14 +151,25 @@ struct BodyCheckInFlow: View {
         }
         .preferredColorScheme(.dark)
         .task { await loadGhost() }
-        .onChange(of: voice.transcript) { _, transcript in
-            guard voice.isCapturing,
-                let value = WeightUtterancePolicy.parsedWeight(transcript: transcript, units: units)
-            else { return }
-            weightText = String(format: "%.1f", value)
+        .onReceive(voice.$phase) { phase in
+            if voicePhase != phase { voicePhase = phase }
         }
-        .onChange(of: weightFocused) { _, focused in if focused { voice.stop() } }
-        .onDisappear { voice.stop() }
+        .onReceive(voice.$transcript) { transcript in
+            // The parsed weight shows live while Luke speaks.
+            guard voice.isListening || voice.isFinishing else { return }
+            applySpokenWeight(transcript.displayText)
+        }
+        .onChange(of: voicePhase) { _, phase in
+            // A take that ended by itself (auto-stop once the weight held,
+            // an interruption) is parked; its final text wins.
+            if phase == .ready, let take = voice.collectReadyTake() {
+                applySpokenWeight(take.text)
+            }
+        }
+        // Typing takes over: drop the take so a late final pass can't
+        // overwrite the keypad. The live-parsed value stays in the field.
+        .onChange(of: weightFocused) { _, focused in if focused { voice.cancel() } }
+        .onDisappear { voice.cancel() }
         .sensoryFeedback(.success, trigger: savedCount)
         .interactiveDismissDisabled(isSaving)
     }
@@ -165,7 +205,7 @@ struct BodyCheckInFlow: View {
                 if step == .review {
                     ToolbarItem(placement: .primaryAction) {
                         Button("Retake") {
-                            voice.stop()
+                            voice.cancel()
                             step = .camera
                         }
                         .disabled(isSaving)
@@ -189,7 +229,7 @@ struct BodyCheckInFlow: View {
                 SFSpeechRecognizer.authorizationStatus() == .authorized,
                 AVAudioApplication.shared.recordPermission == .granted
             else { return }
-            await voice.start()
+            await startListening()
         }
     }
 
@@ -234,7 +274,7 @@ struct BodyCheckInFlow: View {
             HStack {
                 Text(step == .weight ? "Weight" : "Weight · optional").eyebrowStyle()
                 Spacer()
-                if voice.isCapturing {
+                if isCapturing {
                     HStack(spacing: 6) {
                         Circle().fill(Design.Color.danger).frame(width: 7, height: 7)
                         Text(weightKG == nil ? "Listening — say your weight" : "Heard it")
@@ -242,6 +282,11 @@ struct BodyCheckInFlow: View {
                             .foregroundStyle(Design.Color.textSecondary)
                     }
                     .transition(.opacity)
+                } else if case .preparingModel(let progress) = voicePhase {
+                    Text(VoiceCopy.preparing(progress: progress))
+                        .font(Design.Typeface.meta)
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .transition(.opacity)
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -262,9 +307,9 @@ struct BodyCheckInFlow: View {
                     .foregroundStyle(Design.Color.textSecondary)
                 Spacer()
                 Button {
-                    if voice.isCapturing { voice.stop() } else { Task { await voice.start() } }
+                    if isCapturing { stopListening() } else { Task { await startListening() } }
                 } label: {
-                    Image(systemName: voice.isCapturing ? "stop.fill" : "mic.fill")
+                    Image(systemName: isCapturing ? "stop.fill" : "mic.fill")
                         .font(.body.weight(.bold))
                         .foregroundStyle(Design.Color.onEmber)
                         .contentTransition(.symbolEffect(.replace))
@@ -273,13 +318,22 @@ struct BodyCheckInFlow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isSaving)
-                .accessibilityLabel(voice.isCapturing ? "Stop listening" : "Say your weight")
+                .accessibilityLabel(isCapturing ? "Stop listening" : "Say your weight")
             }
             .padding(16)
             .cardSurface()
             .contentShape(Rectangle())
             .onTapGesture { weightFocused = true }
-            if step == .weight {
+            if let voiceMessage = voice.errorMessage, !isCapturing {
+                Text(voiceMessage)
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if voice.notice == .didNotCatchThat, weightText.isEmpty {
+                Text(VoiceCopy.didNotCatchThat)
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.textSecondary)
+            } else if step == .weight {
                 Text(existing?.hasPhoto == true
                      ? "Say it or type it. This morning’s photo stays as is."
                      : "Say it or type it.")
@@ -326,22 +380,22 @@ struct BodyCheckInFlow: View {
 
     private var saveBar: some View {
         Button {
-            if voice.isCapturing { voice.stop() } else { save() }
+            if isCapturing { stopListening() } else { save() }
         } label: {
             HStack(spacing: 8) {
                 if isSaving {
                     ProgressView().tint(Design.Color.onEmber)
                 } else {
-                    Image(systemName: voice.isCapturing ? "stop.fill" : "checkmark")
+                    Image(systemName: isCapturing ? "stop.fill" : "checkmark")
                 }
-                Text(voice.isCapturing ? "Stop" : isSaving ? "Saving…" : step == .weight ? "Save weight" : "Save check-in")
+                Text(isCapturing ? "Stop" : isSaving ? "Saving…" : step == .weight ? "Save weight" : "Save check-in")
             }
             .font(.headline)
             .foregroundStyle(Design.Color.onEmber)
             .frame(maxWidth: .infinity)
             .frame(height: 54)
             .background {
-                if canSave || voice.isCapturing {
+                if canSave || isCapturing {
                     Capsule().fill(Design.Color.emberFill)
                 } else {
                     Capsule().fill(Design.Color.textDisabled)
@@ -349,7 +403,7 @@ struct BodyCheckInFlow: View {
             }
         }
         .buttonStyle(.plain)
-        .disabled(!voice.isCapturing && !canSave)
+        .disabled(!isCapturing && !canSave)
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
         .background(Design.Color.canvas.opacity(0.92))
@@ -392,8 +446,28 @@ struct BodyCheckInFlow: View {
         }
     }
 
+    private func startListening() async {
+        weightFocused = false
+        await voice.start()
+    }
+
+    /// Ends the take and keeps the final pass's weight (the recognizer's
+    /// last word beats the live guess).
+    private func stopListening() {
+        Task {
+            if let take = await voice.stop() { applySpokenWeight(take.text) }
+        }
+    }
+
+    private func applySpokenWeight(_ text: String) {
+        guard let value = WeightUtterancePolicy.parsedWeight(transcript: text, units: units) else { return }
+        let formatted = String(format: "%.1f", value)
+        if weightText != formatted { weightText = formatted }
+    }
+
     private func save() {
-        voice.stop()
+        if let take = voice.collectReadyTake() { applySpokenWeight(take.text) }
+        voice.cancel()
         weightFocused = false
         noteFocused = false
         isSaving = true
