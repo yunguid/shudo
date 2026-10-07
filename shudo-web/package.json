@@ -18,7 +18,7 @@
     "@supabase/ssr": "0.12.3",
     "@supabase/supabase-js": "2.110.7",
     "lucide-react": "1.25.0",
-    "next": "16.3.5",
+    "next": "16.4.0",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
@@ -28,8 +28,9 @@
     "@types/react-dom": "19.2.3",
     "autoprefixer": "10.5.4",
     "brace-expansion": "file:vendor/brace-expansion-compat",
+    "braces": "file:vendor/braces-compat",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.5",
+    "eslint-config-next": "16.4.0",
     "postcss": "8.5.28",
     "tailwindcss": "3.4.19",
     "tsx": "4.23.1",
@@ -37,7 +38,9 @@
   },
   "overrides": {
     "brace-expansion": "$brace-expansion",
+    "braces": "$braces",
     "postcss": "8.5.28",
-    "sharp": "0.35.4"
+    "postcss-selector-parser": "7.1.6",
+    "sharp": "0.35.5"
   }
 }
