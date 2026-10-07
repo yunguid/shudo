@@ -1,0 +1,15 @@
+{
+  "name": "braces",
+  "version": "3.0.3-shudo.1",
+  "private": true,
+  "description": "Hardened fork of braces 3.0.3 with nesting and expansion limits",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "engines": {
+    "node": ">=8"
+  },
+  "dependencies": {
+    "fill-range": "^7.1.1"
+  }
+}

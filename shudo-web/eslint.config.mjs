@@ -13,6 +13,14 @@ export default defineConfig([
       '@next/next/no-img-element': 'off',
     },
   },
+  {
+    // The hardened braces fork stays CommonJS, like upstream, because
+    // micromatch, fast-glob and chokidar require() it.
+    files: ['vendor/braces-compat/**/*.js'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
   globalIgnores([
     '.next/**',
     '.vercel/**',
