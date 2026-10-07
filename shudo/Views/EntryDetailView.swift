@@ -16,11 +16,15 @@ enum EntryDetailLayoutPolicy {
     }
 }
 
+/// One meal: the photo, what it was, one hero number, the macros, what's in
+/// it, and the two things Luke does here — update it or log it again.
+/// Estimation machinery (confidence, sources, research notes) stays behind
+/// the scenes; the coach explains it in conversation when asked.
 struct EntryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 40
+    @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 56
     let entryId: UUID
     /// Receives a locally accepted correction. The owner (the Today screen)
     /// runs the update and shows its progress on the meal card; this screen
@@ -33,20 +37,19 @@ struct EntryDetailView: View {
     private let loadsRemotely: Bool
     /// What the timeline already knows about this meal (title, macros,
     /// photo). Rendered immediately so navigation never blocks on the
-    /// network; the full fetch fills in the breakdown, notes, and sources.
+    /// network; the full fetch fills in the breakdown.
     private let seed: Entry?
     @State private var detail: SupabaseService.EntryDetail?
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var expandedItemIndices: Set<Int> = []
     @State private var correctionRequest: CorrectionRequest?
     @State private var pendingLogAgainText: String?
 
-    /// One presentation of the correction sheet; "Answer" prefills the note
-    /// with the estimator's question.
+    /// One presentation of the correction sheet; "Answer" carries the
+    /// estimator's question.
     private struct CorrectionRequest: Identifiable {
         let id = UUID()
-        var initialNote = ""
+        var question: String?
     }
 
     init(
@@ -83,64 +86,22 @@ struct EntryDetailView: View {
             GeometryReader { viewport in
                 ScrollView {
                     if let detail {
-                        let research = EntryResearchPresentation.breakdown(
-                            notes: detail.analysisNotes
-                        )
-                        VStack(alignment: .leading, spacing: 26) {
+                        VStack(alignment: .leading, spacing: 28) {
                             photoGallery(detail.imageURLs)
-                            titleHeader(detail.title, createdAt: detail.createdAt)
-                            macroSummary(detail, research: research)
-
+                            summary(
+                                title: detail.title,
+                                createdAt: detail.createdAt,
+                                calories: detail.caloriesKcal,
+                                protein: detail.proteinG,
+                                carbs: detail.carbsG,
+                                fat: detail.fatG
+                            )
                             if let question = ClarificationPolicy.question(in: detail.analysisNotes) {
                                 clarificationRow(question)
                             }
-
                             mealActions(logAgainText: LogAgainPolicy.text(for: detail))
-
                             if !detail.items.isEmpty {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    sectionTitle("Breakdown")
-                                    ForEach(Array(detail.items.enumerated()), id: \.offset) { index, item in
-                                        itemRow(item, index: index)
-                                        if index < detail.items.count - 1 {
-                                            Rectangle()
-                                                .fill(Design.Color.rule)
-                                                .frame(height: 0.5)
-                                        }
-                                    }
-                                }
-                            }
-
-                            if let notes = research.displayNotes {
-                                DetailTextSection(
-                                    title: "Analysis notes",
-                                    systemImage: "doc.text.magnifyingglass",
-                                    text: notes,
-                                    rendersInlineMarkdown: research.rendersInlineMarkdown
-                                )
-                            }
-
-                            if let transcript = nonempty(detail.transcript) {
-                                DetailTextSection(
-                                    title: "Transcript",
-                                    systemImage: "text.quote",
-                                    text: transcript,
-                                    collapsedByDefault: true
-                                )
-                            } else if let rawText = nonempty(detail.rawText) {
-                                DetailTextSection(
-                                    title: "Description",
-                                    systemImage: "text.bubble",
-                                    text: rawText,
-                                    collapsedByDefault: true
-                                )
-                            }
-
-                            if case .verified(let sources) = research.provenance {
-                                let hosts = EntryResearchPresentation.displaySources(sources)
-                                if !hosts.isEmpty {
-                                    sourcesSection(hosts)
-                                }
+                                breakdown(detail.items)
                             }
                         }
                         // A vertical ScrollView otherwise adopts a wide child's ideal width.
@@ -154,10 +115,16 @@ struct EntryDetailView: View {
                     } else if let seed {
                         // The timeline's card data renders in the first frame;
                         // only the breakdown below it waits for the fetch.
-                        VStack(alignment: .leading, spacing: 26) {
+                        VStack(alignment: .leading, spacing: 28) {
                             photo(seed.imageURL)
-                            titleHeader(seed.summary, createdAt: seed.createdAt)
-                            seedMacroSummary(seed)
+                            summary(
+                                title: seed.summary,
+                                createdAt: seed.createdAt,
+                                calories: seed.caloriesKcal,
+                                protein: seed.proteinG,
+                                carbs: seed.carbsG,
+                                fat: seed.fatG
+                            )
                             if let question = ClarificationPolicy.question(in: seed.analysisNotes) {
                                 clarificationRow(question)
                             }
@@ -183,7 +150,6 @@ struct EntryDetailView: View {
                 .refreshable { await load() }
             }
         }
-        .navigationTitle("Meal")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { Perf.mark("detail.appear") }
         .task {
@@ -193,7 +159,7 @@ struct EntryDetailView: View {
         .sheet(item: $correctionRequest) { request in
             EntryCorrectionSheet(
                 entryTitle: detail?.title ?? seed?.summary ?? "this meal",
-                initialNote: request.initialNote,
+                question: request.question,
                 onSubmit: onCorrectionSubmit,
                 onAccepted: returnToSelectedDay
             )
@@ -211,32 +177,99 @@ struct EntryDetailView: View {
         ) { text in
             Button("Log again") { logAgain(text) }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("Shudo adds it to today and estimates it from the original description.")
         }
     }
 
-    /// The estimator's one follow-up question, lifted out of the notes.
-    /// "Answer" opens the normal correction sheet (VM-owned submission)
-    /// with "Q: … A: " already in the note.
-    private func clarificationRow(_ question: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "questionmark.bubble.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Design.Color.ember)
-                Text("Shudo needs one detail")
-                    .eyebrowStyle(Design.Color.ember)
+    // MARK: Summary
+
+    /// Title and time, then one hero number and the three macros under it.
+    private func summary(
+        title: String,
+        createdAt: Date,
+        calories: Double,
+        protein: Double,
+        carbs: Double,
+        fat: Double
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(createdAt, style: .time)
+                    .font(.subheadline)
+                    .foregroundStyle(Design.Color.textTertiary)
             }
-            .accessibilityElement(children: .combine)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(Int(calories.rounded()))")
+                    .font(.system(size: calorieFontSize, weight: .bold, design: .rounded))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text("kcal")
+                    .font(.title3)
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(Int(calories.rounded())) kilocalories")
+
+            macroRow(protein: protein, carbs: carbs, fat: fat)
+        }
+    }
+
+    @ViewBuilder
+    private func macroRow(protein: Double, carbs: Double, fat: Double) -> some View {
+        if EntryDetailLayoutPolicy.stacksMacroCards(for: dynamicTypeSize) {
+            VStack(alignment: .leading, spacing: 10) {
+                macroValue("Protein", protein, Design.Color.ringProtein)
+                macroValue("Carbs", carbs, Design.Color.ringCarb)
+                macroValue("Fat", fat, Design.Color.ringFat)
+            }
+        } else {
+            HStack(spacing: 0) {
+                macroValue("Protein", protein, Design.Color.ringProtein)
+                macroValue("Carbs", carbs, Design.Color.ringCarb)
+                macroValue("Fat", fat, Design.Color.ringFat)
+            }
+        }
+    }
+
+    private func macroValue(_ label: String, _ value: Double, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(Int(value.rounded()))g")
+                .font(Design.Typeface.numeral(.title3))
+                .foregroundStyle(Design.Color.textPrimary)
+                .monospacedDigit()
+                .lineLimit(1)
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                Text(label)
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label), \(Int(value.rounded())) grams")
+    }
+
+    // MARK: Question and actions
+
+    /// The estimator's one follow-up question, lifted out of its notes.
+    /// "Answer" opens Update meal (VM-owned submission) with the question
+    /// on screen; the reply goes out as "Q: … A: …".
+    private func clarificationRow(_ question: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             Text(question)
-                .font(.body.weight(.semibold))
+                .font(.body)
                 .foregroundStyle(Design.Color.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
-                correctionRequest = CorrectionRequest(
-                    initialNote: ClarificationPolicy.answerPrefill(for: question)
-                )
+                correctionRequest = CorrectionRequest(question: question)
             } label: {
                 Text("Answer")
                     .font(.subheadline.weight(.semibold))
@@ -247,18 +280,14 @@ struct EntryDetailView: View {
                     .contentShape(Capsule().inset(by: -4))
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Opens Update meal with this question filled in")
+            .accessibilityHint("Opens Update meal with this question")
             .accessibilityIdentifier("entryDetail.clarification.answer")
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Design.Color.ember.opacity(0.10),
-            in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
-                .stroke(Design.Color.ember.opacity(0.45), lineWidth: 1)
+            Design.Color.bubbleCoach,
+            in: RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous)
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("entryDetail.clarification")
@@ -285,18 +314,30 @@ struct EntryDetailView: View {
         }
     }
 
+    private var correctionAction: some View {
+        Button { correctionRequest = CorrectionRequest() } label: {
+            Text("Update meal")
+                .font(.headline)
+                .foregroundStyle(Design.Color.onEmber)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 50)
+                .background(Design.Color.emberFill, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Say or type what changed, or add a photo")
+    }
+
     private func logAgainButton(_ text: String, fillsWidth: Bool) -> some View {
         Button { pendingLogAgainText = text } label: {
             Label("Log again", systemImage: "arrow.counterclockwise")
-                .font(.subheadline.weight(.semibold))
+                .font(.headline)
                 .foregroundStyle(Design.Color.textPrimary)
                 .lineLimit(1)
                 .fixedSize(horizontal: !fillsWidth, vertical: false)
                 .frame(maxWidth: fillsWidth ? .infinity : nil)
                 .padding(.horizontal, 18)
-                .frame(height: 50)
+                .frame(minHeight: 50)
                 .background(Design.Color.surface2, in: Capsule())
-                .overlay(Capsule().stroke(Design.Color.strokeStrong, lineWidth: Design.Stroke.hairline))
         }
         .buttonStyle(.plain)
         .accessibilityHint("Logs this meal again for today")
@@ -312,77 +353,82 @@ struct EntryDetailView: View {
         returnToSelectedDay()
     }
 
-    private func titleHeader(_ title: String, createdAt: Date) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.title2.weight(.bold))
-                .foregroundStyle(Design.Color.ink)
-            Text(createdAt, style: .time)
-                .font(.caption)
-                .foregroundStyle(Design.Color.muted)
-        }
-    }
+    // MARK: Breakdown
 
-    /// Macro summary rendered from the timeline card's values while the
-    /// authoritative detail row loads. Confidence and research provenance
-    /// are omitted — they aren't known until the fetch lands.
-    private func seedMacroSummary(_ seed: Entry) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            calorieSummary(seed.caloriesKcal)
-            if EntryDetailLayoutPolicy.stacksMacroCards(for: dynamicTypeSize) {
-                VStack(spacing: 10) {
-                    macroValue("Protein", seed.proteinG, Design.Color.ringProtein)
-                    macroValue("Carbs", seed.carbsG, Design.Color.ringCarb)
-                    macroValue("Fat", seed.fatG, Design.Color.ringFat)
-                }
-            } else {
-                HStack(spacing: 10) {
-                    macroValue("Protein", seed.proteinG, Design.Color.ringProtein)
-                    macroValue("Carbs", seed.carbsG, Design.Color.ringCarb)
-                    macroValue("Fat", seed.fatG, Design.Color.ringFat)
-                }
+    /// What's in it: one quiet row per item, no header — the rows say it.
+    private func breakdown(_ items: [SupabaseService.EntryDetailItem]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                if index > 0 { HairlineRule() }
+                itemRow(item)
             }
         }
     }
 
+    private func itemRow(_ item: SupabaseService.EntryDetailItem) -> some View {
+        let amount = item.amount.trimmingCharacters(in: .whitespacesAndNewlines)
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(itemDetail(amount: amount, item: item))
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.textTertiary)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("\(Int(item.caloriesKcal.rounded()))")
+                .font(Design.Typeface.numeral(.body, weight: .medium))
+                .foregroundStyle(Design.Color.textSecondary)
+                .monospacedDigit()
+        }
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(item.name)\(amount.isEmpty ? "" : ", \(amount)"), \(Int(item.caloriesKcal.rounded())) kilocalories, "
+                + "protein \(Int(item.proteinG.rounded())) grams, carbs \(Int(item.carbsG.rounded())) grams, "
+                + "fat \(Int(item.fatG.rounded())) grams"
+        )
+    }
+
+    private func itemDetail(amount: String, item: SupabaseService.EntryDetailItem) -> String {
+        let macros = "\(Int(item.proteinG.rounded()))P · \(Int(item.carbsG.rounded()))C · \(Int(item.fatG.rounded()))F"
+        return amount.isEmpty ? macros : "\(amount) · \(macros)"
+    }
+
     private var breakdownSkeleton: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Capsule().fill(Design.Color.elevated).frame(width: 120, height: 14)
+        VStack(alignment: .leading, spacing: 18) {
             ForEach(0..<3, id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 8) {
-                    Capsule().fill(Design.Color.elevated).frame(width: 190, height: 11)
-                    Capsule().fill(Design.Color.elevated).frame(width: 240, height: 9)
+                    Capsule().fill(Design.Color.surface1).frame(width: 190, height: 12)
+                    Capsule().fill(Design.Color.surface1).frame(width: 130, height: 9)
                 }
             }
         }
         .shimmering()
-        .accessibilityLabel("Loading meal details")
+        .accessibilityLabel("Loading what’s in it")
     }
 
     /// Shown under the seed content when the detail fetch failed: the meal's
-    /// numbers are already on screen, so the failure is a quiet inline row
-    /// instead of a full-screen error.
+    /// numbers are already on screen, so the failure is one quiet line.
     private var inlineLoadFailure: some View {
         HStack(spacing: 10) {
-            Image(systemName: "wifi.exclamationmark")
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.muted)
-            Text(errorMessage ?? "The full breakdown couldn’t be loaded.")
+            Text("Couldn’t load what’s in it.")
                 .font(.footnote)
-                .foregroundStyle(Design.Color.muted)
+                .foregroundStyle(Design.Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Button("Try again") { Task { await load() } }
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(Design.Color.accentSecondary)
+                .foregroundStyle(Design.Color.honey)
                 .buttonStyle(.plain)
         }
-        .padding(14)
-        .background(
-            Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
-        )
     }
+
+    // MARK: Photos
 
     @ViewBuilder
     private func photo(_ url: URL?) -> some View {
@@ -411,7 +457,7 @@ struct EntryDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .background(Design.Color.elevated)
+            .background(Design.Color.surface1)
             .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
         }
     }
@@ -447,7 +493,7 @@ struct EntryDetailView: View {
             .tabViewStyle(.page(indexDisplayMode: .always))
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: urls)
             .frame(height: 320)
-            .background(Design.Color.elevated)
+            .background(Design.Color.surface1)
             .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
             .accessibilityHint("Swipe left or right to browse meal photos")
         }
@@ -455,317 +501,21 @@ struct EntryDetailView: View {
 
     private func photoPlaceholder(systemImage: String?) -> some View {
         Rectangle()
-            .fill(Design.Color.elevated)
+            .fill(Design.Color.surface1)
             .overlay {
                 if let systemImage {
-                    Image(systemName: systemImage).foregroundStyle(Design.Color.muted)
+                    Image(systemName: systemImage).foregroundStyle(Design.Color.textTertiary)
                 }
             }
     }
 
-    private func macroSummary(
-        _ detail: SupabaseService.EntryDetail,
-        research: EntryResearchPresentation.NotesBreakdown
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline) {
-                    calorieSummary(detail.caloriesKcal)
-                    Spacer(minLength: 12)
-                    confidenceLabel(detail)
-                }
-                VStack(alignment: .leading, spacing: 5) {
-                    calorieSummary(detail.caloriesKcal)
-                    confidenceLabel(detail)
-                }
-            }
-
-            if EntryDetailLayoutPolicy.stacksMacroCards(for: dynamicTypeSize) {
-                VStack(spacing: 10) {
-                    macroValue("Protein", detail.proteinG, Design.Color.ringProtein)
-                    macroValue("Carbs", detail.carbsG, Design.Color.ringCarb)
-                    macroValue("Fat", detail.fatG, Design.Color.ringFat)
-                }
-            } else {
-                HStack(spacing: 10) {
-                    macroValue("Protein", detail.proteinG, Design.Color.ringProtein)
-                    macroValue("Carbs", detail.carbsG, Design.Color.ringCarb)
-                    macroValue("Fat", detail.fatG, Design.Color.ringFat)
-                }
-            }
-
-            researchProvenance(research.provenance)
-        }
-    }
-
-    /// Where the meal's numbers came from, in one quiet line: verified
-    /// against online sources, or explicitly an estimate when lookup found
-    /// nothing or was unavailable. Ordinary meals show nothing here. The
-    /// tappable citations themselves live at the bottom of the screen —
-    /// provenance is glanceable, sources are reference material.
-    @ViewBuilder
-    private func researchProvenance(
-        _ provenance: EntryResearchPresentation.Provenance
-    ) -> some View {
-        switch provenance {
-        case .none:
-            EmptyView()
-        case .verified(let sources):
-            let hosts = EntryResearchPresentation.displaySources(sources)
-            Label {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text("Checked online")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.ink)
-                    if !hosts.isEmpty {
-                        Text("· \(hosts.count) source\(hosts.count == 1 ? "" : "s")")
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.muted)
-                    }
-                }
-            } icon: {
-                Image(systemName: "checkmark.seal")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Design.Color.accentSecondary)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(
-                hosts.isEmpty
-                    ? "Nutrition checked against online sources"
-                    : "Nutrition checked against \(hosts.count) online source\(hosts.count == 1 ? "" : "s"), listed at the end of this screen"
-            )
-        case .unverified:
-            estimateNotice("Estimate — no authoritative source found online")
-        case .unavailable:
-            estimateNotice("Estimate — online lookup was unavailable")
-        }
-    }
-
-    /// The citation shelf at the very bottom: host chips flowing across the
-    /// full width, wrapping like text instead of stacking into a column.
-    private func sourcesSection(
-        _ sources: [EntryResearchPresentation.Source]
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Label("Sources", systemImage: "globe")
-                .font(.headline)
-                .foregroundStyle(Design.Color.ink)
-
-            ChipFlowLayout(spacing: 8) {
-                ForEach(sources) { source in
-                    Link(destination: source.url) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "globe")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Design.Color.accentSecondary)
-                            Text(source.host)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Design.Color.ink)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(Design.Color.glassFill, in: Capsule())
-                        .overlay(
-                            Capsule()
-                                .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                        )
-                        // ~44pt tap target beyond the visual chip.
-                        .contentShape(Capsule().inset(by: -7))
-                    }
-                    .accessibilityLabel("Source: \(source.host)")
-                    .accessibilityHint("Opens in your browser")
-                }
-            }
-        }
-    }
-
-    private func estimateNotice(_ message: String) -> some View {
-        Label {
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(Design.Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: "info.circle")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Design.Color.muted)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func calorieSummary(_ caloriesKcal: Double) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("\(Int(caloriesKcal.rounded()))")
-                .font(.system(size: calorieFontSize, weight: .bold))
-                .foregroundStyle(Design.Color.ink)
-                .monospacedDigit()
-            Text("kcal")
-                .font(.subheadline)
-                .foregroundStyle(Design.Color.muted)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(Int(caloriesKcal.rounded())) kilocalories")
-    }
-
-    @ViewBuilder
-    private func confidenceLabel(_ detail: SupabaseService.EntryDetail) -> some View {
-        if let confidence = detail.confidence, confidence > 0 {
-            Text("\(Int((confidence * 100).rounded()))% confidence")
-                .font(.caption)
-                .foregroundStyle(Design.Color.muted)
-                .monospacedDigit()
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel(
-                    "Nutrition estimate confidence, \(Int((confidence * 100).rounded())) percent"
-                )
-        }
-    }
-
-    private func macroValue(_ label: String, _ value: Double, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("\(Int(value.rounded()))g")
-                .font(.headline)
-                .foregroundStyle(Design.Color.ink)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            HStack(spacing: 5) {
-                Circle().fill(color).frame(width: 6, height: 6)
-                Text(label)
-                    .font(.caption)
-                    .foregroundStyle(Design.Color.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-        }
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label), \(Int(value.rounded())) grams")
-    }
-
-    private func itemRow(_ item: SupabaseService.EntryDetailItem, index: Int) -> some View {
-        let offersExpansion = EntryDetailPresentation.offersItemExpansion(
-            name: item.name,
-            amount: item.amount
-        )
-        let isExpanded = expandedItemIndices.contains(index)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.name)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Design.Color.ink)
-                        .lineLimit(isExpanded ? nil : 2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !item.amount.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(item.amount)
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.muted)
-                            .lineLimit(isExpanded ? nil : 1)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                if offersExpansion {
-                    Button {
-                        withAnimation(.snappy(duration: 0.22)) {
-                            if isExpanded {
-                                expandedItemIndices.remove(index)
-                            } else {
-                                expandedItemIndices.insert(index)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Design.Color.muted)
-                            .frame(width: 32, height: 32)
-                            // 44pt tap target without growing the 32pt row footprint.
-                            .contentShape(Rectangle().inset(by: -6))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(isExpanded ? "Collapse item details" : "Expand item details")
-                }
-            }
-
-            ViewThatFits(in: .horizontal) {
-                itemMacroLine(item)
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 14) {
-                        compactMacro("P", item.proteinG, Design.Color.ringProtein)
-                        compactMacro("C", item.carbsG, Design.Color.ringCarb)
-                        compactMacro("F", item.fatG, Design.Color.ringFat)
-                    }
-                    calorieLabel(item.caloriesKcal)
-                }
-            }
-        }
-        .padding(.vertical, 11)
-    }
-
-    private func itemMacroLine(_ item: SupabaseService.EntryDetailItem) -> some View {
-        HStack(spacing: 14) {
-            compactMacro("P", item.proteinG, Design.Color.ringProtein)
-            compactMacro("C", item.carbsG, Design.Color.ringCarb)
-            compactMacro("F", item.fatG, Design.Color.ringFat)
-            Spacer(minLength: 4)
-            calorieLabel(item.caloriesKcal)
-        }
-    }
-
-    private func calorieLabel(_ calories: Double) -> some View {
-        Text("\(Int(calories.rounded())) kcal")
-            .font(.caption.weight(.medium))
-            .foregroundStyle(Design.Color.muted)
-            .monospacedDigit()
-    }
-
-    private func compactMacro(_ label: String, _ value: Double, _ color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 5, height: 5)
-            Text("\(label) \(Int(value.rounded()))g")
-                .font(.caption2)
-                .foregroundStyle(Design.Color.muted)
-                .monospacedDigit()
-        }
-    }
-
-    private func sectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.headline)
-            .foregroundStyle(Design.Color.ink)
-    }
-
-    private var correctionAction: some View {
-        Button { correctionRequest = CorrectionRequest() } label: {
-            Text("Update meal")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .background(
-                    LinearGradient(
-                        colors: [Design.Color.ctaPrimary, Design.Color.ctaSecondary],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    in: Capsule()
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Add a photo, voice recording, or note to update this meal")
-    }
+    // MARK: Loading
 
     private var loadingView: some View {
-        VStack(spacing: 18) {
-            RoundedRectangle(cornerRadius: Design.Radius.hero).fill(Design.Color.elevated).frame(height: 260)
-            Capsule().fill(Design.Color.elevated).frame(width: 190, height: 16)
-            RoundedRectangle(cornerRadius: Design.Radius.xl).fill(Design.Color.elevated).frame(height: 120)
+        VStack(alignment: .leading, spacing: 18) {
+            RoundedRectangle(cornerRadius: Design.Radius.hero).fill(Design.Color.surface1).frame(height: 260)
+            Capsule().fill(Design.Color.surface1).frame(width: 190, height: 16)
+            Capsule().fill(Design.Color.surface1).frame(width: 120, height: 40)
         }
         .padding(20)
         .shimmering()
@@ -773,15 +523,13 @@ struct EntryDetailView: View {
 
     private var errorView: some View {
         VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.circle")
-                .font(.title)
-                .foregroundStyle(Design.Color.danger)
             Text(errorMessage ?? "This meal couldn’t be loaded.")
                 .font(.subheadline)
-                .foregroundStyle(Design.Color.muted)
+                .foregroundStyle(Design.Color.textSecondary)
                 .multilineTextAlignment(.center)
             Button("Try again") { Task { await load() } }
-                .foregroundStyle(Design.Color.accentPrimary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Design.Color.honey)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 80)
@@ -806,221 +554,19 @@ struct EntryDetailView: View {
             dismiss()
         }
     }
-
-    private func nonempty(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
 }
 
-/// Lays out chips like words in a paragraph: left to right, wrapping to a
-/// new row when the width runs out, so a handful of citations fills the
-/// horizontal space instead of stacking into a one-per-line column.
-private struct ChipFlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    private func rows(
-        for subviews: Subviews,
-        in width: CGFloat
-    ) -> [[(index: Int, size: CGSize)]] {
-        var rows: [[(index: Int, size: CGSize)]] = [[]]
-        var x: CGFloat = 0
-        for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
-            if !rows[rows.count - 1].isEmpty, x + spacing + size.width > width {
-                rows.append([])
-                x = 0
-            }
-            if !rows[rows.count - 1].isEmpty { x += spacing }
-            rows[rows.count - 1].append((index, size))
-            x += size.width
-        }
-        return rows
-    }
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        var width: CGFloat = 0
-        var height: CGFloat = 0
-        for (rowIndex, row) in rows(for: subviews, in: maxWidth).enumerated() {
-            let rowWidth = row.reduce(0) { $0 + $1.size.width }
-                + spacing * CGFloat(max(0, row.count - 1))
-            width = max(width, rowWidth)
-            height += (row.map(\.size.height).max() ?? 0)
-                + (rowIndex > 0 ? spacing : 0)
-        }
-        return CGSize(
-            width: maxWidth.isFinite ? min(width, maxWidth) : width,
-            height: height
-        )
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) {
-        var y = bounds.minY
-        for row in rows(for: subviews, in: bounds.width) {
-            var x = bounds.minX
-            let rowHeight = row.map(\.size.height).max() ?? 0
-            for (index, size) in row {
-                subviews[index].place(
-                    at: CGPoint(x: x, y: y + (rowHeight - size.height) / 2),
-                    proposal: ProposedViewSize(size)
-                )
-                x += size.width + spacing
-            }
-            y += rowHeight + spacing
-        }
-    }
-}
-
-private struct DetailTextSection: View {
-    let title: String
-    let systemImage: String
-    let text: String
-    let collapsedByDefault: Bool
-    let rendersInlineMarkdown: Bool
-    @State private var isExpanded: Bool
-
-    init(
-        title: String,
-        systemImage: String,
-        text: String,
-        collapsedByDefault: Bool = false,
-        rendersInlineMarkdown: Bool = false
-    ) {
-        self.title = title
-        self.systemImage = systemImage
-        self.text = text
-        self.collapsedByDefault = collapsedByDefault
-        self.rendersInlineMarkdown = rendersInlineMarkdown
-        _isExpanded = State(initialValue: false)
-    }
-
-    private var offersExpansion: Bool {
-        EntryDetailPresentation.offersExpansion(for: text)
-    }
-
-    private var renderedText: AttributedString {
-        guard rendersInlineMarkdown,
-              let attributed = try? AttributedString(
-                  markdown: text,
-                  options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-              ) else {
-            return AttributedString(text)
-        }
-        return attributed
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            if collapsedByDefault {
-                Button {
-                    withAnimation(.snappy(duration: 0.22)) {
-                        isExpanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 9) {
-                        Label(title, systemImage: systemImage)
-                            .font(.headline)
-                            .foregroundStyle(Design.Color.ink)
-                        Spacer()
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Design.Color.muted)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(isExpanded ? "Hide" : "Show") \(title.lowercased())")
-            } else {
-                Label(title, systemImage: systemImage)
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.ink)
-            }
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(renderedText)
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if !collapsedByDefault && offersExpansion {
-                        Button("Show less") {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                isExpanded = false
-                            }
-                        }
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.accentSecondary)
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(15)
-                .background(
-                    Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            } else if !collapsedByDefault {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(renderedText)
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.ink)
-                        .lineLimit(offersExpansion ? 5 : nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if offersExpansion {
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                isExpanded = true
-                            }
-                        } label: {
-                            Text("Show more")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Design.Color.accentSecondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(15)
-                .background(
-                    Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
-                )
-            }
-        }
-    }
-}
-
-private struct EntryCorrectionSheet: View {
-    private enum FocusField: Hashable {
-        case note
-    }
-
+/// "Update meal": say or type what changed (or answer the estimator's one
+/// question), optionally add photos, send. The bottom is the capture bar's
+/// shape — mic bottom-left, tap again to send.
+struct EntryCorrectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var focusedField: FocusField?
-    /// Held unobserved: the voice card observes it, and this sheet mirrors
-    /// only what it needs, so meter and transcript updates never re-render
-    /// the note editor.
+    /// Held unobserved: the bar observes it, and this sheet mirrors only
+    /// whether a take is in flight, so meter updates never re-render the
+    /// photos.
     @StateObject private var voiceHolder = UnobservedHolder(VoiceTranscriber(profile: .correction))
     @State private var hasLiveDictation = false
-    @State private var voicePhase: VoiceTranscriber.Phase = .idle
-    @State private var lastDictation: DictationMergePolicy.AppendRecord?
     @State private var dictatedTakeCount = 0
     @State private var dictatedEngine: SpeechEngineID?
     @State private var context = ""
@@ -1037,35 +583,29 @@ private struct EntryCorrectionSheet: View {
     @State private var uploadEncodeTask: Task<Data?, Never>?
 
     let entryTitle: String
-    /// Prefilled note ("Q: … A: " from a clarification). Left untouched it
-    /// counts as empty, so a bare question is never sent.
-    let initialNote: String
+    /// The estimator's question when Luke tapped "Answer"; his reply goes
+    /// out as "Q: … A: …" so the estimator has the context.
+    let question: String?
     let onSubmit: (EntryCorrectionSubmission) -> Void
     let onAccepted: () -> Void
 
     init(
         entryTitle: String,
-        initialNote: String = "",
+        question: String? = nil,
         onSubmit: @escaping (EntryCorrectionSubmission) -> Void,
         onAccepted: @escaping () -> Void
     ) {
         self.entryTitle = entryTitle
-        self.initialNote = initialNote
+        self.question = question
         self.onSubmit = onSubmit
         self.onAccepted = onAccepted
-        _context = State(initialValue: initialNote)
     }
 
     private var voice: VoiceTranscriber { voiceHolder.value }
 
-    /// The note minus an untouched clarification prefill.
-    private var submittableContext: String {
-        ClarificationPolicy.submittableText(context, prefill: initialNote)
-    }
-
     private var canSubmit: Bool {
         EntryCorrectionPolicy.canSubmit(
-            text: submittableContext,
+            text: context,
             hasLiveDictation: hasLiveDictation,
             hasImage: !images.isEmpty,
             isPreparingImage: isPreparingImage,
@@ -1073,116 +613,41 @@ private struct EntryCorrectionSheet: View {
         )
     }
 
-    private var canUndoDictation: Bool {
-        !hasSubmitted && DictationMergePolicy.canUndo(lastDictation, in: context)
+    private var updatesEstimate: Bool {
+        EntryCorrectionPolicy.usesPhotoForEstimate(text: context, hasLiveDictation: hasLiveDictation)
     }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 AppBackground()
-                ScrollViewReader { scrollProxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("What changed?")
-                                .font(.title2.weight(.bold))
-                                .foregroundStyle(Design.Color.ink)
-                            Text(initialNote.isEmpty
-                                 ? "Tell Shudo what to adjust for \(entryTitle)."
-                                 : "Answer after “A:” by voice or typing, and Shudo updates \(entryTitle).")
-                                .font(.subheadline)
-                                .foregroundStyle(Design.Color.muted)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(entryTitle)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(Design.Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if let question {
+                            Text(question)
+                                .font(Design.Typeface.bubble)
+                                .foregroundStyle(Design.Color.textPrimary)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    Design.Color.bubbleCoach,
+                                    in: RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous)
+                                )
+                                .accessibilityLabel("Shudo asks: \(question)")
                         }
 
-                        VoiceCaptureCard(
-                            voice: voice,
-                            style: .correction,
-                            isDisabled: hasSubmitted,
-                            canUndo: canUndoDictation,
-                            onUndo: undoLastDictation,
-                            onWillStart: {
-                                errorMessage = nil
-                                focusedField = nil
-                            },
-                            onTake: appendTake
-                        )
-
-                        photoAttachmentSection
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Optional note")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Design.Color.ink)
-
-                            ZStack(alignment: .topLeading) {
-                                if context.isEmpty {
-                                    Text("Example: The rice was one cup, not two.")
-                                        .font(.body)
-                                        .foregroundStyle(Design.Color.muted)
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 15)
-                                        .allowsHitTesting(false)
-                                }
-                                TextEditor(text: $context)
-                                    .font(.body)
-                                    .foregroundStyle(Design.Color.ink)
-                                    .scrollContentBackground(.hidden)
-                                    .padding(.horizontal, 11)
-                                    .padding(.vertical, 8)
-                                    .frame(height: 128)
-                                    .focused($focusedField, equals: .note)
-                                    .onChange(of: context) { _, updated in
-                                        if updated.count > EntryCorrectionPolicy.maximumCharacters {
-                                            context = EntryCorrectionPolicy.normalized(updated)
-                                        }
-                                    }
-                            }
-                            .background(
-                                Design.Color.elevated,
-                                in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
-                            )
-                            .id(FocusField.note)
-                        }
-
-                        HStack {
-                            Spacer()
-                            Text("\(context.count) / \(EntryCorrectionPolicy.maximumCharacters)")
-                                .font(.caption2)
-                                .foregroundStyle(Design.Color.muted)
-                                .monospacedDigit()
-                        }
-
-                        if let errorMessage {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label(errorMessage, systemImage: "exclamationmark.circle.fill")
-                                    .font(.footnote)
-                                    .foregroundStyle(Design.Color.danger)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Button("Start over") {
-                                    resetCorrection()
-                                }
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(Design.Color.accentSecondary)
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        }
-                        .padding(20)
-                        .padding(.bottom, 90)
+                        photoGrid
                     }
-                    .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: focusedField) { _, field in
-                        guard field == .note else { return }
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 120_000_000)
-                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                                scrollProxy.scrollTo(FocusField.note, anchor: .center)
-                            }
-                        }
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("Update meal")
             .navigationBarTitleDisplayMode(.inline)
@@ -1194,45 +659,11 @@ private struct EntryCorrectionSheet: View {
                         voice.cancel()
                         dismiss()
                     }
-                        .foregroundStyle(Design.Color.muted)
-                        .disabled(hasSubmitted)
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focusedField = nil }
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .disabled(hasSubmitted)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                Button {
-                    submit()
-                } label: {
-                    HStack(spacing: 8) {
-                        if hasSubmitted || isPreparingImage {
-                            ProgressView().tint(.white)
-                        }
-                        Text(submitTitle)
-                    }
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .background(
-                            LinearGradient(
-                                colors: canSubmit
-                                    ? [Design.Color.ctaPrimary, Design.Color.ctaSecondary]
-                                    : [Design.Color.subtle, Design.Color.subtle],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            ),
-                            in: Capsule()
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSubmit)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
-            }
+            .safeAreaInset(edge: .bottom) { bottomControls }
         }
         .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { selected in
@@ -1248,8 +679,12 @@ private struct EntryCorrectionSheet: View {
         )
         .onChange(of: pickedImages) { _, items in preparePickedImages(items) }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
+        .onChange(of: context) { _, updated in
+            if updated.count > EntryCorrectionPolicy.maximumCharacters {
+                context = EntryCorrectionPolicy.normalized(updated)
+            }
+        }
         .onReceive(voice.$phase) { phase in
-            if voicePhase != phase { voicePhase = phase }
             if hasLiveDictation != phase.holdsTake { hasLiveDictation = phase.holdsTake }
         }
         .onDisappear {
@@ -1263,35 +698,60 @@ private struct EntryCorrectionSheet: View {
         .interactiveDismissDisabled(hasSubmitted)
     }
 
-    private var submitTitle: String {
-        if hasSubmitted { return voicePhase == .finishing ? VoiceCopy.transcribing : "Sending…" }
-        if isPreparingImage { return "Preparing photos…" }
-        return updatesEstimate ? "Update estimate" : "Save photos"
-    }
+    // MARK: Bottom: photos + the capture bar's shape
 
-    private var updatesEstimate: Bool {
-        EntryCorrectionPolicy.usesPhotoForEstimate(
-            text: submittableContext,
-            hasLiveDictation: hasLiveDictation
-        )
-    }
-
-    private var photoAttachmentSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Add photo")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Design.Color.ink)
-                Spacer()
-                if !images.isEmpty {
-                    Text("\(images.count) of \(ImageProcessor.maximumPhotoCount)")
-                        .font(.caption)
-                        .foregroundStyle(Design.Color.muted)
-                        .monospacedDigit()
+    private var bottomControls: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    photoButton("Camera", systemImage: "camera.fill") { requestCamera() }
+                }
+                photoButton("Photos", systemImage: "photo.on.rectangle") {
+                    settleVoiceCapture()
+                    errorMessage = nil
+                    isShowingPhotoPicker = true
                 }
             }
+            .padding(.horizontal, 20)
 
-            if !images.isEmpty {
+            SheetCaptureBar(
+                voice: voice,
+                text: $context,
+                placeholder: question == nil ? "What changed?" : "Your answer…",
+                canSend: !images.isEmpty,
+                isSendEnabled: canSubmit,
+                isSending: hasSubmitted,
+                sendLabel: updatesEstimate ? "Update estimate" : "Save photos",
+                message: errorMessage,
+                identifierPrefix: "correction",
+                onWillRecord: { errorMessage = nil },
+                onSend: submit,
+                onTake: appendTake
+            )
+        }
+        .padding(.top, 8)
+    }
+
+    private func photoButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        let enabled = !hasSubmitted && !isPreparingImage && images.count < ImageProcessor.maximumPhotoCount
+        return Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(enabled ? Design.Color.textSecondary : Design.Color.textDisabled)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .background(Design.Color.surface1, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    @ViewBuilder
+    private var photoGrid: some View {
+        if !images.isEmpty || isPreparingImage {
+            VStack(alignment: .leading, spacing: 8) {
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 108, maximum: 180), spacing: 8)],
                     spacing: 8
@@ -1303,15 +763,10 @@ private struct EntryCorrectionSheet: View {
                                 .scaledToFill()
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 116)
-                                .clipShape(
-                                    RoundedRectangle(
-                                        cornerRadius: Design.Radius.panel,
-                                        style: .continuous
-                                    )
-                                )
-                                // Fill overflow stays hit-testable past the clip
-                                // and would block the note field and controls
-                                // around this grid (see composer grid).
+                                .clipShape(RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
+                                // Fill overflow stays hit-testable past the
+                                // clip and would block the controls around
+                                // this grid (see the composer grid).
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
                             Button {
@@ -1329,64 +784,27 @@ private struct EntryCorrectionSheet: View {
                             .accessibilityLabel("Remove new photo \(index + 1)")
                         }
                     }
+                    if isPreparingImage {
+                        RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous)
+                            .fill(Design.Color.surface1)
+                            .frame(height: 116)
+                            .shimmering()
+                            .accessibilityLabel("Adding photo")
+                    }
+                }
+                if !images.isEmpty, !updatesEstimate {
+                    // A photo alone is kept as a memory; words change numbers.
+                    Text("Saved with the meal. Say what changed to update the numbers.")
+                        .font(.footnote)
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { photoButtons }
-                VStack(spacing: 10) { photoButtons }
-            }
-
-            if !images.isEmpty {
-                Label(
-                    updatesEstimate
-                        ? "These photos will help recalculate nutrition."
-                        : "These photos will be saved as meal memories. Nutrition won’t change.",
-                    systemImage: updatesEstimate ? "sparkles" : "heart"
-                )
-                .font(.footnote)
-                .foregroundStyle(Design.Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityElement(children: .combine)
-            }
         }
-    }
-
-    @ViewBuilder
-    private var photoButtons: some View {
-        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-            correctionPhotoButton("Camera", systemImage: "camera.fill") {
-                requestCamera()
-            }
-        }
-        correctionPhotoButton("Photos", systemImage: "photo.on.rectangle") {
-            settleVoiceCapture()
-            errorMessage = nil
-            isShowingPhotoPicker = true
-        }
-    }
-
-    private func correctionPhotoButton(
-        _ title: String,
-        systemImage: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Design.Color.ink)
-                .frame(maxWidth: .infinity)
-                .frame(height: 46)
-                .background(Design.Color.elevated, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(
-            hasSubmitted || isPreparingImage || images.count >= ImageProcessor.maximumPhotoCount
-        )
     }
 
     /// Releases the microphone before the camera or picker takes the audio
-    /// hardware; the words already heard still land in the note.
+    /// hardware; the words already said still land in the field.
     private func settleVoiceCapture() {
         voice.finishInBackground()
     }
@@ -1398,22 +816,10 @@ private struct EntryCorrectionSheet: View {
             limit: EntryCorrectionPolicy.maximumCharacters
         )
         if result.wasTruncated { errorMessage = VoiceCopy.reachedLengthLimit }
-        guard let record = result.record else { return }
+        guard result.record != nil else { return }
         context = result.note
-        lastDictation = record
         dictatedTakeCount += 1
         dictatedEngine = take.engine
-    }
-
-    private func undoLastDictation() {
-        guard let record = lastDictation,
-              let restored = DictationMergePolicy.undoing(record, in: context) else { return }
-        context = restored
-        lastDictation = nil
-        dictatedTakeCount = max(0, dictatedTakeCount - 1)
-        if dictatedTakeCount == 0 { dictatedEngine = nil }
-        clientRequestId = UUID()
-        errorMessage = nil
     }
 
     private func requestCamera() {
@@ -1526,31 +932,42 @@ private struct EntryCorrectionSheet: View {
     /// Validates locally and hands the correction off, then leaves right
     /// away. The update itself runs on the Today screen's meal card, so this
     /// sheet never has to hold the user through the network round-trip.
+    /// The text the estimator gets: Luke's words, prefixed with the question
+    /// when he's answering one (nil when he said nothing).
+    private func submissionText() -> String? {
+        let answer = EntryCorrectionPolicy.normalized(context)
+        guard !answer.isEmpty else { return nil }
+        guard let question else { return answer }
+        return EntryCorrectionPolicy.normalized(ClarificationPolicy.answerPrefill(for: question) + answer)
+    }
+
+    /// Validates locally and hands the correction off, then leaves right
+    /// away. The update itself runs on the Today screen's meal card, so this
+    /// sheet never has to hold the user through the network round-trip.
     private func submit() {
-        guard canSubmit else { return }
+        guard canSubmit else {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            return
+        }
         errorMessage = nil
-        focusedField = nil
         hasSubmitted = true
         let selectedImages = images
         let encodeTask = uploadEncodeTask
         Task {
             // A recording still in flight is stopped and transcribed (or a
             // failed upload retried once) and lands in the note first —
-            // Update while recording is stop → transcribe → send.
+            // send while recording is stop → transcribe → send.
             let hadTake = voice.hasTakeInFlight
             if let take = await voice.finishPendingTake(finalizationTimeout: 1.5) {
                 appendTake(take)
             } else if hadTake, voice.errorMessage != nil {
-                // Transcription failed: stay, so the card can retry or
+                // Transcription failed: stay, so the bar can retry or
                 // discard the kept recording.
                 hasSubmitted = false
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
-            let normalized = EntryCorrectionPolicy.normalized(
-                ClarificationPolicy.submittableText(context, prefill: initialNote)
-            )
-            let text = normalized.isEmpty ? nil : normalized
+            let text = submissionText()
             guard text != nil || !selectedImages.isEmpty else {
                 hasSubmitted = false
                 errorMessage = VoiceCopy.didNotCatchThat
@@ -1565,7 +982,7 @@ private struct EntryCorrectionSheet: View {
             }
             guard selectedImages.isEmpty || imageJPEG != nil else {
                 hasSubmitted = false
-                errorMessage = "Those photos couldn’t be prepared. Remove them or try again. Your draft is still here."
+                errorMessage = "Those photos couldn’t be prepared. Remove them and try again."
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
@@ -1584,17 +1001,5 @@ private struct EntryCorrectionSheet: View {
             dismiss()
             onAccepted()
         }
-    }
-
-    private func resetCorrection() {
-        voice.cancel()
-        context = initialNote
-        lastDictation = nil
-        dictatedTakeCount = 0
-        dictatedEngine = nil
-        images = []
-        clientRequestId = UUID()
-        errorMessage = nil
-        focusedField = nil
     }
 }

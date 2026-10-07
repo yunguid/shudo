@@ -12,7 +12,7 @@ final class AppShellUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-shudoPolishPreview", screen] + extra
         app.launch()
-        XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 8))
         return app
     }
 
@@ -134,7 +134,7 @@ final class AppShellUITests: XCTestCase {
         app.tabBars.buttons["Train"].firstMatch.tap()
         XCTAssertTrue(app.buttons["Log a workout…"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Body"].firstMatch.tap()
-        XCTAssertTrue(app.buttons["Weight, check-in notes…"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Weight or a note…"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Today"].firstMatch.tap()
         XCTAssertTrue(app.buttons["Tell Shudo anything…"].waitForExistence(timeout: 3))
     }
@@ -145,7 +145,7 @@ final class AppShellUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Chicken rice bowl"].firstMatch.waitForExistence(timeout: 5))
         for tab in ["Body", "Train", "Today"] {
             app.tabBars.buttons[tab].firstMatch.tap()
-            XCTAssertTrue(app.buttons["Log meal"].waitForExistence(timeout: 3), "capture bar missing on \(tab)")
+            XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 3), "capture bar missing on \(tab)")
             XCTAssertTrue(app.buttons["capture.mic"].exists)
             XCTAssertTrue(app.buttons["Camera"].exists)
         }

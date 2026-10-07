@@ -5,9 +5,6 @@ import UIKit
 struct CaptureBarActions {
     /// Send a message to Shudo (the coach routes meals/workouts via tools).
     var send: (_ text: String, _ mode: CoachInputMode, _ speechEngine: String?) -> Void
-    /// The classic meal composer (`autoStartRecording` starts its own
-    /// recording; the bar itself never asks for that).
-    var openComposer: (_ autoStartRecording: Bool) -> Void
     var mealPhoto: () -> Void
     var scanBarcode: () -> Void
     var workoutPhoto: () -> Void
@@ -54,20 +51,19 @@ struct CaptureDraft: Equatable {
     }
 }
 
-/// "Tell Shudo anything…" — the one input on every tab, mounted as the
-/// TabView's bottom accessory, and the app's only voice entry point
-/// (other screens call `CaptureController`).
+/// The one input on every tab, mounted as the TabView's bottom accessory,
+/// and the app's only voice entry point (other screens call
+/// `CaptureController`; sheets that cover it use `SheetCaptureBar`, the
+/// same shape).
 ///
-/// Left-handed by design: the bottom-left button is both start and send.
-/// Tap the mic and it records (no live words: the field becomes a pulsing
-/// dot, timer and level meter) while the button turns into the ember send
-/// arrow in place; tap it again to stop → "Transcribing…" → the text goes
-/// straight to Shudo. ✕ to discard sits on the trailing edge, away from the
-/// thumb. Hold the mic to talk and release to send (slide away to cancel).
-/// A failed transcription keeps the recording: the same button retries.
-/// Tapping the field opens a keyboard-docked composer; "+" opens the meal
-/// composer; the camera menu routes photos. The placeholder and the
-/// `context_hint` follow `context` (the tab, or a screen's request).
+/// Three controls. Bottom-left, under Luke's left thumb: the mic — tap to
+/// record (the field becomes a timer and meter, no live words), tap the
+/// same spot to send (it transcribes, then goes to Shudo); hold to talk and
+/// release to send. A failed transcription keeps the recording and the same
+/// spot retries. The field opens the keyboard. Trailing: the camera — a tap
+/// takes the tab's photo (meal, workout, check-in), a hold offers the rest —
+/// or ✕ to discard while recording. The placeholder and `context_hint`
+/// follow `context`.
 struct CaptureBar: View {
     @ObservedObject var voice: VoiceTranscriber
     @Binding var draft: CaptureDraft
@@ -76,7 +72,6 @@ struct CaptureBar: View {
 
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.openURL) private var openURL
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressStartedAt: Date?
     @State private var holdTask: Task<Void, Never>?
     @State private var isHolding = false
@@ -90,7 +85,7 @@ struct CaptureBar: View {
 
     private var isInline: Bool { placement == .inline }
     /// The field is a recording / transcribing / retry strip.
-    private var isVoiceActive: Bool { voice.isBusy || voice.canRetryTranscription || isHolding }
+    private var isVoiceActive: Bool { CaptureLeadingRole.isVoiceActive(voice) || isHolding }
     private var showsDraftSend: Bool { !isVoiceActive && !draft.isEmpty }
 
     var body: some View {
@@ -99,17 +94,23 @@ struct CaptureBar: View {
             // its gesture: mic → send arrow → (spinner) → mic.
             leadingButton
             if isVoiceActive {
-                voiceStrip
-                discardButton
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                CaptureVoiceStrip(
+                    voice: voice,
+                    compact: isInline,
+                    holdHint: isHolding ? (holdCancels ? "Release to cancel" : "Release to send") : nil,
+                    holdCancels: holdCancels
+                )
+                CaptureCircleButton(kind: .discard, isEnabled: !isHolding, action: discardRecording)
+                    .accessibilityLabel("Discard recording")
+                    .accessibilityIdentifier("capture.discard")
             } else {
                 field
                 if showsDraftSend {
-                    draftSendButton
-                        .transition(.scale(scale: 0.6).combined(with: .opacity))
-                } else {
-                    if !isInline { composerButton }
-                    cameraMenu
+                    CaptureCircleButton(kind: .send, action: send)
+                        .accessibilityLabel("Send to Shudo")
+                        .accessibilityIdentifier("capture.send")
+                } else if context != .bio {
+                    cameraButton
                 }
             }
         }
@@ -134,86 +135,34 @@ struct CaptureBar: View {
 
     // MARK: Leading: mic / send / retry (one spot)
 
-    private enum LeadingRole {
-        case mic, hold, send, transcribing, retry
-    }
-
-    private var leadingRole: LeadingRole {
-        if isHolding { return .hold }
-        if voice.canRetryTranscription { return .retry }
-        if voice.isFinishing { return .transcribing }
-        if voice.isListening || voice.isStarting { return .send }
-        return .mic
-    }
+    private var leadingRole: CaptureLeadingRole { .role(for: voice, isHolding: isHolding) }
 
     private var leadingButton: some View {
-        let size: CGFloat = isInline ? 30 : 36
         let role = leadingRole
-        let active = role != .mic
-        return ZStack {
-            Circle()
-                .fill(active ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.emberFill))
-                .frame(width: size, height: size)
-                .scaleEffect(role == .hold ? 1.14 : (active ? 1.06 : 1))
-                .shadow(color: Design.Color.ember.opacity(active ? 0.55 : 0.25), radius: active ? 10 : 6)
-            if role == .transcribing {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(Design.Color.onEmber)
-            } else {
-                Image(systemName: leadingSymbol(role))
-                    .font(.system(size: isInline ? 13 : 15, weight: role == .send ? .heavy : .bold))
-                    .foregroundStyle(Design.Color.onEmber)
-                    .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.variableColor.iterative, isActive: role == .hold)
-            }
-        }
-        .frame(width: size + 6, height: size + 6)
-        .contentShape(Circle())
-        .gesture(pressGesture)
-        .sensoryFeedback(trigger: voice.isListening) { _, listening in listening ? .start : .stop }
-        .accessibilityElement()
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(leadingLabel(role))
-        .accessibilityHint(leadingHint(role))
-        .accessibilityIdentifier(leadingIdentifier(role))
-        .accessibilityAction { Task { await leadingTapped() } }
-        .animation(Design.Motion.snap, value: isHolding)
+        return CaptureLeadingFace(role: role, size: isInline ? 30 : 36)
+            .gesture(pressGesture)
+            .sensoryFeedback(trigger: voice.isListening) { _, listening in listening ? .start : .stop }
+            .accessibilityElement()
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(leadingLabel(role))
+            .accessibilityHint(CaptureBarCopy.leadingHint(role))
+            .accessibilityIdentifier(leadingIdentifier(role))
+            .accessibilityAction { Task { await leadingTapped() } }
+            .animation(Design.Motion.snap, value: isHolding)
     }
 
-    private func leadingSymbol(_ role: LeadingRole) -> String {
-        switch role {
-        case .mic: return "mic.fill"
-        case .hold: return "waveform"
-        case .send, .transcribing: return "arrow.up"
-        case .retry: return "arrow.clockwise"
-        }
-    }
-
-    private func leadingLabel(_ role: LeadingRole) -> String {
+    private func leadingLabel(_ role: CaptureLeadingRole) -> String {
         switch role {
         case .mic: return "Talk to Shudo"
-        case .hold: return "Recording"
         case .send: return "Send to Shudo"
-        case .transcribing: return "Transcribing"
-        case .retry: return "Retry transcription"
+        case .hold, .working, .retry: return CaptureBarCopy.leadingLabel(role, send: "Send to Shudo")
         }
     }
 
-    private func leadingHint(_ role: LeadingRole) -> String {
-        switch role {
-        case .mic: return "Records a message. Tap again to send, or hold to talk and release to send."
-        case .hold: return "Release to send"
-        case .send: return "Stops recording, transcribes and sends"
-        case .transcribing: return ""
-        case .retry: return "Sends the kept recording again"
-        }
-    }
-
-    private func leadingIdentifier(_ role: LeadingRole) -> String {
+    private func leadingIdentifier(_ role: CaptureLeadingRole) -> String {
         switch role {
         case .mic, .hold: return "capture.mic"
-        case .send, .transcribing: return "capture.send"
+        case .send, .working: return "capture.send"
         case .retry: return "capture.retry"
         }
     }
@@ -264,7 +213,7 @@ struct CaptureBar: View {
                 return
             }
             await sendRecording()
-        case .transcribing, .hold:
+        case .working, .hold:
             return
         case .mic:
             if voice.phase == .ready, let take = voice.collectReadyTake() {
@@ -323,141 +272,54 @@ struct CaptureBar: View {
         .accessibilityIdentifier("capture.field")
     }
 
-    // MARK: Voice strip
+    // MARK: Camera
 
-    private var voiceStrip: some View {
-        Group {
-            if voice.canRetryTranscription {
-                Text(voice.errorMessage ?? VoiceCopy.transcriptionFailed)
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.honey)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-                    .accessibilityIdentifier("capture.error")
-            } else if voice.isFinishing {
-                Text(VoiceCopy.transcribing)
-                    .font(.body)
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .accessibilityIdentifier("capture.transcribing")
-            } else if voice.isListening {
-                recordingStrip
-            } else {
-                Text(isHolding ? "Hold to talk…" : "Starting…")
-                    .font(.body)
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .accessibilityIdentifier("capture.recording")
+    private struct CameraOption {
+        let title: String
+        let symbol: String
+        let action: () -> Void
+    }
+
+    /// The tab's photo first; a tap takes it, a hold offers the rest.
+    private var cameraOptions: [CameraOption] {
+        let meal = CameraOption(title: "Meal photo", symbol: "fork.knife", action: actions.mealPhoto)
+        let barcode = CameraOption(title: "Scan barcode", symbol: "barcode.viewfinder", action: actions.scanBarcode)
+        let workout = CameraOption(title: "Workout photo", symbol: "dumbbell.fill", action: actions.workoutPhoto)
+        let checkIn = CameraOption(title: "Check-in photo", symbol: "figure.arms.open", action: actions.checkIn)
+        switch context {
+        case .train: return [workout, meal, barcode, checkIn]
+        case .body: return [checkIn, meal, barcode, workout]
+        case .today, .bio: return [meal, barcode, workout, checkIn]
+        }
+    }
+
+    private var cameraButton: some View {
+        let options = cameraOptions
+        let primary = options[0]
+        return Menu {
+            ForEach(options, id: \.title) { option in
+                Button(option.title, systemImage: option.symbol, action: option.action)
             }
-        }
-        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-    }
-
-    private var recordingStrip: some View {
-        HStack(spacing: 8) {
-            RecordingPulseDot(size: 8)
-            Text(VoiceCopy.clock(voice.elapsedTime))
-                .font(Design.Typeface.numeral(.body, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(Design.Color.textPrimary)
-                .contentTransition(reduceMotion ? .identity : .numericText())
-            if isHolding {
-                Text(holdCancels ? "Release to cancel" : "Release to send")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(holdCancels ? Design.Color.danger : Design.Color.textSecondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                VoiceMeterView(
-                    levels: Array(voice.meterLevels.suffix(isInline ? 10 : 16)),
-                    isActive: true,
-                    tint: Design.Color.ember,
-                    spacing: 2
-                )
-                .frame(height: 20)
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isHolding ? "Recording. Release to send." : "Recording")
-        .accessibilityValue(VoiceCopy.clock(voice.elapsedTime))
-        .accessibilityIdentifier("capture.recording")
-    }
-
-    // MARK: Trailing controls
-
-    /// ✕ on the trailing edge, away from the left thumb: drops the
-    /// recording (or a kept one, or a transcription in flight).
-    private var discardButton: some View {
-        Button(action: discardRecording) {
-            Image(systemName: "xmark")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Design.Color.textSecondary)
-                .frame(width: 32, height: 32)
-                .background(Design.Color.surface3, in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .disabled(isHolding)
-        .accessibilityLabel("Discard recording")
-        .accessibilityIdentifier("capture.discard")
-    }
-
-    private var draftSendButton: some View {
-        Button {
-            send()
-        } label: {
-            Image(systemName: "arrow.up")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Design.Color.onEmber)
-                .frame(width: 32, height: 32)
-                .background(Design.Color.ember, in: Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Send to Shudo")
-        .accessibilityIdentifier("capture.send")
-    }
-
-    private var composerButton: some View {
-        Menu {
-            Button("Type a meal", systemImage: "square.and.pencil") { actions.openComposer(false) }
-            Button("Scan barcode", systemImage: "barcode.viewfinder") { actions.scanBarcode() }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Design.Color.textSecondary)
-                .frame(width: 34, height: 34)
-                .contentShape(Circle())
-        } primaryAction: {
-            actions.openComposer(false)
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .accessibilityLabel("Log meal")
-        .accessibilityHint("Opens the meal composer. Touch and hold to scan a barcode.")
-    }
-
-    private var cameraMenu: some View {
-        Menu {
-            Button("Meal photo", systemImage: "fork.knife") { actions.mealPhoto() }
-            Button("Scan barcode", systemImage: "barcode.viewfinder") { actions.scanBarcode() }
-            Button("Workout photo", systemImage: "dumbbell.fill") { actions.workoutPhoto() }
-            Button("Check-in photo", systemImage: "figure.arms.open") { actions.checkIn() }
         } label: {
             Image(systemName: "camera.fill")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: isInline ? 15 : 16, weight: .semibold))
                 .foregroundStyle(Design.Color.textSecondary)
-                .frame(width: 34, height: 34)
+                .frame(width: 36, height: 36)
                 .contentShape(Circle())
+        } primaryAction: {
+            primary.action()
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .accessibilityLabel("Camera")
-        .accessibilityHint("Meal photo, barcode, workout photo or check-in")
+        .accessibilityLabel(primary.title)
+        .accessibilityHint("Touch and hold for barcode, workout or check-in photos.")
+        .accessibilityIdentifier("capture.camera")
     }
 
     // MARK: Actions
 
-    /// Stop → "Transcribing…" → the text goes to Shudo. A failed upload
-    /// leaves the Retry state; nothing heard says so.
+    /// Stop → transcribe → the text goes to Shudo. A failed upload leaves
+    /// the retry state; nothing heard says so.
     private func sendRecording() async {
         guard !isSendingVoice else { return }
         isSendingVoice = true
@@ -500,7 +362,7 @@ struct CaptureBar: View {
 
     private func discardRecording() {
         voice.cancel()
-        show(notice: "Recording discarded")
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         actions.captureEnded()
     }
 
@@ -524,9 +386,10 @@ struct CaptureBar: View {
 }
 
 /// The typing surface: the tab bar's accessory sits under the keyboard, so
-/// "Tell Shudo anything…" opens this glass field docked right above it,
-/// bound to the same draft. Losing focus (swipe the thread, tap away)
-/// tucks it back into the bar with the draft kept.
+/// tapping the field opens this glass field docked right above it, bound to
+/// the same draft. Same shape as the bar: mic bottom-left, send trailing.
+/// Losing focus (swipe the thread, tap away) tucks it back into the bar with
+/// the draft kept.
 struct CaptureComposer: View {
     @Binding var draft: CaptureDraft
     var placeholder = CaptureContext.today.placeholder
@@ -539,11 +402,7 @@ struct CaptureComposer: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             Button(action: onDictate) {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Design.Color.onEmber)
-                    .frame(width: 36, height: 36)
-                    .background(Design.Color.emberFill, in: Circle())
+                CaptureLeadingFace(role: .mic)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Record instead")
@@ -559,28 +418,20 @@ struct CaptureComposer: View {
             .foregroundStyle(Design.Color.textPrimary)
             .tint(Design.Color.ember)
             .focused($focused)
-            .padding(.vertical, 8)
+            .padding(.vertical, 9)
             .accessibilityIdentifier("capture.input")
             .onChange(of: draft.text) { _, text in
                 if text.isEmpty { draft.speechEngine = nil }
             }
 
-            Button {
-                onSend()
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Design.Color.onEmber)
-                    .frame(width: 34, height: 34)
-                    .background(draft.isEmpty ? Design.Color.surface3 : Design.Color.ember, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(draft.isEmpty)
-            .accessibilityLabel("Send to Shudo")
-            .accessibilityIdentifier("capture.input.send")
+            CaptureCircleButton(kind: .send, isEnabled: !draft.isEmpty, action: onSend)
+                .padding(.bottom, 5)
+                .accessibilityLabel("Send to Shudo")
+                .accessibilityIdentifier("capture.input.send")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.leading, 4)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
         .chromeGlass(
             in: RoundedRectangle(cornerRadius: 24, style: .continuous),
             tint: Design.Color.canvas.opacity(0.35),

@@ -3,7 +3,6 @@ import UIKit
 
 struct OnboardingView: View {
     fileprivate enum Field: Hashable {
-        case context
         case displayName
         case height
         case heightFeet
@@ -20,8 +19,8 @@ struct OnboardingView: View {
     private let initialProfile: Profile?
     private let onCompleted: (Profile) -> Void
 
-    /// Held unobserved: only the mic button and its recording strip observe
-    /// it, so meter updates never re-render the rest of the screen.
+    /// Held unobserved: only the bottom bar observes it, so meter updates
+    /// never re-render the rest of the screen.
     @StateObject private var voiceHolder = UnobservedHolder(VoiceTranscriber(profile: .onboarding))
     @State private var dictatedTakeCount = 0
     @State private var dictatedEngine: SpeechEngineID?
@@ -346,33 +345,25 @@ struct OnboardingView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
         } else {
-            OnboardingCaptureBar(
+            // The capture bar's shape: the first tap on the bottom-left mic
+            // records, the second sends everything (typed words plus the
+            // take) for targets.
+            SheetCaptureBar(
                 voice: voice,
                 text: $context,
-                isSubmitting: isPreparing,
-                textFocus: $focusedField,
-                onMic: micTapped,
-                onSend: { Task { await prepareProposal() } }
+                placeholder: "Or type it",
+                canSend: false,
+                isSendEnabled: !isPreparing,
+                isSending: isPreparing,
+                sendLabel: "Create my targets",
+                identifierPrefix: "onboarding",
+                onWillRecord: {
+                    errorMessage = nil
+                    focusedField = nil
+                },
+                onSend: { Task { await prepareProposal() } },
+                onTake: appendTake
             )
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        }
-    }
-
-    /// The one mic: the first tap starts listening, the second sends
-    /// everything (typed words plus the take) for targets.
-    private func micTapped() {
-        if voice.isListening {
-            Task { await prepareProposal() }
-            return
-        }
-        guard !voice.isBusy, !isPreparing else { return }
-        errorMessage = nil
-        focusedField = nil
-        Task {
-            if !(await voice.start()), let message = voice.errorMessage {
-                errorMessage = message
-            }
         }
     }
 
@@ -430,8 +421,8 @@ struct OnboardingView: View {
         if let take = await voice.finishPendingTake(finalizationTimeout: 1.5) {
             appendTake(take)
         } else if hadTake, voice.errorMessage != nil {
-            // The card shows the failure (and Retry / Discard for a kept
-            // recording); don't build targets without Luke's words.
+            // The bar shows the failure (retry or ✕ for a kept recording);
+            // don't build targets without Luke's words.
             return
         }
         guard OnboardingCapturePolicy.canSubmit(text: context, isSubmitting: false) else {
@@ -520,115 +511,6 @@ struct OnboardingView: View {
         errorMessage = nil
     }
 
-}
-
-/// Onboarding's input, shaped like the capture bar: the ember mic sits at
-/// the bottom-left (tap to talk, tap again to send), then the field, then
-/// send for typed words. No live words on screen while recording.
-private struct OnboardingCaptureBar: View {
-    @ObservedObject var voice: VoiceTranscriber
-    @Binding var text: String
-    let isSubmitting: Bool
-    var textFocus: FocusState<OnboardingView.Field?>.Binding
-    let onMic: () -> Void
-    let onSend: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var canSend: Bool {
-        !isSubmitting && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            micButton
-            if voice.isBusy {
-                recordingStrip
-                    .transition(.opacity)
-            } else {
-                TextField("Or type it", text: $text, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused(textFocus, equals: .context)
-                    .font(.body)
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 13)
-                    .frame(minHeight: 52)
-                    .background(Design.Color.surface2, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-                    .disabled(isSubmitting)
-                    .accessibilityLabel("Describe yourself")
-                    .transition(.opacity)
-                if canSend {
-                    Button(action: onSend) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(Design.Color.onEmber)
-                            .frame(width: 52, height: 52)
-                            .background(Design.Color.ember, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Create my targets")
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
-                }
-            }
-        }
-        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: voice.isBusy)
-        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: canSend)
-        .sensoryFeedback(trigger: voice.isListening) { _, listening in listening ? .start : .stop }
-    }
-
-    private var micButton: some View {
-        Button(action: onMic) {
-            ZStack {
-                Circle()
-                    .fill(Design.Color.emberFill)
-                    .frame(width: 52, height: 52)
-                    .shadow(
-                        color: Design.Color.ember.opacity(voice.isListening ? 0.5 : 0.2),
-                        radius: voice.isListening ? 12 : 6
-                    )
-                if voice.isStarting || voice.isFinishing || isSubmitting {
-                    ProgressView().tint(Design.Color.onEmber)
-                } else {
-                    Image(systemName: voice.isListening ? "arrow.up" : "mic.fill")
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundStyle(Design.Color.onEmber)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(isSubmitting || voice.isFinishing || voice.isPreparingModel)
-        .accessibilityLabel(voice.isListening ? "Send" : "Talk")
-        .accessibilityHint(voice.isListening ? "Stops recording and builds your targets" : "Records what you say")
-        .accessibilityIdentifier("Voice recording control")
-    }
-
-    private var recordingStrip: some View {
-        HStack(spacing: 12) {
-            VoiceMeterView(levels: voice.meterLevels, isActive: voice.isListening, tint: Design.Color.ember)
-                .frame(height: 24)
-            Text(VoiceCopy.clock(voice.elapsedTime))
-                .font(Design.Typeface.numeral(.subheadline))
-                .monospacedDigit()
-                .foregroundStyle(Design.Color.textSecondary)
-            Button {
-                voice.cancel()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Cancel recording")
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 8)
-        .frame(minHeight: 52)
-        .background(Design.Color.surface2, in: Capsule())
-    }
 }
 
 private extension ProfileActivityLevel {

@@ -20,6 +20,18 @@ enum PolishPreviewScreen: String {
     case onboarding
     /// Signed-out sign-in screen.
     case auth
+    /// The meal composer sheet (`-shudoPreviewRecord` starts a take).
+    case composer
+    /// The "Update meal" correction sheet.
+    case correction
+    /// The barcode scanner (manual entry on the Simulator).
+    case scanner
+
+    /// `-shudoPreviewRecord`: start recording as the screen appears (pair
+    /// with `-shudoScriptedSpeech`).
+    static var startsRecording: Bool {
+        ProcessInfo.processInfo.arguments.contains("-shudoPreviewRecord")
+    }
 
     static var launchValue: Self? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -67,6 +79,39 @@ private final class PolishPreviewCorrectionService: EntryReanalysisServing {
     }
 }
 
+/// Holds the composer's transcriber the way the shell does.
+private struct PreviewComposerHost: View {
+    @StateObject private var voice = UnobservedHolder(VoiceTranscriber(profile: .meal))
+
+    var body: some View {
+        EntryComposerView(
+            selectedDay: Date(),
+            timezone: ShellPreviewFixtures.timezone,
+            autoStartRecording: PolishPreviewScreen.startsRecording,
+            voice: voice.value,
+            initialImages: ProcessInfo.processInfo.arguments.contains("-shudoPreviewMealPhoto") ? [Self.plate] : []
+        ) { _ in }
+    }
+
+    /// `-shudoPreviewMealPhoto`: a stand-in plate (steak, rice, greens).
+    private static var plate: UIImage {
+        let size = CGSize(width: 1200, height: 900)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            let cg = context.cgContext
+            UIColor(red: 0.20, green: 0.15, blue: 0.11, alpha: 1).setFill()
+            cg.fill(CGRect(origin: .zero, size: size))
+            UIColor(red: 0.93, green: 0.90, blue: 0.84, alpha: 1).setFill()
+            cg.fillEllipse(in: CGRect(x: 240, y: 90, width: 720, height: 720))
+            UIColor(red: 0.45, green: 0.24, blue: 0.14, alpha: 1).setFill()
+            cg.fillEllipse(in: CGRect(x: 330, y: 230, width: 330, height: 230))
+            UIColor(red: 0.98, green: 0.97, blue: 0.93, alpha: 1).setFill()
+            cg.fillEllipse(in: CGRect(x: 560, y: 380, width: 300, height: 250))
+            UIColor(red: 0.36, green: 0.55, blue: 0.25, alpha: 1).setFill()
+            cg.fillEllipse(in: CGRect(x: 380, y: 500, width: 200, height: 170))
+        }
+    }
+}
+
 struct PolishPreviewView: View {
     let screen: PolishPreviewScreen
 
@@ -95,6 +140,7 @@ struct PolishPreviewView: View {
                     composerSeedImages: Self.composerSeedImages
                 )
             )
+            .task { await Self.driveCapture() }
         case .detail:
             NavigationStack {
                 EntryDetailView(
@@ -154,7 +200,34 @@ struct PolishPreviewView: View {
             OnboardingView(initialProfile: ShellPreviewFixtures.profile) { _ in }
         case .auth:
             AuthView()
+        case .composer:
+            PreviewComposerHost()
+        case .correction:
+            EntryCorrectionSheet(
+                entryTitle: Self.entryDetail.title,
+                question: ProcessInfo.processInfo.arguments.contains("-shudoPreviewAnswer")
+                    ? "Was the rice a full scoop or a light one?"
+                    : nil,
+                onSubmit: { _ in },
+                onAccepted: {}
+            )
+        case .scanner:
+            BarcodeScannerSheet { _ in }
         }
+    }
+
+    /// `-shudoPreviewRecord` (with `-shudoScriptedSpeech`) starts the bar
+    /// recording through the one entry point; `-shudoPreviewCaptureContext
+    /// train|body|bio` picks the context (and so the tab).
+    @MainActor
+    private static func driveCapture() async {
+        guard PolishPreviewScreen.startsRecording else { return }
+        let arguments = ProcessInfo.processInfo.arguments
+        let context = arguments.firstIndex(of: "-shudoPreviewCaptureContext")
+            .flatMap { arguments.indices.contains($0 + 1) ? CaptureContext(rawValue: arguments[$0 + 1]) : nil }
+            ?? .today
+        try? await Task.sleep(for: .milliseconds(1_200))
+        CaptureController.shared.startRecording(context: context)
     }
 
     private static let completedEntryID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!

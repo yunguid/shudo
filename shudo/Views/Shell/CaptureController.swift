@@ -52,8 +52,8 @@ enum CaptureContext: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .today: return "Tell Shudo anything…"
         case .train: return "Log a workout…"
-        case .body: return "Weight, check-in notes…"
-        case .bio: return "Update what Shudo knows…"
+        case .body: return "Weight or a note…"
+        case .bio: return "Tell Shudo about you…"
         }
     }
 
@@ -62,8 +62,8 @@ enum CaptureContext: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .today: return "Tell Shudo…"
         case .train: return "Log a workout…"
-        case .body: return "Weight, notes…"
-        case .bio: return "Update bio…"
+        case .body: return "Weight…"
+        case .bio: return "About you…"
         }
     }
 }

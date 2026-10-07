@@ -77,7 +77,8 @@ struct CaptureControllerTests {
 
         #expect(CaptureContext.today.placeholder == "Tell Shudo anything…")
         #expect(CaptureContext.train.placeholder == "Log a workout…")
-        #expect(CaptureContext.body.placeholder == "Weight, check-in notes…")
+        #expect(CaptureContext.body.placeholder == "Weight or a note…")
+        #expect(CaptureContext.bio.placeholder == "Tell Shudo about you…")
         #expect(AppTab.allCases.map(CaptureContext.forTab) == [.today, .body, .train])
     }
 

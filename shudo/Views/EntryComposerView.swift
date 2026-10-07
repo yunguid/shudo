@@ -52,14 +52,11 @@ enum EntryComposerPolicy {
 struct EntryComposerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Owned by the Today screen (so a mic tap can warm it up before this
-    /// sheet appears) and deliberately not observed here: the card observes
-    /// it, and this view mirrors only the phase, so meter updates never
-    /// re-render the note editor.
+    /// Owned by the shell and deliberately not observed here: the bottom
+    /// bar observes it, and this view mirrors only whether a take is in
+    /// flight, so meter updates never re-render the photos above.
     private let voice: VoiceTranscriber
-    @State private var voicePhase: VoiceTranscriber.Phase = .idle
     @State private var hasLiveDictation = false
-    @State private var lastDictation: DictationMergePolicy.AppendRecord?
     @State private var dictatedTakeCount = 0
     @State private var dictatedEngine: SpeechEngineID?
 
@@ -89,7 +86,8 @@ struct EntryComposerView: View {
     /// upload runs on the Today screen's card, so this sheet never holds the
     /// user through the network round trip.
     let onSubmit: (EntryCaptureDraft) -> Void
-    private let dayText: String
+    /// Nil for today (the usual case says nothing).
+    private let dayText: String?
 
     init(
         selectedDay: Date,
@@ -105,7 +103,6 @@ struct EntryComposerView: View {
         self.autoStartRecording = autoStartRecording
         self.opensBarcodeScannerOnAppear = opensBarcodeScannerOnAppear
         self.voice = voice
-        _voicePhase = State(initialValue: voice.phase)
         _images = State(initialValue: initialImages)
         self.onSubmit = onSubmit
         dayText = Self.dayLabelText(selectedDay: selectedDay, timezone: timezone)
@@ -122,47 +119,29 @@ struct EntryComposerView: View {
         )
     }
 
-    private var canUndoDictation: Bool {
-        !isSubmitting && DictationMergePolicy.canUndo(lastDictation, in: note)
-    }
+    private var hasAttachments: Bool { !images.isEmpty || !scannedPortions.isEmpty }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 AppBackground()
                 ScrollView {
-                    VStack(spacing: 28) {
-                        dayLabel
-                        VoiceCaptureCard(
-                            voice: voice,
-                            style: .meal,
-                            isDisabled: isSubmitting,
-                            canUndo: canUndoDictation,
-                            onUndo: undoLastDictation,
-                            onWillStart: { localError = nil },
-                            onTake: appendTake
-                        )
-
-                        // Directly under the voice controls: an error below
-                        // the note field could sit off-screen once a photo
-                        // was attached, making a failure look like a dead
-                        // button.
-                        if let error = localError {
-                            Text(error)
-                                .font(.footnote)
-                                .foregroundStyle(Design.Color.danger)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity)
-                                .transition(.opacity)
+                    VStack(spacing: 16) {
+                        if let dayText {
+                            Text(dayText)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Design.Color.textSecondary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(Design.Color.surface1, in: Capsule())
+                                .accessibilityLabel("Logging for \(dayText)")
                         }
-
-                        imageCapture
+                        photoGrid
                         scannedFoodSection
-                        noteField
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                    .padding(.bottom, 120)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
@@ -171,11 +150,11 @@ struct EntryComposerView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundStyle(Design.Color.muted)
+                        .foregroundStyle(Design.Color.textSecondary)
                         .disabled(isSubmitting)
                 }
             }
-            .safeAreaInset(edge: .bottom) { submitBar }
+            .safeAreaInset(edge: .bottom) { bottomControls }
         }
         .preferredColorScheme(.dark)
         .fullScreenCover(isPresented: $isShowingCamera) {
@@ -203,8 +182,11 @@ struct EntryComposerView: View {
             CaptureDiagnostics.record(.photoPickerDismissed, state: voice.controlState)
         }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
+        .onChange(of: note) { _, value in
+            let bounded = EntryComposerPolicy.boundedNote(value)
+            if bounded != value { note = bounded }
+        }
         .onReceive(voice.$phase) { phase in
-            voicePhase = phase
             if hasLiveDictation != phase.holdsTake { hasLiveDictation = phase.holdsTake }
         }
         .onAppear {
@@ -229,203 +211,148 @@ struct EntryComposerView: View {
         .task {
             guard autoStartRecording, !didAutoStart else { return }
             didAutoStart = true
-            // The Today screen normally starts the microphone warm-up at tap
-            // time so it overlaps this sheet's presentation. This fallback
-            // covers presentations where that start couldn't run (a capture
-            // deep link arriving while another sheet was up) without
-            // double-starting or retrying a start that already failed.
+            // Normally the warm-up starts at the tap so it overlaps this
+            // sheet's presentation; this covers presentations where that
+            // start couldn't run, without double-starting or retrying a
+            // start that already failed.
             guard voice.phase == .idle else { return }
             await voice.start()
         }
         .interactiveDismissDisabled(isSubmitting)
     }
 
-    private var dayLabel: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "calendar")
-            Text(dayText)
-        }
-        .font(.subheadline.weight(.semibold))
-        .foregroundStyle(Design.Color.ink)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Design.Color.glassFill, in: Capsule())
-        .accessibilityLabel("Logging for \(dayText)")
-    }
+    // MARK: Bottom: attach row + the capture bar's shape
 
-    private var imageCapture: some View {
-        VStack(spacing: 12) {
-            if !images.isEmpty {
-                LazyVGrid(
-                    columns: images.count == 1
-                        ? [GridItem(.flexible())]
-                        : [GridItem(.flexible()), GridItem(.flexible())],
-                    spacing: 8
-                ) {
-                    ForEach(Array(images.enumerated()), id: \.offset) { index, image in
-                        ZStack(alignment: .topTrailing) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(maxWidth: .infinity)
-                                .frame(height: images.count == 1 ? 190 : 122)
-                                .clipShape(RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
-                                // clipShape crops drawing but NOT hit testing: a
-                                // portrait photo scaled to fill this wide slot
-                                // stays ~2.5x taller for touch purposes and eats
-                                // taps meant for the mic button above the grid.
-                                .allowsHitTesting(false)
-
-                            Button {
-                                removePhoto(at: index)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 30, height: 30)
-                                    .background(.black.opacity(0.58), in: Circle())
-                            }
-                            .padding(8)
-                            .accessibilityLabel("Remove photo \(index + 1)")
-                        }
-                    }
-                }
-            }
-
-            HStack(spacing: 12) {
-                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    mediaButton(title: "Camera", systemImage: "camera.fill") {
-                        Perf.mark("camera.tap")
-                        settleVoiceCapture()
-                        isShowingCamera = true
-                    }
-                }
-
-                mediaButton(title: "Photos", systemImage: "photo.on.rectangle") {
-                    settleVoiceCapture()
-                    CaptureDiagnostics.record(.photoPickerPresented, state: voice.controlState)
-                    isShowingPhotoPicker = true
-                }
-
-                scanButton
-            }
-        }
-    }
-
-    /// Barcode scanning adds a removable label card; it does not consume a
-    /// photo slot, so it stays enabled while photos are full.
-    private var scanButton: some View {
-        let enabled =
-            !isSubmitting
-            && scannedPortions.count < EntryComposerPolicy.maximumScannedItems
-        return Button {
-            settleVoiceCapture()
-            isShowingBarcodeScanner = true
-        } label: {
-            Label("Scan", systemImage: "barcode.viewfinder")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(Design.Color.elevated, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityHint("Scans a packaged food barcode and adds its nutrition label")
-    }
-
-    private func mediaButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        let enabled =
-            !isSubmitting
-            && !isPreparingImage
-            && images.count < ImageProcessor.maximumPhotoCount
-        return Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(Design.Color.elevated, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-    }
-
-    private var noteField: some View {
-        ZStack(alignment: .topLeading) {
-            if note.isEmpty {
-                Text("Optional note — portions, brands, or ask to check nutrition online")
-                    .font(.body)
-                    .foregroundStyle(Design.Color.muted)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 15)
-                    .allowsHitTesting(false)
-            }
-
-            TextEditor(text: $note)
-                .font(.body)
-                .foregroundStyle(Design.Color.ink)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
-                .frame(minHeight: 104, maxHeight: 150)
-                .onChange(of: note) { _, value in
-                    let bounded = EntryComposerPolicy.boundedNote(value)
-                    if bounded != value { note = bounded }
-                }
-        }
-        .background(Design.Color.elevated, in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous))
-    }
-
-    private var submitBar: some View {
-        Button {
-            submit()
-        } label: {
-            HStack(spacing: 9) {
-                if isSubmitting || isPreparingImage {
-                    ProgressView().tint(.white)
-                } else {
-                    Image(systemName: "arrow.up")
-                }
-                Text(submitTitle)
-            }
-            .font(.headline)
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .background(
-                LinearGradient(
-                    colors: canSubmit
-                        ? [Design.Color.ctaPrimary, Design.Color.ctaSecondary]
-                        : [Design.Color.subtle, Design.Color.subtle],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ),
-                in: Capsule()
+    /// Everything Luke taps sits at the bottom, under his thumb: what to
+    /// attach, then the bar (mic bottom-left, note, send).
+    private var bottomControls: some View {
+        VStack(spacing: 10) {
+            attachRow
+                .padding(.horizontal, 20)
+            SheetCaptureBar(
+                voice: voice,
+                text: $note,
+                placeholder: hasAttachments ? "Add a note…" : "What did you eat?",
+                canSend: hasAttachments,
+                isSendEnabled: canSubmit,
+                isSending: isSubmitting,
+                sendLabel: "Log meal",
+                message: localError,
+                identifierPrefix: "meal",
+                onWillRecord: { localError = nil },
+                onSend: submit,
+                onTake: appendTake
             )
         }
-        .buttonStyle(.plain)
-        .disabled(!canSubmit)
-        .accessibilityIdentifier("Submit meal")
-        .padding(.horizontal, 20)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
-        .background(.ultraThinMaterial)
+        .padding(.top, 8)
     }
 
-    private var submitTitle: String {
-        if isSubmitting {
-            return voicePhase == .finishing ? VoiceCopy.transcribing : "Sending…"
+    private var attachRow: some View {
+        HStack(spacing: 10) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                attachButton("Camera", systemImage: "camera.fill", enabled: canAddPhoto) {
+                    Perf.mark("camera.tap")
+                    settleVoiceCapture()
+                    isShowingCamera = true
+                }
+            }
+            attachButton("Photos", systemImage: "photo.on.rectangle", enabled: canAddPhoto) {
+                settleVoiceCapture()
+                CaptureDiagnostics.record(.photoPickerPresented, state: voice.controlState)
+                isShowingPhotoPicker = true
+            }
+            // A scan adds a removable label card; it doesn't use a photo slot.
+            attachButton(
+                "Scan",
+                systemImage: "barcode.viewfinder",
+                enabled: !isSubmitting && scannedPortions.count < EntryComposerPolicy.maximumScannedItems
+            ) {
+                settleVoiceCapture()
+                isShowingBarcodeScanner = true
+            }
         }
-        return isPreparingImage ? "Preparing photos…" : "Log meal"
     }
 
-    /// Computed once at init: building a Calendar and DateFormatter on each
-    /// body evaluation was measurable main-thread churn.
-    static func dayLabelText(selectedDay: Date, timezone: String) -> String {
+    private var canAddPhoto: Bool {
+        !isSubmitting && !isPreparingImage && images.count < ImageProcessor.maximumPhotoCount
+    }
+
+    private func attachButton(
+        _ title: String,
+        systemImage: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(enabled ? Design.Color.textSecondary : Design.Color.textDisabled)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .background(Design.Color.surface1, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    // MARK: Content
+
+    @ViewBuilder
+    private var photoGrid: some View {
+        if !images.isEmpty || isPreparingImage {
+            LazyVGrid(
+                columns: images.count <= 1
+                    ? [GridItem(.flexible())]
+                    : [GridItem(.flexible()), GridItem(.flexible())],
+                spacing: 8
+            ) {
+                ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity)
+                            .frame(height: images.count == 1 ? 300 : 150)
+                            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
+                            // clipShape crops drawing but NOT hit testing: a
+                            // portrait photo scaled to fill this slot stays
+                            // taller for touch purposes and would eat taps
+                            // meant for the controls around the grid.
+                            .allowsHitTesting(false)
+
+                        Button {
+                            removePhoto(at: index)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 30, height: 30)
+                                .background(.black.opacity(0.58), in: Circle())
+                                .contentShape(Circle().inset(by: -6))
+                        }
+                        .padding(8)
+                        .disabled(isSubmitting)
+                        .accessibilityLabel("Remove photo \(index + 1)")
+                    }
+                }
+                if isPreparingImage {
+                    RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
+                        .fill(Design.Color.surface1)
+                        .frame(height: images.isEmpty ? 300 : 150)
+                        .shimmering()
+                        .accessibilityLabel("Adding photo")
+                }
+            }
+        }
+    }
+
+    /// Nil for today; otherwise the day this meal lands on.
+    static func dayLabelText(selectedDay: Date, timezone: String) -> String? {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
-        if calendar.isDateInToday(selectedDay) { return "Today" }
+        if calendar.isDateInToday(selectedDay) { return nil }
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
@@ -434,10 +361,10 @@ struct EntryComposerView: View {
     }
 
     /// Ends dictation before another surface takes the audio hardware: the
-    /// microphone is released right away and the words already heard land
-    /// in the note when the recognizer's final pass arrives; an in-flight
-    /// warm-up is aborted, since there is nothing to keep yet and a start
-    /// finishing underneath the camera gets killed by its capture session.
+    /// microphone is released right away and the words land in the note
+    /// when the transcription arrives; an in-flight warm-up is aborted,
+    /// since a start finishing underneath the camera gets killed by its
+    /// capture session.
     private func settleVoiceCapture() {
         voice.finishInBackground()
     }
@@ -449,21 +376,10 @@ struct EntryComposerView: View {
             limit: EntryComposerPolicy.maximumNoteLength
         )
         if result.wasTruncated { localError = VoiceCopy.reachedLengthLimit }
-        guard let record = result.record else { return }
+        guard result.record != nil else { return }
         note = result.note
-        lastDictation = record
         dictatedTakeCount += 1
         dictatedEngine = take.engine
-    }
-
-    private func undoLastDictation() {
-        guard let record = lastDictation,
-              let restored = DictationMergePolicy.undoing(record, in: note) else { return }
-        note = restored
-        lastDictation = nil
-        dictatedTakeCount = max(0, dictatedTakeCount - 1)
-        if dictatedTakeCount == 0 { dictatedEngine = nil }
-        localError = nil
     }
 
     private func preparePickedImages(_ items: [PhotosPickerItem]) {
@@ -601,6 +517,10 @@ struct EntryComposerView: View {
     }
 
     private func submit() {
+        guard canSubmit else {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            return
+        }
         Perf.mark("entry.submit.tap")
         let hasSelectedImages = !images.isEmpty
         let selectedImages = images
@@ -618,7 +538,7 @@ struct EntryComposerView: View {
                 appendTake(take)
             } else if hadTake, voice.errorMessage != nil {
                 // The transcription failed: keep the sheet (and a kept
-                // recording, which the card offers to retry or discard)
+                // recording, which the bar offers to retry or discard)
                 // instead of sending without Luke's words.
                 isSubmitting = false
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -687,33 +607,30 @@ private struct ScannedFoodCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             header
-            macroSummary
-            Text("Open Food Facts match · check against your package label.")
-                .font(.caption)
-                .foregroundStyle(Design.Color.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            HairlineRule()
-            amountRow
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    macroSummary
+                    Spacer(minLength: 0)
+                    stepper
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    macroSummary
+                    stepper
+                }
+            }
         }
         .padding(16)
         .background(
-            Design.Color.elevated,
-            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
+            Design.Color.surface1,
+            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
         )
         .opacity(isDisabled ? 0.6 : 1)
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "barcode.viewfinder")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(Design.Color.accentSecondary)
-                .frame(width: 26, height: 26)
-                .background(Design.Color.glassFill, in: Circle())
-                .accessibilityHidden(true)
-
             VStack(alignment: .leading, spacing: 2) {
                 Text(portion.product.name)
                     .font(.subheadline.weight(.semibold))
@@ -734,7 +651,7 @@ private struct ScannedFoodCard: View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Design.Color.muted)
                     .frame(width: 30, height: 30)
-                    .background(Design.Color.glassFill, in: Circle())
+                    .background(Design.Color.surface2, in: Circle())
                     .contentShape(Circle().inset(by: -7))
             }
             .buttonStyle(.plain)
@@ -758,16 +675,9 @@ private struct ScannedFoodCard: View {
     @ViewBuilder
     private var macroSummary: some View {
         if let macros = portion.scaledMacros {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 14) {
-                    calorieText(macros)
-                    macroChips(macros)
-                    Spacer(minLength: 0)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    calorieText(macros)
-                    HStack(spacing: 14) { macroChips(macros) }
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                calorieText(macros)
+                HStack(spacing: 10) { macroChips(macros) }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityMacroSummary(macros))
@@ -777,7 +687,7 @@ private struct ScannedFoodCard: View {
     private func calorieText(_ macros: ScannedProduct.Macros) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 3) {
             Text(macros.caloriesKcal.map { BarcodeNutrition.compactAmount($0) } ?? "—")
-                .font(.headline)
+                .font(Design.Typeface.numeral(.title3))
                 .foregroundStyle(Design.Color.ink)
                 .monospacedDigit()
                 .contentTransition(reduceMotion ? .identity : .numericText())
@@ -808,14 +718,8 @@ private struct ScannedFoodCard: View {
         }
     }
 
-    private var amountRow: some View {
-        HStack(spacing: 12) {
-            Text("Amount")
-                .font(.caption)
-                .foregroundStyle(Design.Color.muted)
-
-            Spacer(minLength: 0)
-
+    private var stepper: some View {
+        HStack(spacing: 8) {
             stepButton(systemImage: "minus", enabled: canDecrement) {
                 adjustQuantity(by: -ScannedPortion.quantityStep)
             }
@@ -826,7 +730,7 @@ private struct ScannedFoodCard: View {
                 .foregroundStyle(Design.Color.ink)
                 .monospacedDigit()
                 .contentTransition(reduceMotion ? .identity : .numericText())
-                .frame(minWidth: 92)
+                .frame(minWidth: 80)
                 .accessibilityLabel("Amount")
                 .accessibilityValue(portion.quantityLabel)
                 .accessibilityAdjustableAction { direction in
@@ -865,7 +769,7 @@ private struct ScannedFoodCard: View {
                 .font(.footnote.weight(.bold))
                 .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
                 .frame(width: 34, height: 34)
-                .background(Design.Color.glassFill, in: Circle())
+                .background(Design.Color.surface2, in: Circle())
                 .contentShape(Circle().inset(by: -5))
         }
         .buttonStyle(.plain)

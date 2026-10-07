@@ -57,11 +57,8 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         XCTAssertTrue(updateMeal.waitForExistence(timeout: 5))
         updateMeal.tap()
 
-        let note = app.textViews.firstMatch
+        let note = correctionInput(in: app)
         XCTAssertTrue(note.waitForExistence(timeout: 5))
-        for _ in 0..<3 where !note.isHittable {
-            app.swipeUp()
-        }
         XCTAssertTrue(note.isHittable)
         note.tap()
         note.typeText(text)
@@ -80,20 +77,26 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         XCTAssertTrue(updateMeal.waitForExistence(timeout: 5))
         updateMeal.tap()
 
-        XCTAssertTrue(element(labeled: "Add photo", in: app).waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Photos"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["Photos"].firstMatch.waitForExistence(timeout: 5))
         // Simulator camera availability varies. When present it uses the same
         // action label and capture surface as the new-meal composer.
         if app.buttons["Camera"].firstMatch.exists {
             XCTAssertTrue(app.buttons["Camera"].firstMatch.isEnabled)
         }
-        XCTAssertFalse(app.buttons["Save photos"].firstMatch.isEnabled)
+        // Nothing to send yet: the bar shows only the mic and the field.
+        XCTAssertFalse(app.buttons["correction.submit"].exists)
+        XCTAssertTrue(app.buttons["correction.mic"].exists)
 
-        let note = app.textViews.firstMatch
+        let note = correctionInput(in: app)
         note.tap()
         note.typeText("The rice was one cup")
+        XCTAssertTrue(app.buttons["Update estimate"].firstMatch.waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["Update estimate"].firstMatch.isEnabled)
-        XCTAssertTrue(element(labeled: "Add photo", in: app).exists)
+        XCTAssertTrue(app.buttons["Photos"].firstMatch.exists)
+    }
+
+    private func correctionInput(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "correction.input").firstMatch
     }
 
     @MainActor
@@ -112,7 +115,7 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         // updating state.
         let updating = element(labeled: "Updating nutrition estimate", in: app)
         XCTAssertTrue(updating.waitForExistence(timeout: 6))
-        XCTAssertTrue(app.buttons["Log meal"].firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["capture.mic"].firstMatch.waitForExistence(timeout: 2))
 
         // The recalculated estimate replaces the old one on the same card.
         XCTAssertTrue(
