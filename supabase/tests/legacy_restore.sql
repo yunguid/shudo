@@ -206,6 +206,7 @@ values
 \ir ../migrations/20260722224247_add_private_profile_photos.sql
 \ir ../migrations/20260730011301_add_existing_meal_photos.sql
 \ir ../migrations/20260730041117_weight_checkins_and_micronutrient_reports.sql
+\ir ../migrations/20261006200000_shudo_two.sql
 
 do $$
 declare
@@ -478,6 +479,8 @@ $$;
 
 \ir weight_checkins.sql
 
+\ir shudo_two.sql
+
 insert into storage.objects (bucket_id, name)
 values
   (
@@ -548,6 +551,27 @@ begin
       and source = 'imported'
   ) then
     raise exception 'legacy macro target was not backfilled from its first meal day';
+  end if;
+end;
+$$;
+
+-- A restored legacy profile picks up conservative Shudo 2.0 coach defaults
+-- without touching its restored targets.
+do $$
+begin
+  if not exists (
+    select 1 from public.profiles
+    where user_id = '00000000-0000-4000-8000-000000000001'
+      and not coach_enabled
+      and coach_intensity = 'locked_in'
+      and coach_profanity = 'mild'
+      and quiet_hours_start = '23:00'
+      and quiet_hours_end = '07:00'
+      and not location_recs_enabled
+      and not physique_ai_review_enabled
+      and goal_type = 'maintain'
+  ) then
+    raise exception 'restored profile did not receive Shudo 2.0 coach defaults';
   end if;
 end;
 $$;

@@ -17,6 +17,24 @@ export function modelQuotaHttpError(error: unknown): HttpError | null {
       "The shared beta AI limit has been reached. Try again later.",
     );
   }
+  if (message.includes("project_ai_spend_exceeded")) {
+    return new HttpError(
+      429,
+      "Shudo’s AI budget for today is used up. Try again later.",
+    );
+  }
+  if (message.includes("activity_daily_quota_exceeded")) {
+    return new HttpError(
+      429,
+      "You’ve reached the 40-workout limit for the last 24 hours. Try again later.",
+    );
+  }
+  if (message.includes("activity_concurrency_quota_exceeded")) {
+    return new HttpError(
+      429,
+      "A few workouts are still processing. Let one finish, then try again.",
+    );
+  }
   if (message.includes("entry_daily_quota_exceeded")) {
     return new HttpError(
       429,
