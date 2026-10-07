@@ -310,11 +310,17 @@ struct EntryComposerView: View {
             ) {
                 ForEach(Array(images.enumerated()), id: \.offset) { index, image in
                     ZStack(alignment: .topTrailing) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
+                        // The slot sets the size; the photo fills it. (A
+                        // scaled-to-fill image on its own reports its full
+                        // ideal width and pushes the grid past the screen.)
+                        Color.clear
                             .frame(maxWidth: .infinity)
                             .frame(height: images.count == 1 ? 300 : 150)
+                            .overlay {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                            }
                             .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
                             // clipShape crops drawing but NOT hit testing: a
                             // portrait photo scaled to fill this slot stays

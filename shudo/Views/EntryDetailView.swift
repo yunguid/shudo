@@ -758,11 +758,14 @@ struct EntryCorrectionSheet: View {
                 ) {
                     ForEach(Array(images.enumerated()), id: \.offset) { index, image in
                         ZStack(alignment: .topTrailing) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
+                            Color.clear
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 116)
+                                .overlay {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                }
                                 .clipShape(RoundedRectangle(cornerRadius: Design.Radius.panel, style: .continuous))
                                 // Fill overflow stays hit-testable past the
                                 // clip and would block the controls around
