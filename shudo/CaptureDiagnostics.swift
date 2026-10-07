@@ -74,6 +74,10 @@ enum CaptureDiagnostics {
         case speechEngineFailed = "speech.engine_failed"
         case speechTakeEmpty = "speech.take_empty"
         case speechFinalizationTimedOut = "speech.finalization_timed_out"
+        case speechUploadStarted = "speech.upload.started"
+        case speechUploadSucceeded = "speech.upload.succeeded"
+        case speechUploadFailed = "speech.upload.failed"
+        case speechRetryRequested = "speech.upload.retry"
     }
 
     static let fileName = "shudo-capture-diagnostics.txt"

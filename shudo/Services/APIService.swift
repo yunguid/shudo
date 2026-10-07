@@ -72,9 +72,9 @@ public struct APIService: EntryReanalysisServing, AccountDeletionServing {
         self.sessionJWTProvider = sessionJWTProvider
     }
 
-    /// Voice is transcribed on the iPhone, so a capture is text (plus the
-    /// recognizer that produced any dictated words) and an optional photo.
-    /// The server rejects audio uploads with 415.
+    /// A recording is transcribed before submit (the `transcribe` function),
+    /// so a capture is text (plus the engine that produced any dictated
+    /// words) and an optional photo. create_entry rejects audio with 415.
     func createEntry(
         text: String?,
         speechEngine: SpeechEngineID?,

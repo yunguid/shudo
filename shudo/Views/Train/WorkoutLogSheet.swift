@@ -5,26 +5,31 @@ import UIKit
 /// Final dictation result handed back by the voice layer.
 struct WorkoutDictation: Equatable, Sendable {
     var text: String
-    /// e.g. "apple.speech_transcriber"; sent to log_activity as speech_engine.
+    /// e.g. "openai.gpt-4o-transcribe"; sent to log_activity as speech_engine
+    /// when it fits that column's format.
     var speechEngine: String?
 }
 
-/// Two-phase dictation hook so the sheet stays voice-agnostic: lane I1's
+/// Two-phase dictation hook so the sheet stays voice-agnostic:
 /// `VoiceTranscriber` maps onto it directly (`start()` / `stop()` →
-/// `VoiceTake{text, engine}` / `cancel()`).
+/// `VoiceTake{text, engine}` / `cancel()`). `stop` records → transcribes, so
+/// it can take a few seconds; when it returns nil, `failureMessage` says why.
 struct WorkoutDictationHook {
     var start: @MainActor () async -> Bool
     var stop: @MainActor () async -> WorkoutDictation?
     var cancel: @MainActor () -> Void
+    var failureMessage: @MainActor () -> String?
 
     init(
         start: @escaping @MainActor () async -> Bool,
         stop: @escaping @MainActor () async -> WorkoutDictation?,
-        cancel: @escaping @MainActor () -> Void
+        cancel: @escaping @MainActor () -> Void,
+        failureMessage: @escaping @MainActor () -> String? = { nil }
     ) {
         self.start = start
         self.stop = stop
         self.cancel = cancel
+        self.failureMessage = failureMessage
     }
 }
 
@@ -50,6 +55,8 @@ struct WorkoutLogSheet: View {
     @State private var isPreparingPhoto = false
     @State private var isDictating = false
     @State private var isStartingDictation = false
+    @State private var isTranscribingDictation = false
+    @State private var dictationError: String?
     @State private var photoError: String?
     @FocusState private var textFocused: Bool
 
@@ -94,8 +101,8 @@ struct WorkoutLogSheet: View {
                     }
                     entryField
                     attachmentRow
-                    if let photoError {
-                        Text(photoError)
+                    if let error = dictationError ?? photoError {
+                        Text(error)
                             .font(.footnote)
                             .foregroundStyle(Design.Color.danger)
                     }
@@ -229,7 +236,8 @@ struct WorkoutLogSheet: View {
     }
 
     private var placeholder: String {
-        if isDictating { return "Listening…" }
+        if isDictating { return "Recording… tap stop when you’re done" }
+        if isTranscribingDictation { return VoiceCopy.transcribing }
         if session != nil { return "Bench 185 for 8, 8, 7. Rows 3×10 at 70s. Pull-ups +25 for 8…" }
         switch kind {
         case .cardio: return "25 min on the bike, 6.2 mi, avg HR 141…"
@@ -252,7 +260,7 @@ struct WorkoutLogSheet: View {
                         .background(Design.Color.emberFill, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(isStartingDictation)
+                .disabled(isStartingDictation || isTranscribingDictation)
                 .accessibilityLabel(isDictating ? "Stop dictation" : "Dictate")
             }
             PhotosPicker(selection: $photoItem, matching: .images) {
@@ -326,7 +334,11 @@ struct WorkoutLogSheet: View {
     private func toggleDictation(_ hook: WorkoutDictationHook) async {
         if isDictating {
             isDictating = false
-            if let take = await hook.stop() {
+            isTranscribingDictation = true
+            let finished = await hook.stop()
+            isTranscribingDictation = false
+            if finished == nil { dictationError = hook.failureMessage() }
+            if let take = finished {
                 let spoken = take.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !spoken.isEmpty {
                     let existing = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -336,6 +348,7 @@ struct WorkoutLogSheet: View {
             }
         } else {
             textFocused = false
+            dictationError = nil
             isStartingDictation = true
             let started = await hook.start()
             isStartingDictation = false

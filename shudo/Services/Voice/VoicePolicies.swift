@@ -4,22 +4,39 @@ import Foundation
 // is deterministic and unit-tested; the Speech/AVFoundation plumbing lives in
 // the sibling files and only feeds events into these types.
 
-/// Identifies which on-device recognizer produced a take. The raw values are
-/// a wire contract: `speech_engine` on create_entry / correct_entry /
+/// Identifies which recognizer produced a take. The raw values are a wire
+/// contract: `speech_engine` on create_entry / correct_entry /
 /// onboard_profile / coach_chat, validated server-side against the same
 /// allowlist (supabase/functions/_shared/capture_validation.ts).
 enum SpeechEngineID: String, CaseIterable, Codable, Sendable {
     case speechTranscriber = "apple.speech_transcriber"
     case dictationTranscriber = "apple.dictation_transcriber"
     case sfSpeechOnDevice = "apple.sf_speech_on_device"
+    /// Record the take, then transcribe it on Shudo's `transcribe` function
+    /// (OpenAI gpt-4o-transcribe) once Luke taps send/stop.
+    case openAITranscribe = "openai.gpt-4o-transcribe"
 
     var diagnosticName: String {
         switch self {
         case .speechTranscriber: return "speech_transcriber"
         case .dictationTranscriber: return "dictation_transcriber"
         case .sfSpeechOnDevice: return "sf_speech_on_device"
+        case .openAITranscribe: return "openai_transcribe"
         }
     }
+
+    /// Records audio and transcribes it after the take — no live words.
+    var transcribesAfterRecording: Bool { self == .openAITranscribe }
+}
+
+/// Which screen a server transcription is for (`purpose` on the
+/// `transcribe` function; it picks the vocabulary prompt server-side).
+enum TranscriptionPurpose: String, CaseIterable, Sendable {
+    case meal
+    case coach
+    case correction
+    case onboarding
+    case workout
 }
 
 /// One recognizer update. `volatile` replaces the tentative tail of the
@@ -45,6 +62,16 @@ struct VoiceProfile: Equatable, Sendable {
     /// keeping the committed + volatile text it already has.
     let finalizationTimeout: TimeInterval
     let microphoneDeniedMessage: String
+    /// Set: record, then transcribe on the server after the take (no live
+    /// words). Nil: live on-device recognition (the weigh-in, which stops by
+    /// itself on a spoken number).
+    var transcriptionPurpose: TranscriptionPurpose? = nil
+
+    /// How long a stop waits for the server transcription before offering a
+    /// retry (the recording is kept).
+    static let serverTranscriptionTimeout: TimeInterval = 45
+
+    var transcribesOnServer: Bool { transcriptionPurpose != nil }
 
     static let meal = VoiceProfile(
         name: "meal",
@@ -53,7 +80,8 @@ struct VoiceProfile: Equatable, Sendable {
         prefersFastResults: false,
         autoStopStableInterval: nil,
         finalizationTimeout: 2.5,
-        microphoneDeniedMessage: "Microphone access is required to record a meal."
+        microphoneDeniedMessage: "Microphone access is required to record a meal.",
+        transcriptionPurpose: .meal
     )
 
     static let correction = VoiceProfile(
@@ -63,7 +91,8 @@ struct VoiceProfile: Equatable, Sendable {
         prefersFastResults: false,
         autoStopStableInterval: nil,
         finalizationTimeout: 2.5,
-        microphoneDeniedMessage: "Microphone access is off for Shudo — turn it on in Settings or type the change."
+        microphoneDeniedMessage: "Microphone access is off for Shudo — turn it on in Settings or type the change.",
+        transcriptionPurpose: .correction
     )
 
     static let onboarding = VoiceProfile(
@@ -73,7 +102,8 @@ struct VoiceProfile: Equatable, Sendable {
         prefersFastResults: false,
         autoStopStableInterval: nil,
         finalizationTimeout: 2.5,
-        microphoneDeniedMessage: "Microphone access is off for Shudo — turn it on in Settings or type instead."
+        microphoneDeniedMessage: "Microphone access is off for Shudo — turn it on in Settings or type instead.",
+        transcriptionPurpose: .onboarding
     )
 
     static let weighIn = VoiceProfile(
@@ -93,7 +123,19 @@ struct VoiceProfile: Equatable, Sendable {
         prefersFastResults: false,
         autoStopStableInterval: nil,
         finalizationTimeout: 2.5,
-        microphoneDeniedMessage: "Microphone access is off for Shudo — turn it on in Settings or type."
+        microphoneDeniedMessage: "Microphone access is off for Shudo — turn it on in Settings or type.",
+        transcriptionPurpose: .coach
+    )
+
+    static let workout = VoiceProfile(
+        name: "workout",
+        maximumDuration: 5 * 60,
+        maximumCharacters: 4_000,
+        prefersFastResults: false,
+        autoStopStableInterval: nil,
+        finalizationTimeout: 2.5,
+        microphoneDeniedMessage: "Microphone access is off for Shudo — turn it on in Settings or type.",
+        transcriptionPurpose: .workout
     )
 
     func remainingTime(after elapsed: TimeInterval) -> TimeInterval {
@@ -305,6 +347,26 @@ enum SpeechEnginePolicy {
         case unavailable
     }
 
+    /// The recognizer for a take on `profile`: meals, corrections,
+    /// onboarding, the coach and workouts record and transcribe on the server
+    /// (better accuracy; no model download, no speech permission); the
+    /// weigh-in stays live on-device because it stops itself on a number.
+    static func select(
+        for profile: VoiceProfile,
+        snapshot: SpeechAssetSnapshot,
+        speechAuthorization: SpeechAuthorizationState
+    ) -> Selection {
+        if profile.transcribesOnServer { return .engine(.openAITranscribe) }
+        return select(snapshot, speechAuthorization: speechAuthorization)
+    }
+
+    /// The idle mic control for `profile`: a server profile never waits on
+    /// the on-device model download.
+    static func idleAvailability(for profile: VoiceProfile, snapshot: SpeechAssetSnapshot) -> Selection {
+        if profile.transcribesOnServer { return .engine(.openAITranscribe) }
+        return idleAvailability(snapshot)
+    }
+
     static func select(
         _ snapshot: SpeechAssetSnapshot,
         speechAuthorization: SpeechAuthorizationState
@@ -416,6 +478,13 @@ enum VoiceCopy {
     static let microphoneFailed = "The microphone couldn’t start. Try again."
     static let microphoneSlow = "The microphone is taking too long to start. Try again."
     static let recognizerFailed = "Voice couldn’t start. Try again or type it."
+    static let transcribing = "Transcribing…"
+    static let transcriptionOffline =
+        "Couldn’t reach Shudo to transcribe. Your recording is kept — retry when you’re online."
+    static let transcriptionTimedOut =
+        "Transcribing took too long. Your recording is kept — retry or discard it."
+    static let transcriptionFailed = "Transcription failed. Your recording is kept — retry or discard it."
+    static let transcriptionSignedOut = "Sign in again to transcribe. Your recording is kept."
 
     static func preparing(progress: Double?) -> String {
         guard let progress else { return "Getting voice ready…" }

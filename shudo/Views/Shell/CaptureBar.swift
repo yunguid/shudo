@@ -5,7 +5,8 @@ import UIKit
 struct CaptureBarActions {
     /// Send a message to Shudo (the coach routes meals/workouts via tools).
     var send: (_ text: String, _ mode: CoachInputMode, _ speechEngine: String?) -> Void
-    /// The classic meal composer (`autoStartRecording` = quick voice meal).
+    /// The classic meal composer (`autoStartRecording` starts its own
+    /// recording; the bar itself never asks for that).
     var openComposer: (_ autoStartRecording: Bool) -> Void
     var mealPhoto: () -> Void
     var scanBarcode: () -> Void
@@ -16,6 +17,9 @@ struct CaptureBarActions {
     var beginTyping: () -> Void
     /// The bar is about to listen or type: a chance to warm location.
     var willCompose: () -> Void = {}
+    /// A send went out or a recording was discarded (ends a one-off
+    /// context such as `.bio`).
+    var captureEnded: () -> Void = {}
 }
 
 /// The draft lives in the shell so it survives tab switches.
@@ -51,71 +55,118 @@ struct CaptureDraft: Equatable {
 }
 
 /// "Tell Shudo anything…" — the one input on every tab, mounted as the
-/// TabView's bottom accessory. The ember mic dictates on-device:
-/// tap = words stream into the field (edit, then send), hold = talk and
-/// release to send (slide left to cancel). Tapping the field opens a
-/// keyboard-docked composer; "+" opens the classic meal composer (hold it
-/// for a quick voice meal or a barcode); the camera menu routes photos.
+/// TabView's bottom accessory, and the app's only voice entry point
+/// (other screens call `CaptureController`).
+///
+/// Left-handed by design: the bottom-left button is both start and send.
+/// Tap the mic and it records (no live words: the field becomes a pulsing
+/// dot, timer and level meter) while the button turns into the ember send
+/// arrow in place; tap it again to stop → "Transcribing…" → the text goes
+/// straight to Shudo. ✕ to discard sits on the trailing edge, away from the
+/// thumb. Hold the mic to talk and release to send (slide away to cancel).
+/// A failed transcription keeps the recording: the same button retries.
+/// Tapping the field opens a keyboard-docked composer; "+" opens the meal
+/// composer; the camera menu routes photos. The placeholder and the
+/// `context_hint` follow `context` (the tab, or a screen's request).
 struct CaptureBar: View {
     @ObservedObject var voice: VoiceTranscriber
     @Binding var draft: CaptureDraft
+    var context: CaptureContext = .today
     let actions: CaptureBarActions
 
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressStartedAt: Date?
     @State private var holdTask: Task<Void, Never>?
     @State private var isHolding = false
     @State private var holdCancels = false
+    /// Send was tapped: the take this stop produces goes to Shudo, not into
+    /// the draft.
+    @State private var isSendingVoice = false
     @State private var sentCount = 0
     @State private var notice: String?
     @State private var noticeTask: Task<Void, Never>?
 
     private var isInline: Bool { placement == .inline }
-    private var isCapturing: Bool { voice.isBusy }
-    private var showsSend: Bool { !draft.isEmpty || voice.isListening }
+    /// The field is a recording / transcribing / retry strip.
+    private var isVoiceActive: Bool { voice.isBusy || voice.canRetryTranscription || isHolding }
+    private var showsDraftSend: Bool { !isVoiceActive && !draft.isEmpty }
 
     var body: some View {
         HStack(spacing: isInline ? 6 : 8) {
-            micButton
-            field
-            if showsSend {
-                sendButton
+            // Always the same view, so a hold that starts recording keeps
+            // its gesture: mic → send arrow → (spinner) → mic.
+            leadingButton
+            if isVoiceActive {
+                voiceStrip
+                discardButton
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             } else {
-                if !isInline { composerButton }
-                cameraMenu
+                field
+                if showsDraftSend {
+                    draftSendButton
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                } else {
+                    if !isInline { composerButton }
+                    cameraMenu
+                }
             }
         }
         .padding(.leading, isInline ? 4 : 6)
         .padding(.trailing, isInline ? 4 : 8)
-        .animation(Design.Motion.snap, value: showsSend)
+        .animation(Design.Motion.snap, value: isVoiceActive)
+        .animation(Design.Motion.snap, value: showsDraftSend)
         .sensoryFeedback(.impact(weight: .light), trigger: sentCount)
         .onChange(of: voice.phase) { _, phase in
             // A take the system ended on its own (time limit, interruption)
-            // parks as `.ready`; fold it into the draft.
-            if phase == .ready, !isHolding, let take = voice.collectReadyTake() {
+            // parks as `.ready`; fold it into the draft to review and send.
+            if phase == .ready, !isHolding, !isSendingVoice, let take = voice.collectReadyTake() {
                 draft.append(take)
             }
-            if let message = voice.errorMessage { show(notice: message) }
+            if !voice.canRetryTranscription, let message = voice.errorMessage {
+                show(notice: message)
+            } else if phase == .idle, voice.notice == .didNotCatchThat, !isSendingVoice {
+                show(notice: VoiceCopy.didNotCatchThat)
+            }
         }
     }
 
-    // MARK: Mic
+    // MARK: Leading: mic / send / retry (one spot)
 
-    private var micButton: some View {
+    private enum LeadingRole {
+        case mic, hold, send, transcribing, retry
+    }
+
+    private var leadingRole: LeadingRole {
+        if isHolding { return .hold }
+        if voice.canRetryTranscription { return .retry }
+        if voice.isFinishing { return .transcribing }
+        if voice.isListening || voice.isStarting { return .send }
+        return .mic
+    }
+
+    private var leadingButton: some View {
         let size: CGFloat = isInline ? 30 : 36
+        let role = leadingRole
+        let active = role != .mic
         return ZStack {
             Circle()
-                .fill(Design.Color.emberFill)
+                .fill(active ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.emberFill))
                 .frame(width: size, height: size)
-                .scaleEffect(isHolding ? 1.12 : 1)
-                .shadow(color: Design.Color.ember.opacity(isCapturing ? 0.55 : 0.25), radius: isCapturing ? 10 : 6)
-            Image(systemName: micSymbol)
-                .font(.system(size: isInline ? 13 : 15, weight: .bold))
-                .foregroundStyle(Design.Color.onEmber)
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.variableColor.iterative, isActive: isHolding)
+                .scaleEffect(role == .hold ? 1.14 : (active ? 1.06 : 1))
+                .shadow(color: Design.Color.ember.opacity(active ? 0.55 : 0.25), radius: active ? 10 : 6)
+            if role == .transcribing {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Design.Color.onEmber)
+            } else {
+                Image(systemName: leadingSymbol(role))
+                    .font(.system(size: isInline ? 13 : 15, weight: role == .send ? .heavy : .bold))
+                    .foregroundStyle(Design.Color.onEmber)
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.variableColor.iterative, isActive: role == .hold)
+            }
         }
         .frame(width: size + 6, height: size + 6)
         .contentShape(Circle())
@@ -123,38 +174,70 @@ struct CaptureBar: View {
         .sensoryFeedback(trigger: voice.isListening) { _, listening in listening ? .start : .stop }
         .accessibilityElement()
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(isCapturing ? "Stop dictation" : "Talk to Shudo")
-        .accessibilityHint(isCapturing ? "Keeps your words in the field" : "Dictates into the field. Hold to talk and send.")
-        .accessibilityIdentifier("capture.mic")
-        .accessibilityAction { Task { await toggleDictation() } }
+        .accessibilityLabel(leadingLabel(role))
+        .accessibilityHint(leadingHint(role))
+        .accessibilityIdentifier(leadingIdentifier(role))
+        .accessibilityAction { Task { await leadingTapped() } }
         .animation(Design.Motion.snap, value: isHolding)
     }
 
-    private var micSymbol: String {
-        if isHolding { return "waveform" }
-        if isCapturing { return "stop.fill" }
-        return "mic.fill"
+    private func leadingSymbol(_ role: LeadingRole) -> String {
+        switch role {
+        case .mic: return "mic.fill"
+        case .hold: return "waveform"
+        case .send, .transcribing: return "arrow.up"
+        case .retry: return "arrow.clockwise"
+        }
     }
 
-    /// One gesture for both: a quick tap toggles dictation into the field; a
-    /// hold past ~0.35 s is push-to-talk (release sends, slide left cancels).
+    private func leadingLabel(_ role: LeadingRole) -> String {
+        switch role {
+        case .mic: return "Talk to Shudo"
+        case .hold: return "Recording"
+        case .send: return "Send to Shudo"
+        case .transcribing: return "Transcribing"
+        case .retry: return "Retry transcription"
+        }
+    }
+
+    private func leadingHint(_ role: LeadingRole) -> String {
+        switch role {
+        case .mic: return "Records a message. Tap again to send, or hold to talk and release to send."
+        case .hold: return "Release to send"
+        case .send: return "Stops recording, transcribes and sends"
+        case .transcribing: return ""
+        case .retry: return "Sends the kept recording again"
+        }
+    }
+
+    private func leadingIdentifier(_ role: LeadingRole) -> String {
+        switch role {
+        case .mic, .hold: return "capture.mic"
+        case .send, .transcribing: return "capture.send"
+        case .retry: return "capture.retry"
+        }
+    }
+
+    /// A quick tap is start / send / retry; a hold past ~0.35 s from idle is
+    /// push-to-talk (release sends; slide well away to cancel).
     private var pressGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if pressStartedAt == nil {
                     pressStartedAt = Date()
                     holdTask?.cancel()
-                    guard !voice.isBusy else { return }
+                    guard leadingRole == .mic else { return }
                     holdTask = Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(350))
                         guard !Task.isCancelled, pressStartedAt != nil else { return }
                         isHolding = true
                         holdCancels = false
-                        actions.willCompose()
-                        _ = await voice.start()
+                        await startRecording()
                     }
                 }
-                if isHolding { holdCancels = value.translation.width < -70 }
+                if isHolding {
+                    holdCancels = abs(value.translation.width) > 110 || value.translation.height < -90
+                }
             }
             .onEnded { _ in
                 holdTask?.cancel()
@@ -165,101 +248,162 @@ struct CaptureBar: View {
                 if wasHolding {
                     Task { await finishHold(cancelled: holdCancels) }
                 } else {
-                    Task { await toggleDictation() }
+                    Task { await leadingTapped() }
                 }
             }
     }
 
-    private func toggleDictation() async {
-        if voice.isBusy {
-            if let take = await voice.stop() { draft.append(take) }
+    private func leadingTapped() async {
+        switch leadingRole {
+        case .retry:
+            await retryAndSend()
+        case .send:
+            if voice.isStarting {
+                // Nothing recorded yet; the next tap sends.
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                return
+            }
+            await sendRecording()
+        case .transcribing, .hold:
             return
+        case .mic:
+            if voice.phase == .ready, let take = voice.collectReadyTake() {
+                draft.append(take)
+                return
+            }
+            if voice.needsSettings, let url = URL(string: UIApplication.openSettingsURLString) {
+                openURL(url)
+                return
+            }
+            await startRecording()
         }
-        if voice.phase == .ready, let take = voice.collectReadyTake() {
-            draft.append(take)
-            return
-        }
-        if voice.needsSettings, let url = URL(string: UIApplication.openSettingsURLString) {
-            openURL(url)
-            return
-        }
+    }
+
+    private func startRecording() async {
         actions.willCompose()
-        if !(await voice.start()), let message = voice.errorMessage {
+        voice.transcriptionPurposeOverride = context.transcriptionPurpose
+        if !(await voice.start()), !isHolding, let message = voice.errorMessage {
             show(notice: message)
         }
     }
 
     private func finishHold(cancelled: Bool) async {
         if cancelled {
-            voice.cancel()
-            show(notice: "Cancelled")
+            discardRecording()
             return
         }
-        if let take = await voice.stop() { draft.append(take) }
-        send()
+        await sendRecording()
     }
 
     // MARK: Field
 
-    @ViewBuilder
     private var field: some View {
-        if isCapturing {
-            liveTranscript
-        } else {
-            Button {
-                actions.beginTyping()
-            } label: {
-                Group {
-                    if let notice {
-                        Text(notice).foregroundStyle(Design.Color.honey)
-                    } else if draft.isEmpty {
-                        Text(isInline ? "Tell Shudo…" : "Tell Shudo anything…")
-                            .foregroundStyle(Design.Color.textTertiary)
-                    } else {
-                        Text(draft.text).foregroundStyle(Design.Color.textPrimary)
-                    }
+        Button {
+            actions.beginTyping()
+        } label: {
+            Group {
+                if let notice {
+                    Text(notice).foregroundStyle(Design.Color.honey)
+                } else if draft.isEmpty {
+                    Text(isInline ? context.compactPlaceholder : context.placeholder)
+                        .foregroundStyle(Design.Color.textTertiary)
+                } else {
+                    Text(draft.text).foregroundStyle(Design.Color.textPrimary)
                 }
-                .font(.body)
-                .lineLimit(1)
-                .truncationMode(.head)
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(draft.isEmpty ? "Tell Shudo anything" : "Draft: \(draft.text)")
-            .accessibilityHint("Opens the keyboard")
-            .accessibilityIdentifier("capture.field")
-        }
-    }
-
-    private var liveTranscript: some View {
-        let heard = voice.transcript.displayText
-        let prefix = draft.trimmed
-        let text = [prefix, heard].filter { !$0.isEmpty }.joined(separator: " ")
-        return Text(text.isEmpty ? (voice.isStarting ? "Starting…" : "Listening…") : text)
             .font(.body)
-            .foregroundStyle(text.isEmpty ? Design.Color.textTertiary : Design.Color.textPrimary)
             .lineLimit(1)
             .truncationMode(.head)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Live transcript")
-            .accessibilityValue(text)
-            .accessibilityIdentifier("capture.live")
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(draft.isEmpty ? context.placeholder : "Draft: \(draft.text)")
+        .accessibilityHint("Opens the keyboard")
+        .accessibilityIdentifier("capture.field")
+    }
+
+    // MARK: Voice strip
+
+    private var voiceStrip: some View {
+        Group {
+            if voice.canRetryTranscription {
+                Text(voice.errorMessage ?? VoiceCopy.transcriptionFailed)
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.honey)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .accessibilityIdentifier("capture.error")
+            } else if voice.isFinishing {
+                Text(VoiceCopy.transcribing)
+                    .font(.body)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .accessibilityIdentifier("capture.transcribing")
+            } else if voice.isListening {
+                recordingStrip
+            } else {
+                Text(isHolding ? "Hold to talk…" : "Starting…")
+                    .font(.body)
+                    .foregroundStyle(Design.Color.textTertiary)
+                    .accessibilityIdentifier("capture.recording")
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+    }
+
+    private var recordingStrip: some View {
+        HStack(spacing: 8) {
+            RecordingPulseDot(size: 8)
+            Text(VoiceCopy.clock(voice.elapsedTime))
+                .font(Design.Typeface.numeral(.body, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Design.Color.textPrimary)
+                .contentTransition(reduceMotion ? .identity : .numericText())
+            if isHolding {
+                Text(holdCancels ? "Release to cancel" : "Release to send")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(holdCancels ? Design.Color.danger : Design.Color.textSecondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VoiceMeterView(
+                    levels: Array(voice.meterLevels.suffix(isInline ? 10 : 16)),
+                    isActive: true,
+                    tint: Design.Color.ember,
+                    spacing: 2
+                )
+                .frame(height: 20)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isHolding ? "Recording. Release to send." : "Recording")
+        .accessibilityValue(VoiceCopy.clock(voice.elapsedTime))
+        .accessibilityIdentifier("capture.recording")
     }
 
     // MARK: Trailing controls
 
-    private var sendButton: some View {
+    /// ✕ on the trailing edge, away from the left thumb: drops the
+    /// recording (or a kept one, or a transcription in flight).
+    private var discardButton: some View {
+        Button(action: discardRecording) {
+            Image(systemName: "xmark")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Design.Color.textSecondary)
+                .frame(width: 32, height: 32)
+                .background(Design.Color.surface3, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isHolding)
+        .accessibilityLabel("Discard recording")
+        .accessibilityIdentifier("capture.discard")
+    }
+
+    private var draftSendButton: some View {
         Button {
-            if voice.isBusy {
-                Task {
-                    if let take = await voice.stop() { draft.append(take) }
-                    send()
-                }
-            } else {
-                send()
-            }
+            send()
         } label: {
             Image(systemName: "arrow.up")
                 .font(.system(size: 15, weight: .bold))
@@ -274,7 +418,6 @@ struct CaptureBar: View {
 
     private var composerButton: some View {
         Menu {
-            Button("Quick voice meal", systemImage: "mic.badge.plus") { actions.openComposer(true) }
             Button("Type a meal", systemImage: "square.and.pencil") { actions.openComposer(false) }
             Button("Scan barcode", systemImage: "barcode.viewfinder") { actions.scanBarcode() }
         } label: {
@@ -289,7 +432,7 @@ struct CaptureBar: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .accessibilityLabel("Log meal")
-        .accessibilityHint("Opens the meal composer. Touch and hold for more.")
+        .accessibilityHint("Opens the meal composer. Touch and hold to scan a barcode.")
     }
 
     private var cameraMenu: some View {
@@ -313,11 +456,60 @@ struct CaptureBar: View {
 
     // MARK: Actions
 
+    /// Stop → "Transcribing…" → the text goes to Shudo. A failed upload
+    /// leaves the Retry state; nothing heard says so.
+    private func sendRecording() async {
+        guard !isSendingVoice else { return }
+        isSendingVoice = true
+        defer { isSendingVoice = false }
+        guard let take = await voice.stop() else {
+            reportMissingTake()
+            return
+        }
+        deliverAndSend(take)
+    }
+
+    private func retryAndSend() async {
+        guard !isSendingVoice else { return }
+        isSendingVoice = true
+        defer { isSendingVoice = false }
+        guard let take = await voice.retryTranscription() else {
+            reportMissingTake()
+            return
+        }
+        deliverAndSend(take)
+    }
+
+    private func deliverAndSend(_ take: VoiceTake) {
+        draft.append(take)
+        send()
+    }
+
+    private func reportMissingTake() {
+        // The retry state carries a kept recording's error itself.
+        guard !voice.canRetryTranscription else {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return
+        }
+        if let message = voice.errorMessage {
+            show(notice: message)
+        } else if voice.notice == .didNotCatchThat {
+            show(notice: VoiceCopy.didNotCatchThat)
+        }
+    }
+
+    private func discardRecording() {
+        voice.cancel()
+        show(notice: "Recording discarded")
+        actions.captureEnded()
+    }
+
     private func send() {
         guard let submission = draft.submission else { return }
         actions.send(submission.text, submission.mode, submission.speechEngine)
         draft.clear()
         sentCount += 1
+        actions.captureEnded()
     }
 
     private func show(notice message: String) {
@@ -337,6 +529,7 @@ struct CaptureBar: View {
 /// tucks it back into the bar with the draft kept.
 struct CaptureComposer: View {
     @Binding var draft: CaptureDraft
+    var placeholder = CaptureContext.today.placeholder
     var onSend: () -> Void
     var onDictate: () -> Void
     var onClose: () -> Void
@@ -353,12 +546,12 @@ struct CaptureComposer: View {
                     .background(Design.Color.emberFill, in: Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Dictate instead")
+            .accessibilityLabel("Record instead")
 
             TextField(
                 "",
                 text: $draft.text,
-                prompt: Text("Tell Shudo anything…").foregroundStyle(Design.Color.textTertiary),
+                prompt: Text(placeholder).foregroundStyle(Design.Color.textTertiary),
                 axis: .vertical
             )
             .lineLimit(1...6)

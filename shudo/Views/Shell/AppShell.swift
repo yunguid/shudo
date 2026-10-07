@@ -19,8 +19,11 @@ struct AppShell: View {
     /// re-render only the views that show them, never the whole shell.
     @StateObject private var coachVoice = UnobservedHolder(VoiceTranscriber(profile: .coach))
     @StateObject private var composerVoice = UnobservedHolder(VoiceTranscriber(profile: .meal))
-    @StateObject private var workoutVoice = UnobservedHolder(VoiceTranscriber(profile: .coach))
+    @StateObject private var workoutVoice = UnobservedHolder(VoiceTranscriber(profile: .workout))
     @ObservedObject private var router = AppRouter.shared
+    /// The one voice/text entry point other screens call
+    /// (`startRecording(context:)` / `focusText(context:)`).
+    @ObservedObject private var capture = CaptureController.shared
 
     @State private var tab: AppTab
     @State private var headerExpanded: Bool
@@ -81,7 +84,7 @@ struct AppShell: View {
         }
         .tint(Design.Color.ember)
         .tabViewBottomAccessory {
-            CaptureBar(voice: coachVoice.value, draft: $draft, actions: captureActions)
+            CaptureBar(voice: coachVoice.value, draft: $draft, context: capture.context, actions: captureActions)
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .overlay(alignment: .bottom) { typingOverlay }
@@ -109,7 +112,11 @@ struct AppShell: View {
             guard dependencies.loadsRemotely else { return }
             Task { await today.reconcileAfterActivation() }
         }
-        .onChange(of: tab) { _, _ in updatePresence() }
+        .onChange(of: tab) { _, newTab in
+            capture.setTab(newTab)
+            updatePresence()
+        }
+        .onChange(of: capture.request) { _, request in handle(captureControllerRequest: request) }
         .onChange(of: sheet?.id) { _, _ in updatePresence() }
         .onChange(of: cover?.id) { _, _ in updatePresence() }
         .onChange(of: today.isPresentingComposer) { _, _ in updatePresence() }
@@ -171,7 +178,9 @@ struct AppShell: View {
 
     private var captureActions: CaptureBarActions {
         CaptureBarActions(
-            send: { text, mode, engine in sendToCoach(text, mode: mode, engine: engine) },
+            send: { text, mode, engine in
+                sendToCoach(text, mode: mode, engine: engine, hint: capture.context.contextHint)
+            },
             openComposer: { autoStart in openComposer(autoStartRecording: autoStart) },
             mealPhoto: {
                 if CameraAvailability.hasCamera {
@@ -193,7 +202,8 @@ struct AppShell: View {
                 warmLocation()
                 isTyping = true
             },
-            willCompose: warmLocation
+            willCompose: warmLocation,
+            captureEnded: { capture.captureEnded() }
         )
     }
 
@@ -209,10 +219,12 @@ struct AppShell: View {
                     .accessibilityHidden(true)
                 CaptureComposer(
                     draft: $draft,
+                    placeholder: capture.context.placeholder,
                     onSend: sendDraft,
                     onDictate: {
                         isTyping = false
                         let voice = coachVoice.value
+                        voice.transcriptionPurposeOverride = capture.context.transcriptionPurpose
                         Task { @MainActor in
                             try? await Task.sleep(for: .milliseconds(250))
                             _ = await voice.start()
@@ -227,9 +239,15 @@ struct AppShell: View {
 
     private func sendDraft() {
         guard let submission = draft.submission else { return }
-        sendToCoach(submission.text, mode: submission.mode, engine: submission.speechEngine)
+        sendToCoach(
+            submission.text,
+            mode: submission.mode,
+            engine: submission.speechEngine,
+            hint: capture.context.contextHint
+        )
         draft.clear()
         isTyping = false
+        capture.captureEnded()
     }
 
     private func sendToCoach(_ text: String, mode: CoachInputMode, engine: String?, hint: CoachContextHint? = nil) {
@@ -302,10 +320,22 @@ struct AppShell: View {
         return WorkoutDictationHook(
             start: { await voice.start() },
             stop: {
-                guard let take = await voice.stop() else { return nil }
+                // Stop → transcribe; a failed upload is retried once, then
+                // dropped with its reason (the sheet keeps typing open).
+                var take = await voice.finishPendingTake()
+                if take == nil, voice.canRetryTranscription {
+                    take = await voice.retryTranscription()
+                }
+                guard let take else { return nil }
                 return WorkoutDictation(text: take.text, speechEngine: take.engine.rawValue)
             },
-            cancel: { voice.cancel() }
+            cancel: { voice.cancel() },
+            failureMessage: {
+                let message = voice.errorMessage
+                    ?? (voice.notice == .didNotCatchThat ? VoiceCopy.didNotCatchThat : nil)
+                if voice.canRetryTranscription { voice.cancel() }
+                return message
+            }
         )
     }
 
@@ -435,7 +465,9 @@ struct AppShell: View {
             }
             Task { await dayContext.load(localDay: dayContext.localDay) }
         }
+        capture.setTab(tab)
         updatePresence()
+        handle(captureControllerRequest: capture.request)
         handle(coachRequest: router.coachRequest)
         handle(captureRequest: router.captureRequest)
         Task {
@@ -484,11 +516,46 @@ struct AppShell: View {
         }
     }
 
+    /// `shudo://capture`: voice goes through the one entry point — the
+    /// bar records on Today (the coach logs a described meal).
     private func handle(captureRequest request: AppRouter.CaptureRequest?) {
         guard let request else { return }
         router.consume(request)
-        tab = .today
-        openComposer(autoStartRecording: request.autoStartRecording)
+        if request.autoStartRecording {
+            capture.startRecording(context: .today)
+        } else {
+            tab = .today
+            openComposer(autoStartRecording: false)
+        }
+    }
+
+    /// `CaptureController.startRecording(context:)` / `focusText(context:)`
+    /// from anywhere: close whatever covers the bar (Settings for `.bio`),
+    /// go to the context's tab, then record or open the keyboard composer.
+    private func handle(captureControllerRequest request: CaptureController.Request?) {
+        guard let request else { return }
+        capture.consume(request)
+        let wasCovered = sheet != nil || cover != nil || today.isPresentingComposer
+        sheet = nil
+        cover = nil
+        today.isPresentingComposer = false
+        if tab != request.context.tab { tab = request.context.tab }
+        let voice = coachVoice.value
+        Task { @MainActor in
+            // Let a dismissing sheet get out of the way first.
+            if wasCovered { try? await Task.sleep(for: .milliseconds(450)) }
+            switch request.action {
+            case .record:
+                guard !voice.isBusy, !voice.canRetryTranscription else { return }
+                isTyping = false
+                warmLocation()
+                voice.transcriptionPurposeOverride = request.context.transcriptionPurpose
+                _ = await voice.start()
+            case .type:
+                warmLocation()
+                isTyping = true
+            }
+        }
     }
 }
 

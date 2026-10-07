@@ -1,14 +1,15 @@
 import SwiftUI
 import UIKit
 
-/// The shared dictation control for the meal composer, the correction sheet
-/// and onboarding: level meter, timer, the words as they are heard
-/// (committed in ink, the still-changing tail muted), undo for the last
-/// take, and the mic button. Finished takes are handed to `onTake`; the
-/// owning screen appends them to its editable note.
+/// The shared voice control for the meal composer, the correction sheet,
+/// onboarding and the bio: record → stop → "Transcribing…" → the text lands
+/// in the owner's editable note (`onTake`). While recording there are no
+/// live words, just a pulsing ember dot, the elapsed time, a level meter, a
+/// discard ✕ and the stop button. A failed upload keeps the recording and
+/// offers Retry / Discard.
 ///
-/// This view observes the transcriber, so the ~16 Hz meter and transcript
-/// updates re-render only the card, never the screen's text editor.
+/// This view observes the transcriber, so the ~16 Hz meter updates
+/// re-render only the card, never the screen's text editor.
 struct VoiceCaptureCard: View {
     struct Style {
         enum StopDetail {
@@ -30,7 +31,7 @@ struct VoiceCaptureCard: View {
 
         static let meal = Style(
             idleHeadline: "Describe what you ate",
-            idleDetail: "Tap to talk — your words land in the note",
+            idleDetail: "Tap to record — stop, and your words land in the note",
             startLabel: "Start recording",
             stopLabel: "Stop recording",
             stopDetail: .remaining,
@@ -42,7 +43,7 @@ struct VoiceCaptureCard: View {
 
         static let correction = Style(
             idleHeadline: "Speak the correction",
-            idleDetail: "Tap to talk — your words land in the note",
+            idleDetail: "Tap to record — stop, and your words land in the note",
             startLabel: "Start correction recording",
             stopLabel: "Stop correction recording",
             stopDetail: .elapsed,
@@ -54,7 +55,7 @@ struct VoiceCaptureCard: View {
 
         static let onboarding = Style(
             idleHeadline: "Describe your goals",
-            idleDetail: "Tap to talk — your words land below",
+            idleDetail: "Tap to record — stop, and your words land below",
             startLabel: "Start recording",
             stopLabel: "Stop recording",
             stopDetail: .none,
@@ -88,11 +89,20 @@ struct VoiceCaptureCard: View {
             .padding(.horizontal, style.showsBackground ? 0 : 18)
 
             VStack(spacing: 5) {
-                Text(headline)
-                    .font(voice.isListening ? .system(size: 26, weight: .medium) : .headline)
-                    .monospacedDigit()
-                    .foregroundStyle(Design.Color.ink)
-                    .contentTransition(reduceMotion ? .identity : .numericText())
+                HStack(spacing: 8) {
+                    if voice.isListening {
+                        RecordingPulseDot(size: 10)
+                    } else if voice.isFinishing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Design.Color.ember)
+                    }
+                    Text(headline)
+                        .font(voice.isListening ? .system(size: 26, weight: .medium) : .headline)
+                        .monospacedDigit()
+                        .foregroundStyle(Design.Color.ink)
+                        .contentTransition(reduceMotion ? .identity : .numericText())
+                }
                 Text(detail)
                     .font(.footnote)
                     .monospacedDigit()
@@ -100,30 +110,12 @@ struct VoiceCaptureCard: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            if voice.isListening || voice.isFinishing {
-                liveTranscript
-                    .transition(.opacity)
-            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("Voice status")
 
             statusLine
 
-            HStack(spacing: 16) {
-                if canUndo && !voice.isBusy {
-                    Button(action: onUndo) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Design.Color.muted)
-                            .frame(width: 48, height: 48)
-                            .background(Design.Color.glassFill, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isDisabled)
-                    .accessibilityLabel(style.undoLabel)
-                }
-
-                micButton
-            }
+            controls
         }
         .padding(style.showsBackground ? 22 : 0)
         .padding(.vertical, style.showsBackground ? 0 : 8)
@@ -150,29 +142,6 @@ struct VoiceCaptureCard: View {
 
     // MARK: Pieces
 
-    private var liveTranscript: some View {
-        let transcript = voice.transcript
-        let committed = Text(transcript.displayCommitted).foregroundStyle(Design.Color.ink)
-        let tail = Text(transcript.displayVolatile).foregroundStyle(Design.Color.muted)
-        return Group {
-            if transcript.isEmpty {
-                Text(voice.isFinishing ? "…" : "Listening…")
-                    .foregroundStyle(Design.Color.subtle)
-            } else {
-                Text("\(committed)\(tail)")
-            }
-        }
-        .font(.body)
-        .lineLimit(4)
-        .truncationMode(.head)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Live transcript")
-        .accessibilityValue(transcript.displayText)
-        .accessibilityIdentifier("Live transcript")
-    }
-
     @ViewBuilder
     private var statusLine: some View {
         if let error = voice.errorMessage {
@@ -182,6 +151,7 @@ struct VoiceCaptureCard: View {
                     .foregroundStyle(Design.Color.danger)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("Voice error")
                 if voice.needsSettings, let url = URL(string: UIApplication.openSettingsURLString) {
                     Button("Open Settings") { openURL(url) }
                         .font(.footnote.weight(.semibold))
@@ -198,6 +168,67 @@ struct VoiceCaptureCard: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        if voice.canRetryTranscription {
+            HStack(spacing: 16) {
+                Button(action: discard) {
+                    Label("Discard", systemImage: "xmark")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Design.Color.muted)
+                        .padding(.horizontal, 18)
+                        .frame(height: 48)
+                        .background(Design.Color.glassFill, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isDisabled)
+                .accessibilityLabel("Discard recording")
+                .accessibilityIdentifier("Discard recording")
+
+                Button(action: retry) {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Design.Color.onEmber)
+                        .padding(.horizontal, 22)
+                        .frame(height: 48)
+                        .background(Design.Color.emberFill, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isDisabled)
+                .accessibilityLabel("Retry transcription")
+                .accessibilityIdentifier("Retry transcription")
+            }
+        } else {
+            HStack(spacing: 16) {
+                if voice.isListening {
+                    Button(action: discard) {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Design.Color.muted)
+                            .frame(width: 48, height: 48)
+                            .background(Design.Color.glassFill, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Discard recording")
+                    .accessibilityIdentifier("Discard recording")
+                } else if canUndo && !voice.isBusy {
+                    Button(action: onUndo) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Design.Color.muted)
+                            .frame(width: 48, height: 48)
+                            .background(Design.Color.glassFill, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isDisabled)
+                    .accessibilityLabel(style.undoLabel)
+                }
+
+                micButton
+            }
         }
     }
 
@@ -240,8 +271,8 @@ struct VoiceCaptureCard: View {
         .accessibilityLabel(buttonLabel)
         .accessibilityHint(
             voice.isListening
-                ? "Adds what you said to the note"
-                : "Transcribes your voice on this iPhone"
+                ? "Transcribes what you said into the note"
+                : "Records your voice, then transcribes it"
         )
     }
 
@@ -251,7 +282,8 @@ struct VoiceCaptureCard: View {
         switch voice.phase {
         case .starting: return "Starting…"
         case .listening: return VoiceCopy.clock(voice.elapsedTime)
-        case .finishing: return "Finishing…"
+        case .finishing: return voice.transcribesOnServer ? VoiceCopy.transcribing : "Finishing…"
+        case .transcriptionFailed: return "Couldn’t transcribe"
         case .preparingModel(let progress): return VoiceCopy.preparing(progress: progress)
         case .idle, .ready, .unavailable, .failed: return style.idleHeadline
         }
@@ -263,11 +295,13 @@ struct VoiceCaptureCard: View {
             return "Getting the microphone ready"
         case .listening:
             switch style.stopDetail {
-            case .remaining: return "\(VoiceCopy.clock(voice.remainingTime)) remaining · tap when done"
-            case .elapsed, .none: return "Tap when you’re done"
+            case .remaining: return "Recording · \(VoiceCopy.clock(voice.remainingTime)) left · tap stop when done"
+            case .elapsed, .none: return "Recording · tap stop when you’re done"
             }
         case .finishing:
-            return "Writing down the last words"
+            return voice.transcribesOnServer ? "Turning your recording into text" : "Writing down the last words"
+        case .transcriptionFailed:
+            return "Your recording is kept"
         case .preparingModel:
             return "The on-device speech model is downloading. Type in the meantime."
         case .idle, .ready, .unavailable, .failed:
@@ -289,10 +323,10 @@ struct VoiceCaptureCard: View {
                 return style.stopLabel
             }
         case .finishing:
-            return "Finishing dictation"
+            return voice.transcribesOnServer ? "Transcribing your recording" : "Finishing dictation"
         case .preparingModel(let progress):
             return VoiceCopy.preparing(progress: progress)
-        case .idle, .ready, .unavailable, .failed:
+        case .idle, .ready, .transcriptionFailed, .unavailable, .failed:
             return style.startLabel
         }
     }
@@ -321,6 +355,19 @@ struct VoiceCaptureCard: View {
         }
     }
 
+    private func retry() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task {
+            if let take = await voice.retryTranscription() { deliver(take) }
+        }
+    }
+
+    private func discard() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        voice.cancel()
+        UIAccessibility.post(notification: .announcement, argument: "Recording discarded")
+    }
+
     private func deliver(_ take: VoiceTake) {
         onTake(take)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -328,16 +375,38 @@ struct VoiceCaptureCard: View {
     }
 }
 
+/// The "recording" tell: an ember dot breathing in and out (steady under
+/// Reduce Motion).
+struct RecordingPulseDot: View {
+    var size: CGFloat = 8
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Circle()
+            .fill(Design.Color.ember)
+            .frame(width: size, height: size)
+            .phaseAnimator(reduceMotion ? [false] : [false, true]) { dot, dimmed in
+                dot
+                    .opacity(dimmed ? 0.3 : 1)
+                    .scaleEffect(dimmed ? 0.8 : 1)
+            } animation: { _ in
+                .easeInOut(duration: 0.75)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+
 /// Bar meter shared by every voice surface.
 struct VoiceMeterView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let levels: [CGFloat]
     let isActive: Bool
     var tint: Color = Design.Color.accentPrimary
+    var spacing: CGFloat = 4
 
     var body: some View {
         GeometryReader { geometry in
-            let spacing: CGFloat = 4
             let count = max(1, levels.count)
             let barWidth = max(2, (geometry.size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
             HStack(alignment: .center, spacing: spacing) {

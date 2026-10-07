@@ -53,9 +53,9 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Shudo uses your location to find stores within walking distance and pick snacks that fit today’s macros.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Shudo uses the microphone so you can talk to it. Your audio is transcribed on your iPhone and never uploaded.</string>
+	<string>Shudo records your voice so it can transcribe meals, workouts and messages to your coach. Recordings are sent for transcription and not kept. Weigh-ins are transcribed on your iPhone.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Shudo transcribes what you say on your iPhone so you can log meals, workouts and weigh-ins by voice. Your audio is never uploaded.</string>
+	<string>Shudo turns a spoken weigh-in into text right on your iPhone. That audio is never uploaded.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

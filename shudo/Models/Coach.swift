@@ -1396,8 +1396,13 @@ enum CoachInputMode: String, Codable, Equatable, Sendable {
     case notificationReply = "notification_reply"
 }
 
+/// `context_hint` on coach_chat: what the capture bar was capturing for.
+/// train → treat as a workout log, body → weight / check-in, bio → bio
+/// update; nil is the plain chat.
 enum CoachContextHint: String, Codable, Equatable, Sendable {
     case bio
+    case train
+    case body
 }
 
 /// `POST coach_chat` (send shape, SPEC §3.1).

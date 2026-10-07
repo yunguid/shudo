@@ -2,8 +2,8 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// What the composer hands to the Today screen: text only (dictation was
-/// transcribed on this iPhone), which recognizer produced any dictated
+/// What the composer hands to the Today screen: text only (a recording was
+/// already transcribed into the note), which engine produced any dictated
 /// words, the photo, and the idempotency key reused on every retry.
 struct EntryCaptureDraft: Equatable {
     let text: String?
@@ -17,8 +17,8 @@ enum EntryComposerPolicy {
 
     static let maximumScannedItems = 4
 
-    /// `hasLiveDictation`: words are on screen from a take still in flight;
-    /// submitting finishes the take and sends them.
+    /// `hasLiveDictation`: a take is recording or transcribing; submitting
+    /// finishes it (stop → transcribe) and sends its words.
     static func canSubmit(
         isSubmitting: Bool,
         isPreparingImage: Bool,
@@ -54,8 +54,8 @@ struct EntryComposerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Owned by the Today screen (so a mic tap can warm it up before this
     /// sheet appears) and deliberately not observed here: the card observes
-    /// it, and this view mirrors only the phase, so meter and transcript
-    /// updates never re-render the note editor.
+    /// it, and this view mirrors only the phase, so meter updates never
+    /// re-render the note editor.
     private let voice: VoiceTranscriber
     @State private var voicePhase: VoiceTranscriber.Phase = .idle
     @State private var hasLiveDictation = false
@@ -203,10 +203,9 @@ struct EntryComposerView: View {
             CaptureDiagnostics.record(.photoPickerDismissed, state: voice.controlState)
         }
         .onChange(of: images) { _, updated in prepareUploadEncoding(for: updated) }
-        .onReceive(voice.$phase) { voicePhase = $0 }
-        .onReceive(voice.$transcript) { transcript in
-            let hasText = !transcript.isEmpty
-            if hasLiveDictation != hasText { hasLiveDictation = hasText }
+        .onReceive(voice.$phase) { phase in
+            voicePhase = phase
+            if hasLiveDictation != phase.holdsTake { hasLiveDictation = phase.holdsTake }
         }
         .onAppear {
             Perf.mark("composer.appear")
@@ -416,7 +415,7 @@ struct EntryComposerView: View {
 
     private var submitTitle: String {
         if isSubmitting {
-            return voicePhase == .finishing ? "Finishing…" : "Sending…"
+            return voicePhase == .finishing ? VoiceCopy.transcribing : "Sending…"
         }
         return isPreparingImage ? "Preparing photos…" : "Log meal"
     }
@@ -610,13 +609,20 @@ struct EntryComposerView: View {
         isSubmitting = true
         localError = nil
         Task {
-            // A take still in flight finishes first (capped, so a slow final
-            // pass keeps the words already on screen) and lands in the note
-            // like any other take.
-            if voice.isBusy {
-                if let take = await voice.stop(finalizationTimeout: 1.5) { appendTake(take) }
-            } else if let take = voice.collectReadyTake() {
+            // A recording still in flight is stopped and transcribed first
+            // (or a failed upload retried once) and lands in the note like
+            // any other take — Log while recording is stop → transcribe →
+            // send in one go.
+            let hadTake = voice.hasTakeInFlight
+            if let take = await voice.finishPendingTake(finalizationTimeout: 1.5) {
                 appendTake(take)
+            } else if hadTake, voice.errorMessage != nil {
+                // The transcription failed: keep the sheet (and a kept
+                // recording, which the card offers to retry or discard)
+                // instead of sending without Luke's words.
+                isSubmitting = false
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
             }
 
             let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
