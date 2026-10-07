@@ -2,7 +2,6 @@ import {
   ANALYSIS_PREVIEW_MAX_CHARACTERS,
   analysisPreviewFromPartialJSON,
   parseAnalysis,
-  responseOutputText,
   RESULT_SCHEMA,
 } from "../_shared/analysis.ts";
 import { assertEquals, assertThrows } from "./assertions.ts";
@@ -103,24 +102,6 @@ Deno.test("partial structured JSON yields only a bounded natural preview", () =>
   );
 });
 
-Deno.test("Responses output text supports convenience and nested shapes", () => {
-  assertEquals(
-    responseOutputText({ output_text: '{"title":"Meal"}' }),
-    '{"title":"Meal"}',
-  );
-  assertEquals(
-    responseOutputText({
-      output_text: "",
-      output: [
-        { content: [{ type: "reasoning" }, { text: '{"title":' }] },
-        { content: [{ text: '"Meal"}' }] },
-      ],
-    }),
-    '{"title":"Meal"}',
-  );
-  assertEquals(responseOutputText({ output: "not-an-array" }), "");
-});
-
 Deno.test("analysis parser rejects malformed totals and confidence", () => {
   const negative = validAnalysis();
   (negative.totals as Record<string, unknown>).protein_g = -1;
@@ -171,9 +152,10 @@ Deno.test("analysis parser rejects missing or mistyped required fields", () => {
     "items were invalid",
   );
 
+  // Claude cannot enforce string lengths, so overlong copy is truncated.
   const longTitle = validAnalysis();
   longTitle.title = "x".repeat(121);
-  assertThrows(() => parseAnalysis(longTitle), undefined, "title");
+  assertEquals(parseAnalysis(longTitle).title, "x".repeat(120));
 
   const unicodeTitle = validAnalysis();
   unicodeTitle.title = "🥗".repeat(120);
@@ -189,11 +171,7 @@ Deno.test("analysis parser rejects missing or mistyped required fields", () => {
 
   const longPreview = validAnalysis();
   longPreview.analysis_preview = "x".repeat(241);
-  assertThrows(
-    () => parseAnalysis(longPreview),
-    undefined,
-    "analysis_preview",
-  );
+  assertEquals(parseAnalysis(longPreview).analysis_preview, "x".repeat(240));
 
   const missingNotes = validAnalysis();
   delete missingNotes.notes;
@@ -208,30 +186,34 @@ Deno.test("analysis parser rejects missing or mistyped required fields", () => {
   assertThrows(() => parseAnalysis(invalidNotes), undefined, "notes");
 });
 
-Deno.test("meal analysis rejects personified copy in every prose field", () => {
+Deno.test("personified copy is repaired without discarding the estimate", () => {
   const preview = validAnalysis();
   preview.analysis_preview = "Shudo observed a chicken and rice bowl.";
-  assertThrows(
-    () => parseAnalysis(preview),
-    undefined,
-    "personified product copy",
-  );
+  const repairedPreview = parseAnalysis(preview);
+  assertEquals(repairedPreview.analysis_preview, repairedPreview.title);
 
   const title = validAnalysis();
   title.title = "Our estimate for the chicken bowl";
-  assertThrows(
-    () => parseAnalysis(title),
-    undefined,
-    "personified product copy",
+  const repairedTitle = parseAnalysis(title);
+  assertEquals(
+    repairedTitle.title,
+    (title.items as Array<{ name: string }>)[0].name.trim(),
   );
 
   const notes = validAnalysis();
-  notes.notes = "The app noticed that the portion is unclear.";
-  assertThrows(
-    () => parseAnalysis(notes),
-    undefined,
-    "personified product copy",
-  );
+  notes.notes =
+    "The app noticed that the portion is unclear. Rice assumed cooked.";
+  assertEquals(parseAnalysis(notes).notes, "Rice assumed cooked.");
+
+  const allPersonified = validAnalysis();
+  allPersonified.notes = "I estimate this is two cups.";
+  assertEquals(parseAnalysis(allPersonified).notes, null);
+});
+
+Deno.test("an analysis with no items is rejected instead of saving 0 kcal", () => {
+  const empty = validAnalysis();
+  empty.items = [];
+  assertThrows(() => parseAnalysis(empty), undefined, "items were invalid");
 });
 
 Deno.test("totals come from components, preserving label calories rather than 4/4/9", () => {

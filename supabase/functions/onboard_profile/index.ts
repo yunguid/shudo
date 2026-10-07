@@ -6,7 +6,6 @@ import {
   ONBOARDING_MODEL,
   ONBOARDING_PROCESSING_BUDGET_MS,
   parseOnboardingCapture,
-  transcribeOnboardingAudio,
 } from "../_shared/onboarding.ts";
 import {
   authenticate,
@@ -150,13 +149,7 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-      const audioTranscript = capture.audio
-        ? await transcribeOnboardingAudio(capture.audio, processingDeadline)
-        : "";
-      const transcript = [capture.text, audioTranscript].filter(Boolean).join(
-        "\n",
-      )
-        .trim().slice(0, 30_000);
+      const transcript = capture.text.trim().slice(0, 30_000);
       const analyzed = await analyzeOnboarding(
         userId,
         transcript,

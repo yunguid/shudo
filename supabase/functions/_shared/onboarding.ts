@@ -1,10 +1,12 @@
-import { responseOutputText } from "./analysis.ts";
 import {
-  AUDIO_TYPES,
-  audioExtension,
+  callClaudeStructured,
+  CLAUDE_MODELS,
+  describeClaudeError,
+  systemBlocks,
+} from "./claude.ts";
+import {
   formFile,
   formString,
-  validateFile,
   validateTimezone,
 } from "./capture_validation.ts";
 import { HttpError } from "./errors.ts";
@@ -12,28 +14,21 @@ import {
   assertNeutralGeneratedCopy,
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
-import { isUuid, requiredEnv } from "./http.ts";
-import { safetyIdentifier } from "./safety.ts";
+import { isUuid } from "./http.ts";
 import {
   calculateDeterministicTargets,
   validateNutritionTarget,
 } from "./target_engine.ts";
 import type { TargetEngineInput } from "./target_engine.ts";
 
-export const ONBOARDING_MODEL = "gpt-6.1-sol";
-export const ONBOARDING_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+export const ONBOARDING_MODEL = CLAUDE_MODELS.sonnet;
 export const ONBOARDING_PROCESSING_BUDGET_MS = 125_000;
-export const ONBOARDING_TRANSCRIPTION_TIMEOUT_MS = 55_000;
-export const ONBOARDING_ANALYSIS_TIMEOUT_MS = 65_000;
-export const MAX_ONBOARDING_AUDIO_BYTES = 25 * 1024 * 1024;
+export const ONBOARDING_ANALYSIS_TIMEOUT_MS = 100_000;
 export const MAX_ONBOARDING_TEXT_CHARACTERS = 30_000;
 export const ONBOARDING_COPY_INSTRUCTION =
   `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Apply that voice rule to summary, assumptions, and suggestions. Keep the summary concise and address the user directly only when useful. goal_notes is user-owned profile context, so preserve its meaning and do not treat first-person wording there as product narration.`;
 export const ONBOARDING_DIETARY_CONTEXT_INSTRUCTION =
   "Preserve useful dietary context such as allergies, restrictions, preferences, recurring foods, and training routine in goal_notes without inventing any of it.";
-export const ONBOARDING_TRANSCRIPTION_PROMPT =
-  "Personal nutrition onboarding. Preserve stated goals, routines, foods, quantities, height, weight, units, allergies, dietary restrictions, dietary preferences, and corrections accurately.";
-
 export const ONBOARDING_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -541,7 +536,6 @@ export function parseOnboardingCapture(form: FormData): {
   clientRequestId: string;
   timezone: string;
   text: string;
-  audio: File | null;
 } {
   const clientRequestId = formString(form, "client_request_id").toLowerCase();
   if (!isUuid(clientRequestId)) {
@@ -552,62 +546,31 @@ export function parseOnboardingCapture(form: FormData): {
   if (Array.from(text).length > MAX_ONBOARDING_TEXT_CHARACTERS) {
     throw new HttpError(413, "Onboarding note is too long");
   }
-  const audio = formFile(form, "audio");
-  validateFile(
-    audio,
-    AUDIO_TYPES,
-    MAX_ONBOARDING_AUDIO_BYTES,
-    "Voice note",
-  );
-  if (!text && !audio) {
+  if (formFile(form, "audio")) {
+    throw new HttpError(
+      415,
+      "Voice is transcribed on your iPhone now. Update Shudo and try again.",
+    );
+  }
+  if (!text) {
     throw new HttpError(400, "Add a voice note or a short description");
   }
-  return { clientRequestId, timezone, text, audio };
+  return { clientRequestId, timezone, text };
 }
 
-export async function transcribeOnboardingAudio(
-  audio: File,
-  deadlineMs = Date.now() + ONBOARDING_TRANSCRIPTION_TIMEOUT_MS,
-): Promise<string> {
-  const form = new FormData();
-  form.append("model", ONBOARDING_TRANSCRIPTION_MODEL);
-  form.append("response_format", "json");
-  form.append(
-    "prompt",
-    ONBOARDING_TRANSCRIPTION_PROMPT,
-  );
-  form.append(
-    "file",
-    new File(
-      [await audio.arrayBuffer()],
-      `onboarding.${audioExtension(audio.type.toLowerCase())}`,
-      { type: audio.type },
-    ),
-  );
-  const response = await fetch(
-    "https://api.openai.com/v1/audio/transcriptions",
-    {
-      method: "POST",
-      headers: { authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}` },
-      body: form,
-      signal: AbortSignal.timeout(
-        onboardingPhaseTimeout(
-          deadlineMs,
-          ONBOARDING_TRANSCRIPTION_TIMEOUT_MS,
-        ),
-      ),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`Onboarding transcription failed (${response.status})`);
-  }
-  const payload = await response.json();
-  const transcript = typeof payload?.text === "string"
-    ? payload.text.trim()
-    : "";
-  if (!transcript) throw new Error("Onboarding transcription was empty");
-  return transcript;
-}
+const ONBOARDING_SYSTEM = [
+  "Extract a practical nutrition profile from the person's own description. A deterministic server-side engine calculates the final calorie and macro targets; do not calculate them.",
+  "Use only stated facts. Never invent age, sex, measurements, training frequency, health context, or a requested rate of weight change. Use null or unspecified when absent and name material gaps in assumptions.",
+  ONBOARDING_DIETARY_CONTEXT_INSTRUCTION,
+  "Map only explicitly stated biological sex to sex_for_equation; otherwise use unspecified. This is an equation input, not a gender identity label.",
+  "Set goal_rate_percent_per_week only when the person states a pace that can be represented as percent of current body weight per week; otherwise use null.",
+  "Use protein_bias and fat_bias only for stated training or dietary preferences. Keep them standard when the description does not support a change.",
+  "Targets are editable estimates, not prescriptions. Do not diagnose a condition, interpret symptoms, recommend medication, or give treatment advice.",
+  "Avoid aggressive restriction. If the person mentions a medical issue, keep the summary neutral and suggest discussing individualized targets with a qualified clinician.",
+  "Keep suggestions specific, non-medical, and easy to act on.",
+  "The description is usually dictated and transcribed on the phone; interpret obvious transcription slips sensibly.",
+  ONBOARDING_COPY_INSTRUCTION,
+].join("\n");
 
 export async function analyzeOnboarding(
   userId: string,
@@ -616,60 +579,27 @@ export async function analyzeOnboarding(
 ): Promise<
   { recommendation: OnboardingRecommendation; responseId: string | null }
 > {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+  void userId;
+  try {
+    const result = await callClaudeStructured({
+      workload: "onboarding",
       model: ONBOARDING_MODEL,
-      reasoning: { effort: "low" },
-      text: {
-        verbosity: "low",
-        format: {
-          type: "json_schema",
-          name: "shudo_onboarding_profile",
-          strict: true,
-          schema: ONBOARDING_SCHEMA,
-        },
-      },
-      input: [{
-        role: "user",
-        content: [{
-          type: "input_text",
-          text: [
-            "Extract a practical nutrition profile from this user's own description. A deterministic server-side engine calculates the final calorie and macro targets; do not calculate them.",
-            "Use only stated facts. Never invent age, sex, measurements, training frequency, health context, or a requested rate of weight change. Use null or unspecified when absent and name material gaps in assumptions.",
-            ONBOARDING_DIETARY_CONTEXT_INSTRUCTION,
-            "Map only explicitly stated biological sex to sex_for_equation; otherwise use unspecified. This is an equation input, not a gender identity label.",
-            "Set goal_rate_percent_per_week only when the user states a pace that can be represented as percent of current body weight per week; otherwise use null.",
-            "Use protein_bias and fat_bias only for stated training or dietary preferences. Keep them standard when the description does not support a change.",
-            "Targets are editable estimates, not prescriptions. Do not diagnose a condition, interpret symptoms, recommend medication, or give treatment advice.",
-            "Avoid aggressive restriction. If the user mentions a medical issue, keep the summary neutral and suggest discussing individualized targets with a qualified clinician.",
-            "Keep suggestions specific, non-medical, and easy to act on.",
-            ONBOARDING_COPY_INSTRUCTION,
-            `User description:\n${transcript}`,
-          ].join("\n"),
-        }],
-      }],
-      // Shared budget for reasoning and the concise structured result.
-      max_output_tokens: 32_000,
-      safety_identifier: await safetyIdentifier(userId),
-      store: false,
-    }),
-    signal: AbortSignal.timeout(
-      onboardingPhaseTimeout(deadlineMs, ONBOARDING_ANALYSIS_TIMEOUT_MS),
-    ),
-  });
-  if (!response.ok) {
-    throw new Error(`Onboarding analysis failed (${response.status})`);
+      effort: "medium",
+      system: systemBlocks([{ text: ONBOARDING_SYSTEM, cache: true }]),
+      messages: [{ role: "user", content: `Description:\n${transcript}` }],
+      schema: ONBOARDING_SCHEMA,
+      schemaName: "submit_onboarding_profile",
+      maxTokens: 16_000,
+      timeoutMs: onboardingPhaseTimeout(
+        deadlineMs,
+        ONBOARDING_ANALYSIS_TIMEOUT_MS,
+      ),
+    });
+    return {
+      recommendation: createOnboardingRecommendation(result.output),
+      responseId: result.messageId,
+    };
+  } catch (error) {
+    throw describeClaudeError(error, "Onboarding analysis");
   }
-  const payload = await response.json() as Record<string, unknown>;
-  return {
-    recommendation: createOnboardingRecommendation(
-      JSON.parse(responseOutputText(payload)),
-    ),
-    responseId: typeof payload.id === "string" ? payload.id : null,
-  };
 }

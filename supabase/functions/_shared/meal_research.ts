@@ -57,60 +57,6 @@ export function mealResearchMode(
     : "none";
 }
 
-function safeSourceUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 2_000) return null;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    if (!url.hostname || url.username || url.password) return null;
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-/** Extracts only safe URL metadata; retrieved titles and page text are untrusted. */
-export function responseWebSearchMetadata(
-  response: Record<string, unknown>,
-): { used: boolean; sources: WebSearchSource[] } {
-  let used = false;
-  const urls = new Set<string>();
-  const output = Array.isArray(response.output) ? response.output : [];
-  for (const candidate of output) {
-    if (
-      !candidate || typeof candidate !== "object" || Array.isArray(candidate)
-    ) {
-      continue;
-    }
-    const item = candidate as Record<string, unknown>;
-    if (item.type !== "web_search_call") continue;
-    if (item.status === "failed" || item.status === "incomplete") continue;
-    used = true;
-    const action = item.action && typeof item.action === "object" &&
-        !Array.isArray(item.action)
-      ? item.action as Record<string, unknown>
-      : null;
-    const sourceCandidates = [
-      ...(Array.isArray(action?.sources) ? action.sources : []),
-      ...(Array.isArray(item.sources) ? item.sources : []),
-    ];
-    for (const sourceCandidate of sourceCandidates) {
-      if (
-        !sourceCandidate || typeof sourceCandidate !== "object" ||
-        Array.isArray(sourceCandidate)
-      ) continue;
-      const source = sourceCandidate as Record<string, unknown>;
-      const url = safeSourceUrl(source.url);
-      if (url) urls.add(url);
-    }
-  }
-  return {
-    used,
-    sources: Array.from(urls).slice(0, 5).map((url) => ({ url })),
-  };
-}
-
 /// Copy contract with the iOS client (EntryResearchPresentation in
 /// shudo/NativeExperiencePolicies.swift). The client parses these exact
 /// strings out of analysis_notes to render provenance; change them together.

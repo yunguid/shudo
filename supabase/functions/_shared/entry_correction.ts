@@ -4,6 +4,7 @@ import {
   formFile,
   IMAGE_TYPES,
   MAX_IMAGE_BYTES,
+  parseSpeechEngine,
   validateFile,
 } from "./capture_validation.ts";
 
@@ -33,6 +34,7 @@ export type EntryCorrectionCapture = {
   audio: File | null;
   image: File | null;
   photoIntent: "memory" | "evidence";
+  speechEngine: string | null;
 };
 
 export function correctionEvidencePaths(
@@ -130,7 +132,15 @@ export function parseEntryCorrectionForm(
       "A correction with a photo must use the photo as evidence",
     );
   }
-  return { entryId, clientRequestId, text, audio, image, photoIntent };
+  return {
+    entryId,
+    clientRequestId,
+    text,
+    audio,
+    image,
+    photoIntent,
+    speechEngine: parseSpeechEngine(form),
+  };
 }
 
 export function combineEntryCorrectionText(

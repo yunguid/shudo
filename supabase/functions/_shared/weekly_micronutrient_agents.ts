@@ -1,12 +1,14 @@
-import { responseOutputText } from "./analysis.ts";
+import {
+  callClaudeStructured,
+  CLAUDE_MODELS,
+  describeClaudeError,
+} from "./claude.ts";
 import {
   assertNeutralGeneratedCopy,
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
-import { requiredEnv } from "./http.ts";
-import { safetyIdentifier } from "./safety.ts";
 
-export const WEEKLY_MICRONUTRIENT_MODEL = "gpt-6.1-sol";
+export const WEEKLY_MICRONUTRIENT_MODEL = CLAUDE_MODELS.sonnet;
 export const WEEKLY_MICRONUTRIENT_PHASE_TIMEOUT_MS = 40_000;
 
 type NutrientDefinition = {
@@ -278,38 +280,23 @@ async function structuredResponse(
   schema: Record<string, unknown>,
   prompt: string,
 ): Promise<{ payload: unknown; responseId: string | null }> {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+  void userId;
+  try {
+    const result = await callClaudeStructured({
+      workload: `weekly_micronutrients:${schemaName}`,
       model: WEEKLY_MICRONUTRIENT_MODEL,
-      reasoning: { effort: "low" },
-      text: {
-        verbosity: "low",
-        format: { type: "json_schema", name: schemaName, strict: true, schema },
-      },
-      input: [{
-        role: "user",
-        content: [{ type: "input_text", text: prompt }],
-      }],
-      // Shared budget for reasoning and the concise structured result.
-      max_output_tokens: 32_000,
-      safety_identifier: await safetyIdentifier(userId),
-      store: false,
-    }),
-    signal: AbortSignal.timeout(WEEKLY_MICRONUTRIENT_PHASE_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`${schemaName} failed (${response.status})`);
+      effort: "low",
+      system: [],
+      messages: [{ role: "user", content: prompt }],
+      schema,
+      schemaName,
+      maxTokens: 16_000,
+      timeoutMs: WEEKLY_MICRONUTRIENT_PHASE_TIMEOUT_MS,
+    });
+    return { payload: result.output, responseId: result.messageId };
+  } catch (error) {
+    throw describeClaudeError(error, schemaName);
   }
-  const raw = await response.json() as Record<string, unknown>;
-  return {
-    payload: JSON.parse(responseOutputText(raw)),
-    responseId: typeof raw.id === "string" ? raw.id : null,
-  };
 }
 
 function statusFor(

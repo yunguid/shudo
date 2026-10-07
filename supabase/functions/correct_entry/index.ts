@@ -4,15 +4,23 @@ import {
   MAX_ANALYSIS_CONTEXT_LENGTH,
   parseAnalysis,
   type ParsedAnalysis,
-  responseOutputText,
   RESULT_SCHEMA,
 } from "../_shared/analysis.ts";
 import {
+  type BetaContentBlockParam,
+  callClaudeStructured,
+  describeClaudeError,
+  imageFromUrl,
+  systemBlocks,
+} from "../_shared/claude.ts";
+import {
+  ANALYSIS_EFFORT,
+  ANALYSIS_MODEL,
+  MEAL_ANALYST_SYSTEM,
+} from "../_shared/entry_processor.ts";
+import {
   combineEntryCorrectionText,
   CORRECTION_ANALYSIS_TIMEOUT_MS,
-  CORRECTION_TRANSCRIPTION_TIMEOUT_MS,
-  correctionAudioFilename,
-  correctionAudioType,
   correctionEvidencePaths,
   parseEntryCorrectionForm,
   validateCorrectionContentLength,
@@ -23,7 +31,6 @@ import {
   CORS_HEADERS,
   HttpError,
   json,
-  requiredEnv,
   runInBackground,
   withTimeout,
 } from "../_shared/http.ts";
@@ -36,15 +43,13 @@ import {
   validateFile,
 } from "../_shared/capture_validation.ts";
 import { modelQuotaHttpError } from "../_shared/quotas.ts";
-import { safetyIdentifier } from "../_shared/safety.ts";
 import {
   type CorrectionReservationStatus,
   parseCorrectionReservation,
 } from "./reservation.ts";
 
-const ANALYSIS_MODEL = "gpt-6.1-sol";
-const TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const MAX_BASE_DESCRIPTION_CHARACTERS = 30_000;
+const CORRECTION_TOOL = "submit_corrected_meal";
 
 type CorrectionEntry = {
   id: string;
@@ -57,106 +62,57 @@ type CorrectionEntry = {
   image_path: string | null;
 };
 
-async function transcribeCorrection(audio: File): Promise<string> {
-  const form = new FormData();
-  form.append("model", TRANSCRIPTION_MODEL);
-  form.append("response_format", "json");
-  form.append(
-    "prompt",
-    "A correction to a personal meal log. Preserve foods, brands, quantities, portions, units, sauces, drinks, additions, and removals accurately.",
-  );
-  form.append(
-    "file",
-    new File([await audio.arrayBuffer()], correctionAudioFilename(audio), {
-      type: correctionAudioType(audio),
-    }),
-  );
-
-  const response = await fetch(
-    "https://api.openai.com/v1/audio/transcriptions",
-    {
-      method: "POST",
-      headers: { authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}` },
-      body: form,
-      signal: AbortSignal.timeout(CORRECTION_TRANSCRIPTION_TIMEOUT_MS),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`Correction transcription failed (${response.status})`);
-  }
-  const payload = await response.json();
-  const text = typeof payload?.text === "string" ? payload.text.trim() : "";
-  if (!text) throw new Error("Correction transcription was empty");
-  return text;
-}
-
 async function analyzeCorrection(
-  userId: string,
   baseDescription: string,
   previousCorrections: string | null,
   latestCorrection: string,
   imageUrls: string[],
-): Promise<{ analysis: ParsedAnalysis; responseId: string | null }> {
-  const content: Array<Record<string, unknown>> = [{
-    type: "input_text",
+): Promise<
+  { analysis: ParsedAnalysis; responseId: string | null; model: string }
+> {
+  const content: BetaContentBlockParam[] = imageUrls.slice(0, 5).map(
+    imageFromUrl,
+  );
+  content.push({
+    type: "text",
     text: [
-      "Re-estimate the entire meal after applying the user's latest correction.",
+      "Re-estimate the entire meal after applying the latest correction.",
       "The latest correction is authoritative when it conflicts with the original description or earlier corrections.",
       "Preserve every original fact that the correction does not change. Do not invent new ingredients, quantities, or preparation details.",
       "Use realistic portion assumptions only when a necessary quantity is still unavailable.",
-      "Write analysis_preview first as one short natural-language sentence describing what changed.",
+      "Write analysis_preview as one short natural-language sentence describing what changed.",
       `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Describe only the corrected meal, what changed, and any clearly labeled estimate assumptions.`,
-      "Keep the title short and make item totals internally consistent with meal totals.",
       `Original meal description and transcript:\n${
         baseDescription ||
-        "No written description was retained. Use the photo and corrections."
+        "No written description was retained. Use the photos and corrections."
       }`,
       previousCorrections
         ? `Earlier accepted corrections, newest first:\n${previousCorrections}`
         : "",
       `Latest correction:\n${latestCorrection}`,
     ].filter(Boolean).join("\n\n"),
-  }];
-  for (const imageUrl of imageUrls.slice(0, 5)) {
-    content.push({ type: "input_image", image_url: imageUrl, detail: "high" });
-  }
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: ANALYSIS_MODEL,
-      reasoning: { effort: "low" },
-      input: [{ role: "user", content }],
-      text: {
-        verbosity: "low",
-        format: {
-          type: "json_schema",
-          name: "shudo_corrected_meal_analysis",
-          strict: true,
-          schema: RESULT_SCHEMA,
-        },
-      },
-      // Shared budget for reasoning and the concise structured result.
-      max_output_tokens: 32_000,
-      safety_identifier: await safetyIdentifier(userId),
-      store: false,
-    }),
-    signal: AbortSignal.timeout(CORRECTION_ANALYSIS_TIMEOUT_MS),
   });
-  if (!response.ok) {
-    throw new Error(`Correction analysis failed (${response.status})`);
+
+  try {
+    const result = await callClaudeStructured({
+      workload: "meal_correction",
+      model: ANALYSIS_MODEL,
+      effort: ANALYSIS_EFFORT,
+      system: systemBlocks([{ text: MEAL_ANALYST_SYSTEM, cache: true }]),
+      messages: [{ role: "user", content }],
+      schema: RESULT_SCHEMA,
+      schemaName: CORRECTION_TOOL,
+      maxTokens: 16_000,
+      timeoutMs: CORRECTION_ANALYSIS_TIMEOUT_MS,
+    });
+    return {
+      analysis: parseAnalysis(result.output),
+      responseId: result.messageId,
+      model: result.model,
+    };
+  } catch (error) {
+    throw describeClaudeError(error, "Correction analysis");
   }
-  const payload = await response.json() as Record<string, unknown>;
-  const outputText = responseOutputText(payload);
-  if (!outputText) throw new Error("Correction analysis returned no output");
-  return {
-    analysis: parseAnalysis(JSON.parse(outputText)),
-    responseId: typeof payload.id === "string" ? payload.id : null,
-  };
 }
 
 async function fetchCorrectionEntry(
@@ -297,6 +253,12 @@ Deno.serve(async (req: Request) => {
       throw new HttpError(400, "Correction form data could not be read");
     });
     const capture = parseEntryCorrectionForm(form);
+    if (capture.audio) {
+      throw new HttpError(
+        415,
+        "Voice is transcribed on your iPhone now. Update Shudo and try again.",
+      );
+    }
     entryId = capture.entryId;
     clientRequestId = capture.clientRequestId;
 
@@ -417,15 +379,8 @@ Deno.serve(async (req: Request) => {
     // overlap without producing an unhandled promise rejection.
     correctionPhotoUpload.catch(() => undefined);
 
-    let transcript: string | null = null;
-    if (capture.audio) {
-      transcript = await transcribeCorrection(capture.audio);
-    }
     const correctionPhotoPath = await correctionPhotoUpload;
-    const correctionText = combineEntryCorrectionText(
-      capture.text,
-      transcript,
-    );
+    const correctionText = combineEntryCorrectionText(capture.text, null);
 
     const signedImageUrls = await signedEvidenceImageUrls(
       admin,
@@ -433,8 +388,7 @@ Deno.serve(async (req: Request) => {
       correctionPhotoPath,
     );
 
-    const { analysis, responseId } = await analyzeCorrection(
-      userId,
+    const { analysis, responseId, model } = await analyzeCorrection(
       baseDescription,
       entry.analysis_context?.trim().slice(0, MAX_ANALYSIS_CONTEXT_LENGTH) ||
         null,
@@ -451,8 +405,8 @@ Deno.serve(async (req: Request) => {
         p_claim_token: claimToken,
         p_correction_text: correctionText,
         p_analysis: analysis,
-        p_analysis_model: ANALYSIS_MODEL,
-        p_transcription_model: capture.audio ? TRANSCRIPTION_MODEL : null,
+        p_analysis_model: model,
+        p_transcription_model: capture.speechEngine,
         p_provider_response_id: responseId,
         p_photo_path: correctionPhotoPath,
         p_photo_purpose: correctionPhotoPath ? "evidence" : null,

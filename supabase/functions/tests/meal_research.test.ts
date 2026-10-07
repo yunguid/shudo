@@ -3,9 +3,9 @@ import {
   mealResearchMode,
   RESEARCH_SOURCES_PREFIX,
   RESEARCH_VERIFIED_LINKLESS_DISCLOSURE,
-  responseWebSearchMetadata,
 } from "../_shared/meal_research.ts";
 import type { ParsedAnalysis } from "../_shared/analysis.ts";
+import { webSourcesOf } from "../_shared/claude.ts";
 import { assertEquals } from "./assertions.ts";
 
 function analysis(): ParsedAnalysis {
@@ -90,23 +90,21 @@ Deno.test("brand-first restaurant context favors research without slowing an ord
 });
 
 Deno.test("web research metadata accepts only bounded public HTTP sources", () => {
-  const metadata = responseWebSearchMetadata({
-    output: [{
-      type: "web_search_call",
-      action: {
-        type: "search",
-        sources: [
-          { type: "url", url: "https://restaurant.example/nutrition#bowl" },
-          { type: "url", url: "javascript:alert(1)" },
-          { type: "url", url: "https://user:pass@malicious.example/source" },
-          { type: "url", url: "https://restaurant.example/nutrition" },
-        ],
-      },
-    }],
-  });
+  const metadata = webSourcesOf(
+    [{
+      type: "web_search_tool_result",
+      tool_use_id: "srvtoolu_1",
+      content: [
+        { url: "https://restaurant.example/nutrition#bowl" },
+        { url: "javascript:alert(1)" },
+        { url: "https://user:pass@malicious.example/source" },
+        { url: "https://restaurant.example/nutrition" },
+      ],
+    }] as unknown as Parameters<typeof webSourcesOf>[0],
+  );
   assertEquals(metadata, {
     used: true,
-    sources: [{ url: "https://restaurant.example/nutrition" }],
+    urls: ["https://restaurant.example/nutrition"],
   });
 });
 
@@ -225,14 +223,17 @@ Deno.test("verified research with only overlong links keeps a linkless disclosur
 
 Deno.test("failed tool calls cannot establish successful research provenance", () => {
   assertEquals(
-    responseWebSearchMetadata({
-      output: [{
-        type: "web_search_call",
-        status: "failed",
-        action: { sources: [{ url: "https://example.com/nutrition" }] },
-      }],
-    }),
-    { used: false, sources: [] },
+    webSourcesOf(
+      [{
+        type: "web_search_tool_result",
+        tool_use_id: "srvtoolu_1",
+        content: {
+          type: "web_search_tool_result_error",
+          error_code: "unavailable",
+        },
+      }] as unknown as Parameters<typeof webSourcesOf>[0],
+    ),
+    { used: false, urls: [] },
   );
 });
 

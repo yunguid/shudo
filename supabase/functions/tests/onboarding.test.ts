@@ -8,8 +8,6 @@ import {
   ONBOARDING_MODEL,
   ONBOARDING_PROCESSING_BUDGET_MS,
   ONBOARDING_SCHEMA,
-  ONBOARDING_TRANSCRIPTION_PROMPT,
-  ONBOARDING_TRANSCRIPTION_TIMEOUT_MS,
   onboardingPhaseTimeout,
   parseOnboardingRecommendation,
 } from "../_shared/onboarding.ts";
@@ -32,8 +30,8 @@ const recommendation = {
   suggestions: ["Review the target after two weeks."],
 } as const;
 
-Deno.test("onboarding is explicitly pinned to GPT-6.1 Sol", () => {
-  assertEquals(ONBOARDING_MODEL, "gpt-6.1-sol");
+Deno.test("onboarding is explicitly pinned to Claude Sonnet 5.5", () => {
+  assertEquals(ONBOARDING_MODEL, "claude-sonnet-5-5");
   assertEquals(ONBOARDING_SCHEMA.additionalProperties, false);
   assertEquals(
     [...ONBOARDING_SCHEMA.required].sort(),
@@ -66,9 +64,6 @@ Deno.test("onboarding preserves diet context without personifying the product", 
     ]
   ) {
     assertEquals(ONBOARDING_DIETARY_CONTEXT_INSTRUCTION.includes(phrase), true);
-  }
-  for (const phrase of ["allergies", "dietary restrictions", "preferences"]) {
-    assertEquals(ONBOARDING_TRANSCRIPTION_PROMPT.includes(phrase), true);
   }
   assertThrows(
     () =>
@@ -221,11 +216,10 @@ Deno.test("onboarding target date honors the user's timezone", () => {
   );
 });
 
-Deno.test("onboarding OpenAI phases stay inside the free Edge wall budget", () => {
+Deno.test("onboarding Claude phase stays inside the free Edge wall budget", () => {
   assertEquals(ONBOARDING_PROCESSING_BUDGET_MS <= 125_000, true);
   assertEquals(
-    ONBOARDING_TRANSCRIPTION_TIMEOUT_MS + ONBOARDING_ANALYSIS_TIMEOUT_MS <
-      150_000,
+    ONBOARDING_ANALYSIS_TIMEOUT_MS < ONBOARDING_PROCESSING_BUDGET_MS,
     true,
   );
   assertEquals(onboardingPhaseTimeout(10_000, 8_000, 4_000), 6_000);

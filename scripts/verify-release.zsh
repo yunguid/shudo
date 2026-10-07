@@ -180,7 +180,7 @@ npm audit --audit-level=moderate
 cd "$shudo_repo_root"
 npx --yes deno@2.5.6 fmt --check supabase/functions
 npx --yes deno@2.5.6 lint supabase/functions
-npx --yes deno@2.5.6 test supabase/functions/tests
+npx --yes deno@2.5.6 test --allow-env supabase/functions/tests
 npx --yes deno@2.5.6 check supabase/functions/**/*.ts
 
 shudo_pg_dir="$(mktemp -d /tmp/shudo-release-pg.XXXXXX)"

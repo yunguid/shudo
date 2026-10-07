@@ -28,3 +28,19 @@ export function assertNeutralGeneratedCopy(
   }
   return value;
 }
+
+export function isNeutralGeneratedCopy(value: string): boolean {
+  return !(
+    PRODUCT_SPEAKER_PATTERN.test(value) ||
+    FIRST_PERSON_WRITER_PATTERN.test(value) ||
+    GENERIC_PERSONIFIED_PRODUCT_PATTERN.test(value)
+  );
+}
+
+/** Keeps only the sentences that read as neutral product copy. */
+export function neutralSentences(value: string): string | null {
+  const sentences = value.match(/[^.!?\n]+[.!?]*\s*/gu) ?? [];
+  const kept = sentences.filter((sentence) => isNeutralGeneratedCopy(sentence))
+    .join("").trim();
+  return kept || null;
+}

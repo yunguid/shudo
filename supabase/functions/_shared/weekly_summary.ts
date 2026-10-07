@@ -1,14 +1,16 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
-import { responseOutputText } from "./analysis.ts";
+import {
+  callClaudeStructured,
+  CLAUDE_MODELS,
+  describeClaudeError,
+} from "./claude.ts";
 import {
   assertNeutralGeneratedCopy,
   NEUTRAL_PRODUCT_COPY_INSTRUCTION,
 } from "./generated_copy.ts";
-import { requiredEnv } from "./http.ts";
-import { safetyIdentifier } from "./safety.ts";
 import { runWeeklyMicronutrientAgents } from "./weekly_micronutrient_agents.ts";
 
-export const WEEKLY_SUMMARY_MODEL = "gpt-6.1-sol";
+export const WEEKLY_SUMMARY_MODEL = CLAUDE_MODELS.opus;
 export const WEEKLY_COPY_INSTRUCTION =
   `${NEUTRAL_PRODUCT_COPY_INSTRUCTION} Use direct, concise observations and suggestions.`;
 
@@ -372,60 +374,42 @@ export async function writeWeeklyNarrative(
   suggestions: string[];
   responseId: string | null;
 }> {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${requiredEnv("OPENAI_API_KEY")}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+  void userId;
+  const prompt = [
+    "Write a concise weekly meal-log reflection from the supplied computed metrics.",
+    "Do not recalculate or contradict the metrics. Mention incomplete logging plainly.",
+    "The average_* metrics are averages over the days_logged days that have entries, not over all 7 calendar days; when days_logged is under 7, describe them as averages for logged days only.",
+    "Use the bounded food candidate list to notice obviously similar meal patterns (for example variations of a wrap or bowl), but cluster conservatively and never invent a frequency.",
+    "The per-day rows give each logged day's weekday, calories against that day's target, and meal titles. Use them to surface day-of-week patterns (for example weekend days running over or under) and recurring calorie-dense items visible in the titles (for example drinks or desserts).",
+    "Ground every suggestion in a lever visible in the per-day rows, repeated foods, or metrics, and make it concrete and behavioral — a specific swap, cap, add, or keep the person can try next week. Quantify the expected effect only when the supplied numbers support it.",
+    "Offer practical food-logging or meal-pattern suggestions only. Do not diagnose, prescribe treatment, or make medical claims. Frame caps and swaps as options, never judgments.",
+    "Limits: headline at most 120 characters, narrative at most 600, at most 4 patterns and 3 suggestions of at most 220 characters each.",
+    WEEKLY_COPY_INSTRUCTION,
+    `Week starting: ${weekStart}`,
+    `Computed adherence: ${JSON.stringify(adherence)}`,
+    `Repeated foods: ${JSON.stringify(repeatedFoods)}`,
+    `Food candidates: ${JSON.stringify(foodCandidates)}`,
+    `Per-day log: ${JSON.stringify(dayDigests)}`,
+  ].join("\n");
+  try {
+    const result = await callClaudeStructured({
+      workload: "weekly_summary",
       model: WEEKLY_SUMMARY_MODEL,
-      reasoning: { effort: "low" },
-      text: {
-        verbosity: "low",
-        format: {
-          type: "json_schema",
-          name: "shudo_weekly_summary",
-          strict: true,
-          schema: WEEKLY_SUMMARY_SCHEMA,
-        },
-      },
-      input: [{
-        role: "user",
-        content: [{
-          type: "input_text",
-          text: [
-            "Write a concise weekly meal-log reflection from the supplied computed metrics.",
-            "Do not recalculate or contradict the metrics. Mention incomplete logging plainly.",
-            "The average_* metrics are averages over the days_logged days that have entries, not over all 7 calendar days; when days_logged is under 7, describe them as averages for logged days only.",
-            "Use the bounded food candidate list to notice obviously similar meal patterns (for example variations of a wrap or bowl), but cluster conservatively and never invent a frequency.",
-            "The per-day rows give each logged day's weekday, calories against that day's target, and meal titles. Use them to surface day-of-week patterns (for example weekend days running over) and recurring calorie-dense items visible in the titles (for example drinks or desserts).",
-            "Ground every suggestion in a lever visible in the per-day rows, repeated foods, or metrics, and make it concrete and behavioral — a specific swap, cap, or keep the person can try next week (for example capping weekend drinks at one, or swapping a late snack for a food they already log). Quantify the expected effect only when the supplied numbers support it.",
-            "Offer practical food-logging or meal-pattern suggestions only. Do not diagnose, prescribe treatment, or make medical claims. Frame caps and swaps as options, never judgments.",
-            WEEKLY_COPY_INSTRUCTION,
-            `Week starting: ${weekStart}`,
-            `Computed adherence: ${JSON.stringify(adherence)}`,
-            `Repeated foods: ${JSON.stringify(repeatedFoods)}`,
-            `Food candidates: ${JSON.stringify(foodCandidates)}`,
-            `Per-day log: ${JSON.stringify(dayDigests)}`,
-          ].join("\n"),
-        }],
-      }],
-      // Shared budget for reasoning and the concise structured result.
-      max_output_tokens: 32_000,
-      safety_identifier: await safetyIdentifier(userId),
-      store: false,
-    }),
-    signal: AbortSignal.timeout(75_000),
-  });
-  if (!response.ok) {
-    throw new Error(`Weekly summary failed (${response.status})`);
+      effort: "medium",
+      system: [],
+      messages: [{ role: "user", content: prompt }],
+      schema: WEEKLY_SUMMARY_SCHEMA,
+      schemaName: "submit_weekly_summary",
+      maxTokens: 16_000,
+      timeoutMs: 100_000,
+    });
+    return {
+      ...parseWeeklyNarrative(result.output),
+      responseId: result.messageId,
+    };
+  } catch (error) {
+    throw describeClaudeError(error, "Weekly summary");
   }
-  const payload = await response.json() as Record<string, unknown>;
-  return {
-    ...parseWeeklyNarrative(JSON.parse(responseOutputText(payload))),
-    responseId: typeof payload.id === "string" ? payload.id : null,
-  };
 }
 
 export type WeeklySummaryClaim = {

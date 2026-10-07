@@ -1,11 +1,21 @@
 import {
   analyzeMeal,
+  MEAL_ANALYST_SYSTEM,
   MEAL_COMPONENT_PRESERVATION_INSTRUCTION,
   type MealResearchObservation,
   RESEARCH_STATUS_MESSAGES,
-  TRANSCRIPTION_PROMPT,
 } from "../_shared/entry_processor.ts";
 import { assert, assertEquals } from "./assertions.ts";
+import {
+  fakeClaude,
+  jsonTextEvents,
+  promptText,
+  type RecordedRequest,
+  type SSEEvent,
+  submitToolEvents,
+} from "./fake_claude.ts";
+
+const SUBMIT = "submit_meal_analysis";
 
 function validAnalysis() {
   return {
@@ -55,264 +65,115 @@ function chipotleAnalysis() {
         confidence: 0.9,
       },
     ],
-    totals: {
-      protein_g: 25,
-      carbs_g: 41,
-      fat_g: 10,
-      calories_kcal: 360,
-    },
+    totals: { protein_g: 25, carbs_g: 41, fat_g: 10, calories_kcal: 360 },
     confidence: 0.9,
     notes: "Official restaurant portions used.",
   };
 }
 
-function completedStream(options: {
-  responseId: string;
-  webSearch?: boolean;
-  sources?: string[];
-  analysis?:
-    | ReturnType<typeof validAnalysis>
-    | ReturnType<typeof chipotleAnalysis>;
-}): Response {
-  const output: Array<Record<string, unknown>> = [];
-  if (options.webSearch) {
-    output.push({
-      type: "web_search_call",
-      id: "ws_test",
-      status: "completed",
-      action: {
-        type: "search",
-        queries: ["restaurant chicken burrito nutrition"],
-        sources: (options.sources ?? []).map((url) => ({ type: "url", url })),
-      },
-    });
-  }
-  output.push({
-    type: "message",
-    content: [{
-      type: "output_text",
-      text: JSON.stringify(options.analysis ?? validAnalysis()),
-      annotations: [],
-    }],
-  });
-  const type = "response.completed";
-  const event = `event: ${type}\ndata: ${
-    JSON.stringify({
-      type,
-      response: {
-        id: options.responseId,
-        status: "completed",
-        output,
-      },
-    })
-  }\n\n`;
-  return new Response(event, {
-    status: 200,
-    headers: { "content-type": "text/event-stream" },
-  });
-}
-
-/**
- * A stream that reports the search lifecycle the way the provider actually
- * does — search begins, search completes, then structured output streams —
- * so phase-status assertions run against realistic event ordering.
- */
-function researchLifecycleStream(options: {
-  responseId: string;
-  sources?: string[];
-}): Response {
-  const searchCall = {
-    type: "web_search_call",
-    id: "ws_live",
-    status: "completed",
-    action: {
-      type: "search",
-      queries: ["restaurant chicken burrito nutrition"],
-      sources: (options.sources ?? []).map((url) => ({ type: "url", url })),
-    },
-  };
-  const outputJSON = JSON.stringify(validAnalysis());
-  const events: Array<Record<string, unknown>> = [
-    { type: "response.web_search_call.in_progress", item_id: "ws_live" },
-    { type: "response.web_search_call.searching", item_id: "ws_live" },
-    { type: "response.web_search_call.completed", item_id: "ws_live" },
-    { type: "response.output_item.done", item: searchCall },
-    { type: "response.output_text.delta", delta: outputJSON },
-    {
-      type: "response.completed",
-      response: {
-        id: options.responseId,
-        status: "completed",
-        output: [
-          searchCall,
-          {
-            type: "message",
-            content: [
-              { type: "output_text", text: outputJSON, annotations: [] },
-            ],
-          },
-        ],
-      },
-    },
-  ];
-  const body = events
-    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-    .join("");
-  return new Response(body, {
-    status: 200,
-    headers: { "content-type": "text/event-stream" },
-  });
-}
-
-function testDependencies(
-  fetchMock: typeof fetch,
-  observeResearch?: (observation: MealResearchObservation) => void,
+function run(
+  description: string,
+  responses: Array<SSEEvent[] | number>,
+  options: {
+    requests?: RecordedRequest[];
+    statuses?: string[];
+    observations?: MealResearchObservation[];
+  } = {},
 ) {
-  return {
-    fetch: fetchMock,
-    apiKey: "test-key-not-a-secret",
-    safetyIdentifier: () => Promise.resolve("shudo_test"),
-    observeResearch: observeResearch ?? (() => undefined),
-  };
+  return analyzeMeal(
+    "user-id",
+    description,
+    null,
+    null,
+    () => Promise.resolve(),
+    (message) => {
+      options.statuses?.push(message);
+      return Promise.resolve();
+    },
+    {
+      client: fakeClaude(responses, options.requests ?? []),
+      observeResearch: (observation) => options.observations?.push(observation),
+    },
+  );
 }
 
-Deno.test("explicit restaurant lookup grants and requires hosted web search in the structured meal call", async () => {
-  const requests: Array<Record<string, unknown>> = [];
-  const fetchMock = ((_input: URL | Request | string, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return Promise.resolve(completedStream({
-      responseId: "resp_researched",
-      webSearch: true,
-      sources: ["https://restaurant.example/nutrition/chicken-burrito"],
-    }));
-  }) as typeof fetch;
-
-  const result = await analyzeMeal(
-    "user-id",
+Deno.test("explicit restaurant lookup grants web search and finishes through the strict submit tool", async () => {
+  const requests: RecordedRequest[] = [];
+  const result = await run(
     "Look up the restaurant's chicken burrito nutrition online and log it",
-    null,
-    null,
-    () => Promise.resolve(),
-    () => Promise.resolve(),
-    testDependencies(fetchMock),
+    [submitToolEvents(SUBMIT, validAnalysis(), {
+      search: true,
+      sources: ["https://restaurant.example/nutrition/chicken-burrito"],
+    })],
+    { requests },
   );
 
   assertEquals(requests.length, 1);
-  assertEquals(requests[0].tools, [{
-    type: "web_search",
-    search_context_size: "low",
-  }]);
-  assertEquals(requests[0].tool_choice, "required");
-  assertEquals(requests[0].max_tool_calls, 2);
-  assertEquals(requests[0].include, ["web_search_call.action.sources"]);
-  const text = requests[0].text as Record<string, unknown>;
-  assertEquals(
-    (text.format as Record<string, unknown>).name,
-    "shudo_meal_analysis",
+  const tools = requests[0].tools ?? [];
+  assertEquals(tools[0].type, "web_search_20260209");
+  assertEquals(tools[0].max_uses, 3);
+  assertEquals(tools[1].name, SUBMIT);
+  assertEquals(tools[1].strict, true);
+  assertEquals(requests[0].output_config?.format, undefined);
+  assertEquals(requests[0].model, "claude-sonnet-5-5");
+  assert(
+    promptText(requests[0]).includes("explicitly asked for an online lookup"),
   );
-  assertEquals(result.responseId, "resp_researched");
   assertEquals(result.research.used, true);
   assertEquals(result.research.sources.length, 1);
   assert(result.analysis.notes?.includes("restaurant.example"));
 });
 
-Deno.test("the exact Chipotle lookup forces search and preserves white rice plus steak", async () => {
-  const requests: Array<Record<string, unknown>> = [];
-  const fetchMock = ((_input: URL | Request | string, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return Promise.resolve(completedStream({
-      responseId: "resp_chipotle_regression",
-      webSearch: true,
-      sources: ["https://www.chipotle.com/nutrition"],
-      analysis: chipotleAnalysis(),
-    }));
-  }) as typeof fetch;
-
-  const result = await analyzeMeal(
-    "synthetic-user-id",
+Deno.test("the exact Chipotle lookup searches and preserves white rice plus steak", async () => {
+  const requests: RecordedRequest[] = [];
+  const result = await run(
     "Look up a Chipotle bowl with white rice and steak.",
-    null,
-    null,
-    () => Promise.resolve(),
-    () => Promise.resolve(),
-    testDependencies(fetchMock),
+    [submitToolEvents(SUBMIT, chipotleAnalysis(), {
+      search: true,
+      sources: ["https://www.chipotle.com/nutrition"],
+    })],
+    { requests },
   );
 
-  assertEquals(requests.length, 1);
-  assertEquals(requests[0].tool_choice, "required");
-  const input = requests[0].input as Array<Record<string, unknown>>;
-  const content = input[0].content as Array<Record<string, unknown>>;
-  const prompt = String(content[0].text);
+  const prompt = promptText(requests[0]);
   assert(prompt.includes("white rice and steak"));
   assert(prompt.includes(MEAL_COMPONENT_PRESERVATION_INSTRUCTION));
-  assert(
-    TRANSCRIPTION_PROMPT.includes(
-      "explicit lookup, search, or online-research intent",
-    ),
-  );
-  assert(TRANSCRIPTION_PROMPT.includes("every stated food"));
+  assert(MEAL_ANALYST_SYSTEM.includes("cooking oil"));
   assertEquals(
     result.analysis.items.map((item) => item.name),
     ["Cilantro-Lime White Rice", "Steak"],
   );
-  assertEquals(result.research.used, true);
   assertEquals(result.research.sources, [{
     url: "https://www.chipotle.com/nutrition",
   }]);
 });
 
-Deno.test("brand-first restaurant context makes hosted search available but optional", async () => {
-  const requests: Array<Record<string, unknown>> = [];
-  const fetchMock = ((_input: URL | Request | string, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return Promise.resolve(completedStream({
-      responseId: "resp_chipotle_context",
-      analysis: chipotleAnalysis(),
-    }));
-  }) as typeof fetch;
-
-  await analyzeMeal(
-    "synthetic-user-id",
+Deno.test("brand-first restaurant context makes search available but optional", async () => {
+  const requests: RecordedRequest[] = [];
+  await run(
     "Chipotle bowl with white rice and steak",
-    null,
-    null,
-    () => Promise.resolve(),
-    () => Promise.resolve(),
-    testDependencies(fetchMock),
+    [submitToolEvents(SUBMIT, chipotleAnalysis())],
+    { requests },
   );
-
-  assertEquals(requests[0].tools, [{
-    type: "web_search",
-    search_context_size: "low",
-  }]);
-  assertEquals(requests[0].tool_choice, "auto");
+  assertEquals(requests[0].tools?.[0].type, "web_search_20260209");
+  assert(promptText(requests[0]).includes("Web search is available"));
 });
 
-Deno.test("ordinary meal logging stays on the tool-free fast path", async () => {
-  const requests: Array<Record<string, unknown>> = [];
+Deno.test("ordinary meal logging stays on the tool-free JSON fast path", async () => {
+  const requests: RecordedRequest[] = [];
   const observations: MealResearchObservation[] = [];
-  const fetchMock = ((_input: URL | Request | string, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return Promise.resolve(completedStream({ responseId: "resp_ordinary" }));
-  }) as typeof fetch;
-
-  const result = await analyzeMeal(
-    "user-id",
+  const result = await run(
     "Chicken, rice, broccoli, and olive oil",
-    null,
-    null,
-    () => Promise.resolve(),
-    () => Promise.resolve(),
-    testDependencies(
-      fetchMock,
-      (observation) => observations.push(observation),
-    ),
+    [jsonTextEvents(validAnalysis())],
+    { requests, observations },
   );
 
   assertEquals(requests.length, 1);
-  assertEquals("tools" in requests[0], false);
-  assertEquals("tool_choice" in requests[0], false);
-  assertEquals("include" in requests[0], false);
+  assertEquals(requests[0].tools, undefined);
+  assertEquals(
+    (requests[0].output_config?.format as { type: string }).type,
+    "json_schema",
+  );
   assertEquals(result.research, {
     requested: false,
     used: false,
@@ -321,226 +182,120 @@ Deno.test("ordinary meal logging stays on the tool-free fast path", async () => 
   });
   assertEquals(result.analysis.title, "Chicken burrito");
   assertEquals(
-    observations.map((observation) => ({
-      phase: observation.phase,
-      requestedMode: observation.requestedMode,
-      toolConfigured: observation.toolConfigured,
-      toolCallObserved: observation.toolCallObserved,
-    })),
-    [
-      {
-        phase: "routed",
-        requestedMode: "none",
-        toolConfigured: false,
-        toolCallObserved: false,
-      },
-      {
-        phase: "completed",
-        requestedMode: "none",
-        toolConfigured: false,
-        toolCallObserved: false,
-      },
-    ],
+    observations.map((observation) => observation.phase),
+    ["routed", "completed"],
   );
   assertEquals(JSON.stringify(observations).includes("Chicken"), false);
 });
 
-Deno.test("failed web search retries without tools and preserves a labeled structured estimate", async () => {
-  const requests: Array<Record<string, unknown>> = [];
-  const fetchMock = ((_input: URL | Request | string, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return Promise.resolve(
-      requests.length === 1
-        ? new Response(null, { status: 502 })
-        : completedStream({ responseId: "resp_fallback" }),
-    );
-  }) as typeof fetch;
-
-  const result = await analyzeMeal(
-    "user-id",
+Deno.test("failed web search retries without tools and preserves a labeled estimate", async () => {
+  const requests: RecordedRequest[] = [];
+  const result = await run(
     "Find the current nutrition for this restaurant menu item",
-    null,
-    null,
-    () => Promise.resolve(),
-    () => Promise.resolve(),
-    testDependencies(fetchMock),
+    [502, jsonTextEvents(validAnalysis())],
+    { requests },
   );
 
   assertEquals(requests.length, 2);
-  assertEquals(requests[0].tool_choice, "required");
-  assertEquals("tools" in requests[1], false);
-  const fallbackInput = requests[1].input as Array<Record<string, unknown>>;
-  const fallbackContent = fallbackInput[0].content as Array<
-    Record<string, unknown>
-  >;
-  assertEquals(
-    String(fallbackContent[0].text).includes("web search was unavailable"),
-    true,
-  );
-  assertEquals(result.responseId, "resp_fallback");
+  assertEquals(requests[0].tools?.length, 2);
+  assertEquals(requests[1].tools, undefined);
+  assert(promptText(requests[1]).includes("web search was unavailable"));
   assertEquals(result.research.degraded, true);
   assertEquals(result.analysis.confidence, 0.5);
-  assertEquals(
-    result.analysis.notes?.includes("estimates rather than verified"),
-    true,
-  );
+  assert(result.analysis.notes?.includes("estimates rather than verified"));
 });
 
 Deno.test("an empty web search result remains structured and explicitly uncertain", async () => {
-  const fetchMock = (() =>
-    Promise.resolve(completedStream({
-      responseId: "resp_empty_search",
-      webSearch: true,
-      sources: [],
-    }))) as typeof fetch;
-
-  const result = await analyzeMeal(
-    "user-id",
+  const result = await run(
     "Look up this restaurant meal online",
-    null,
-    null,
-    () => Promise.resolve(),
-    () => Promise.resolve(),
-    testDependencies(fetchMock),
+    [submitToolEvents(SUBMIT, validAnalysis(), { search: true, sources: [] })],
   );
-
   assertEquals(result.research.used, true);
   assertEquals(result.research.sources, []);
-  assertEquals(result.analysis.title, "Chicken burrito");
   assertEquals(result.analysis.confidence, 0.5);
-  assertEquals(
+  assert(
     result.analysis.notes?.includes("No authoritative online nutrition source"),
-    true,
   );
 });
 
 Deno.test("a researched meal narrates real search phases in stream order", async () => {
-  const fetchMock = (() =>
-    Promise.resolve(researchLifecycleStream({
-      responseId: "resp_phases",
-      sources: ["https://restaurant.example/nutrition"],
-    }))) as typeof fetch;
-  const statusMessages: string[] = [];
+  const statuses: string[] = [];
   const observations: MealResearchObservation[] = [];
-
-  const result = await analyzeMeal(
-    "user-id",
+  const result = await run(
     "Look it up online for this restaurant burrito",
-    null,
-    null,
-    () => Promise.resolve(),
-    (message) => {
-      statusMessages.push(message);
-      return Promise.resolve();
-    },
-    testDependencies(
-      fetchMock,
-      (observation) => observations.push(observation),
-    ),
+    [submitToolEvents(SUBMIT, validAnalysis(), {
+      search: true,
+      sources: ["https://restaurant.example/nutrition"],
+    })],
+    { statuses, observations },
   );
 
-  assertEquals(statusMessages, [
+  assertEquals(statuses, [
     RESEARCH_STATUS_MESSAGES.searching,
     RESEARCH_STATUS_MESSAGES.reviewingSources,
     RESEARCH_STATUS_MESSAGES.calculating,
   ]);
-  assertEquals(result.research.used, true);
   assertEquals(result.research.sources.length, 1);
-  assertEquals(observations, [
-    {
-      phase: "routed",
-      requestedMode: "required",
-      activeMode: "required",
-      toolConfigured: true,
-      toolCallObserved: false,
-      degraded: false,
-      sourceCount: 0,
-    },
-    {
-      phase: "completed",
-      requestedMode: "required",
-      activeMode: "required",
-      toolConfigured: true,
-      toolCallObserved: true,
-      degraded: false,
-      sourceCount: 1,
-    },
-  ]);
+  assertEquals(observations[1], {
+    phase: "completed",
+    requestedMode: "required",
+    activeMode: "required",
+    toolConfigured: true,
+    toolCallObserved: true,
+    degraded: false,
+    sourceCount: 1,
+  });
 });
 
 Deno.test("ordinary meals never receive research phase messages", async () => {
-  const fetchMock = (() =>
-    Promise.resolve(
-      completedStream({ responseId: "resp_plain" }),
-    )) as typeof fetch;
-  const statusMessages: string[] = [];
-
-  await analyzeMeal(
-    "user-id",
+  const statuses: string[] = [];
+  await run(
     "Chicken, rice, broccoli, and olive oil",
-    null,
-    null,
-    () => Promise.resolve(),
-    (message) => {
-      statusMessages.push(message);
-      return Promise.resolve();
-    },
-    testDependencies(fetchMock),
+    [jsonTextEvents(validAnalysis())],
+    { statuses },
   );
-
-  assertEquals(statusMessages, []);
+  assertEquals(statuses, []);
 });
 
 Deno.test("the degraded fallback announces the switch away from online lookup", async () => {
-  const requests: Array<Record<string, unknown>> = [];
-  const fetchMock = ((_input: URL | Request | string, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return Promise.resolve(
-      requests.length === 1
-        ? new Response(null, { status: 502 })
-        : completedStream({ responseId: "resp_degraded_status" }),
-    );
-  }) as typeof fetch;
-  const statusMessages: string[] = [];
-
-  const result = await analyzeMeal(
-    "user-id",
+  const statuses: string[] = [];
+  const result = await run(
     "Search online for this menu item's macros",
-    null,
-    null,
-    () => Promise.resolve(),
-    (message) => {
-      statusMessages.push(message);
-      return Promise.resolve();
-    },
-    testDependencies(fetchMock),
+    [502, jsonTextEvents(validAnalysis())],
+    { statuses },
   );
-
-  assertEquals(statusMessages, [
-    RESEARCH_STATUS_MESSAGES.estimatingWithoutSources,
-  ]);
+  assertEquals(statuses, [RESEARCH_STATUS_MESSAGES.estimatingWithoutSources]);
   assertEquals(result.research.degraded, true);
 });
 
-Deno.test("required lookup without an observed tool call is disclosed as unavailable", async () => {
-  const fetchMock = (() =>
-    Promise.resolve(
-      completedStream({ responseId: "resp_no_lookup" }),
-    )) as typeof fetch;
-  const result = await analyzeMeal(
-    "synthetic-user",
+Deno.test("required lookup without an observed search is disclosed as unavailable", async () => {
+  const result = await run(
     "Look up chicken nutrition",
-    null,
-    null,
-    async () => {},
-    async () => {},
-    testDependencies(fetchMock),
+    [submitToolEvents(SUBMIT, validAnalysis())],
   );
   assertEquals(result.research.used, false);
   assertEquals(result.research.degraded, true);
   assertEquals(result.analysis.confidence, 0.5);
-  assertEquals(
-    result.analysis.notes?.includes("Online lookup was unavailable"),
-    true,
+  assert(result.analysis.notes?.includes("Online lookup was unavailable"));
+});
+
+Deno.test("a personified preview frame is skipped instead of failing the meal", async () => {
+  const previews: string[] = [];
+  const personified = {
+    ...validAnalysis(),
+    analysis_preview: "I estimate a chicken burrito with rice.",
+  };
+  const result = await analyzeMeal(
+    "user-id",
+    "chicken and rice wrapped in a tortilla",
+    null,
+    null,
+    (preview) => {
+      previews.push(preview);
+      return Promise.resolve();
+    },
+    () => Promise.resolve(),
+    { client: fakeClaude([jsonTextEvents(personified, { chunks: 6 })]) },
   );
+  assertEquals(result.analysis.analysis_preview, result.analysis.title);
 });

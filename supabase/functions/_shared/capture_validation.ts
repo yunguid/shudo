@@ -155,3 +155,18 @@ export function occurredAt(localDay: string, timezone: string): string {
   instant = new Date(localNoonAsUtc - timezoneOffset(instant, timezone));
   return instant.toISOString();
 }
+
+/// On-device speech engines the phone may report for a dictated capture.
+export const SPEECH_ENGINES = new Set([
+  "apple.speech_transcriber",
+  "apple.dictation_transcriber",
+  "apple.sf_speech_on_device",
+]);
+
+/** Optional `speech_engine` field: which on-device engine wrote the text. */
+export function parseSpeechEngine(form: FormData): string | null {
+  const value = form.get("speech_engine");
+  if (typeof value !== "string" || !value.trim()) return null;
+  const engine = value.trim().toLowerCase();
+  return SPEECH_ENGINES.has(engine) ? engine : null;
+}

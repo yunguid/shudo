@@ -1,4 +1,4 @@
-import { assertNeutralGeneratedCopy } from "./generated_copy.ts";
+import { isNeutralGeneratedCopy, neutralSentences } from "./generated_copy.ts";
 
 export const ANALYSIS_PREVIEW_MAX_CHARACTERS = 240;
 
@@ -20,6 +20,7 @@ export const RESULT_SCHEMA = {
     title: { type: "string", minLength: 1, maxLength: 120 },
     items: {
       type: "array",
+      minItems: 1,
       maxItems: 30,
       items: {
         type: "object",
@@ -156,26 +157,6 @@ export function analysisPreviewFromPartialJSON(value: string): string | null {
   return normalizeAnalysisPreview(decoded) || null;
 }
 
-export function responseOutputText(response: Record<string, unknown>): string {
-  if (typeof response.output_text === "string" && response.output_text) {
-    return response.output_text;
-  }
-  const chunks: string[] = [];
-  const output = Array.isArray(response.output) ? response.output : [];
-  for (const item of output) {
-    if (!item || typeof item !== "object") continue;
-    const content = Array.isArray((item as Record<string, unknown>).content)
-      ? (item as Record<string, unknown>).content as unknown[]
-      : [];
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const text = (part as Record<string, unknown>).text;
-      if (typeof text === "string") chunks.push(text);
-    }
-  }
-  return chunks.join("");
-}
-
 function finiteNonnegative(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     throw new Error(`Invalid analysis value: ${label}`);
@@ -231,32 +212,34 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
     throw new Error("Analysis was not an object");
   }
   const object = payload as Record<string, unknown>;
-  if (!Array.isArray(object.items) || object.items.length > 30) {
+  if (
+    !Array.isArray(object.items) || object.items.length === 0 ||
+    object.items.length > 30
+  ) {
     throw new Error("Analysis items were invalid");
   }
   const totals = object.totals;
   if (!totals || typeof totals !== "object" || Array.isArray(totals)) {
     throw new Error("Analysis totals were missing");
   }
-  const title = assertNeutralGeneratedCopy(
-    nonemptyString(object.title, "title"),
-    "analysis title",
+  const items = object.items.map(parseItem);
+  // Claude's structured outputs cannot enforce string lengths, and a stray
+  // first-person phrase is a style slip, not a bad estimate. Copy is repaired
+  // here (truncated, fallback title, offending note sentences dropped) so a
+  // valid nutrition result is never discarded over wording.
+  const rawTitle = unicodePrefix(
+    nonemptyString(object.title, "title").replace(/\s+/g, " "),
+    120,
   );
-  if (Array.from(title).length > 120) {
-    throw new Error("Invalid analysis value: title");
-  }
-  const analysisPreview = assertNeutralGeneratedCopy(
-    nonemptyString(object.analysis_preview, "analysis_preview").replace(
-      /\s+/g,
-      " ",
-    ),
-    "analysis preview",
+  const title = isNeutralGeneratedCopy(rawTitle)
+    ? rawTitle
+    : unicodePrefix(items[0].name, 120);
+  const rawPreview = normalizeAnalysisPreview(
+    nonemptyString(object.analysis_preview, "analysis_preview"),
   );
-  if (
-    Array.from(analysisPreview).length > ANALYSIS_PREVIEW_MAX_CHARACTERS
-  ) {
-    throw new Error("Invalid analysis value: analysis_preview");
-  }
+  const analysisPreview = isNeutralGeneratedCopy(rawPreview)
+    ? rawPreview
+    : title;
   if (!("notes" in object)) throw new Error("Analysis notes were missing");
   if (object.notes !== null && typeof object.notes !== "string") {
     throw new Error("Invalid analysis value: notes");
@@ -266,12 +249,12 @@ export function parseAnalysis(payload: unknown): ParsedAnalysis {
     : null;
   const notes = normalizedNotes === null
     ? null
-    : assertNeutralGeneratedCopy(normalizedNotes, "analysis notes");
+    : neutralSentences(normalizedNotes);
   const totalValues = totals as Record<string, unknown>;
   const parsed = {
     analysis_preview: analysisPreview,
     title,
-    items: object.items.map(parseItem),
+    items,
     totals: {
       protein_g: finiteNonnegative(totalValues.protein_g, "protein_g"),
       carbs_g: finiteNonnegative(totalValues.carbs_g, "carbs_g"),

@@ -3,15 +3,13 @@ import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { scheduleStoredEntryDispatch } from "../_shared/dispatch.ts";
 import { drainStorageCleanup } from "../_shared/storage_cleanup.ts";
 import {
-  AUDIO_TYPES,
-  audioExtension,
   formFile,
   formString,
   IMAGE_TYPES,
   imageExtension,
-  MAX_AUDIO_BYTES,
   MAX_IMAGE_BYTES,
   occurredAt,
+  parseSpeechEngine,
   requireCaptureContent,
   requireMultipartContentType,
   validateCaptureText,
@@ -181,9 +179,16 @@ Deno.serve(async (req: Request) => {
 
     const text = validateCaptureText(formString(form, "text"));
     const image = formFile(form, "image");
-    const audio = formFile(form, "audio");
+    if (formFile(form, "audio")) {
+      // Voice is transcribed on the phone; only an outdated build uploads it.
+      throw new HttpError(
+        415,
+        "Voice is transcribed on your iPhone now. Update Shudo and try again.",
+      );
+    }
+    const audio = null;
+    const speechEngine = parseSpeechEngine(form);
     validateFile(image, IMAGE_TYPES, MAX_IMAGE_BYTES, "Image");
-    validateFile(audio, AUDIO_TYPES, MAX_AUDIO_BYTES, "Voice note");
     validateCombinedAttachmentSize(image, audio);
     requireCaptureContent(text, image, audio);
 
@@ -211,11 +216,7 @@ Deno.serve(async (req: Request) => {
         imageExtension(image.type.toLowerCase())
       }`
       : priorImagePath;
-    const audioPath = audio
-      ? `${userId}/${entryId}/${prepared.uploadToken}/voice.${
-        audioExtension(audio.type.toLowerCase())
-      }`
-      : priorAudioPath;
+    const audioPath = priorAudioPath;
 
     try {
       // The photo and voice note are independent objects; uploading them
@@ -235,19 +236,6 @@ Deno.serve(async (req: Request) => {
           "Photo upload",
         ));
       }
-      if (audio && audioPath) {
-        uploads.push(withTimeout(
-          admin.storage.from("entry-audio").upload(
-            audioPath,
-            audio,
-            { contentType: audio.type, cacheControl: "3600", upsert: true },
-          ).then(({ error }) => {
-            if (error) throw error;
-          }),
-          90_000,
-          "Voice note upload",
-        ));
-      }
       if (uploads.length > 0) {
         const results = await Promise.allSettled(uploads);
         const failure = results.find(
@@ -255,6 +243,16 @@ Deno.serve(async (req: Request) => {
             result.status === "rejected",
         );
         if (failure) throw failure.reason;
+      }
+
+      if (speechEngine) {
+        // Provenance for dictated text; written before publish so the
+        // processor (which preserves this column) always sees it.
+        const { error: engineError } = await admin.from("entries")
+          .update({ transcription_model: speechEngine })
+          .eq("id", entryId)
+          .eq("user_id", userId);
+        if (engineError) throw engineError;
       }
 
       const { data: published, error: publishError } = await admin.rpc(

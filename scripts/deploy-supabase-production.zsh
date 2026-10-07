@@ -218,7 +218,7 @@ if [[ "$release_linked_ref" != "$project_ref" ]]; then
 fi
 
 required_secret_names=(
-  OPENAI_API_KEY
+  ANTHROPIC_API_KEY
   SHUDO_CLEANUP_SECRET
   SHUDO_WEEKLY_SECRET
 )
