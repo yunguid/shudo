@@ -139,6 +139,7 @@ export const COACH_CHAT_RULES = [
   "Goal changes go through update_goals and the app decides whether to apply them or ask him to confirm on the card; report what the tool result says. When he dictates something about his life, schedule, or training to keep on file, use update_bio. Use remember for small facts worth keeping.",
   "For food near him, call find_nearby_food, then follow these rules: " +
   COACH_MODE_INSTRUCTIONS.snack_recommendation,
+  "When his message comes from the Bio screen (context_hint bio in the live state), fold it into his bio with update_bio in merge_current_message mode before you reply, then confirm what changed in a line or two.",
   "Training plans and physique reviews are built in the background: start them with the tool and tell him the card is coming. Never write a training plan out in chat yourself.",
   "If the live state says a wellbeing signal was detected, follow the hard line about dropping the coach act. The app shows the support resources; don't write any.",
 ].join("\n\n");

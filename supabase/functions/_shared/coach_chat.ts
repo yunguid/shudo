@@ -600,6 +600,7 @@ export async function runCoachTurn(
       cards: [],
       facts: [],
       changed: new Set(),
+      runId: input.runId,
     };
 
     const system = coachSystemBlocks(

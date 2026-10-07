@@ -38,6 +38,7 @@ import {
   parseClock,
 } from "./coach_policy.ts";
 import type { CoachMessageInput } from "./coach_rpc.ts";
+import { recordCoachUsage } from "./coach_usage.ts";
 import { createTextEntry } from "./entry_capture.ts";
 import {
   type LocationContext,
@@ -79,6 +80,8 @@ export type CoachToolEnvironment = {
   facts: unknown[];
   /// What the turn changed (drives a plan refresh afterwards).
   changed: Set<string>;
+  /// The coach_reply run, for cost attribution of nested model calls.
+  runId?: string | null;
 };
 
 export type CoachToolResult = { content: string; isError: boolean };
@@ -574,6 +577,15 @@ async function updateBio(
       environment.userText,
       { client: environment.client },
     );
+    if (merged.usage) {
+      await recordCoachUsage(
+        environment.admin,
+        environment.userId,
+        "coach_reply",
+        merged.usage,
+        environment.runId ?? null,
+      );
+    }
     changes = merged.changes;
     schedule = merged.schedule;
     goalSignals = merged.goalSignals;
