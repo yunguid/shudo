@@ -68,6 +68,10 @@ struct CoachSyncState: Codable, Equatable, Sendable {
     var lastForegroundSyncAt: Date?
     /// Lock-screen replies not yet accepted by the server.
     var outbox: [CoachOutboxItem] = []
+    /// `updated_at` of each row read inside the cursor overlap, so a
+    /// re-read row isn't counted as a change twice. Optional so state saved
+    /// by older builds still decodes.
+    var seenVersions: [UUID: Date]?
 
     static let empty = CoachSyncState()
 }
@@ -298,14 +302,27 @@ actor CoachSync {
     static let settingsMaxAge: TimeInterval = 6 * 3600
     static let locationMaxAge: TimeInterval = 20 * 60
     static let outboxMaxAge: TimeInterval = 24 * 3600
+    /// Rows are stamped with Postgres `now()`, the transaction *start*, so a
+    /// plan run that commits after a later-stamped write lands behind the
+    /// cursor and would never be fetched (its texts never scheduled, or a
+    /// superseded text never withdrawn). Every fetch re-reads this much
+    /// history; versions already seen are ignored.
+    static let cursorOverlap: TimeInterval = 120
 
-    static let shared = CoachSync(
-        service: CoachService.live,
-        scheduler: .live,
-        store: FileCoachSyncStateStore(),
-        mirror: CoachSettingsMirror(),
-        environment: .live
-    )
+    static let shared: CoachSync = {
+        #if DEBUG
+        // `-shudoNotificationDemo`: the whole app (responder, scene hooks,
+        // thread notifier) drives the real scheduler from fake rows.
+        if let demo = CoachNotificationDemo.makeSharedSync() { return demo }
+        #endif
+        return CoachSync(
+            service: CoachService.live,
+            scheduler: .live,
+            store: FileCoachSyncStateStore(),
+            mirror: CoachSettingsMirror(),
+            environment: .live
+        )
+    }()
 
     /// Things Luke did in the app that make near-term coach texts stale.
     enum LocalEvent: Equatable, Sendable {
@@ -360,7 +377,7 @@ actor CoachSync {
         queuedForegroundSync = true
         defer { queuedForegroundSync = false }
         state.lastForegroundSyncAt = now
-        return await sync(trigger: .foreground, wait: true)
+        return await sync(trigger: .foreground, wait: true, promptsForNotifications: true)
     }
 
     @discardableResult
@@ -419,10 +436,27 @@ actor CoachSync {
         try? await service.markRead(ids)
         await scheduler.removeDelivered(messageIds: ids)
         if let unread = try? await service.fetchUnreadCount() {
-            state.unreadCount = unread
-            persist()
-            await scheduler.setBadge(unread)
+            await updateUnreadCount(unread)
         }
+    }
+
+    /// The thread's unread total changed (read in the app, or refreshed).
+    /// Pending requests carry absolute badges counted up from it, so they
+    /// are renumbered along with the app icon.
+    func updateUnreadCount(_ count: Int) async {
+        state.unreadCount = max(0, count)
+        persist()
+        await reconcileNotifications()
+        await scheduler.setBadge(state.unreadCount)
+    }
+
+    /// A reply finished while the app was in the background: post it now,
+    /// counting it toward the badge.
+    func presentReplies(_ messages: [CoachMessage], unreadCount: Int) async {
+        let replies = messages.filter { $0.role == .coach && !$0.notificationText.isEmpty }
+        guard !replies.isEmpty else { return }
+        await scheduler.presentImmediately(replies, firstBadge: max(0, unreadCount) + 1)
+        await updateUnreadCount(max(0, unreadCount) + replies.count)
     }
 
     // MARK: Sync
@@ -433,7 +467,8 @@ actor CoachSync {
         entryId: UUID? = nil,
         activityId: UUID? = nil,
         wait: Bool = true,
-        refreshSettings: Bool = false
+        refreshSettings: Bool = false,
+        promptsForNotifications: Bool = false
     ) async -> CoachSyncOutcome {
         // Serialize: each sync runs after the previous one finishes.
         let previous = tail
@@ -444,7 +479,8 @@ actor CoachSync {
                 entryId: entryId,
                 activityId: activityId,
                 wait: wait,
-                refreshSettings: refreshSettings
+                refreshSettings: refreshSettings,
+                promptsForNotifications: promptsForNotifications
             )
         }
         tail = Task { _ = await work.value }
@@ -456,7 +492,8 @@ actor CoachSync {
         entryId: UUID?,
         activityId: UUID?,
         wait: Bool,
-        refreshSettings: Bool
+        refreshSettings: Bool,
+        promptsForNotifications: Bool
     ) async -> CoachSyncOutcome {
         let now = environment.now()
         guard let userId = environment.userId() else {
@@ -487,7 +524,11 @@ actor CoachSync {
         }
 
         var device = await environment.device()
-        device.notificationStatus = await scheduler.authorizationStatus()
+        // The coach is on but iOS has never asked (e.g. a reinstall that
+        // kept the server-side setting): ask on app open, never mid-flow.
+        device.notificationStatus = promptsForNotifications
+            ? await scheduler.requestAuthorizationIfNeeded()
+            : await scheduler.authorizationStatus()
         let location = settings.locationRecsEnabled
             ? await environment.locationContext(Self.locationMaxAge)
             : nil
@@ -506,12 +547,14 @@ actor CoachSync {
 
         let changes: [CoachMessage]
         do {
-            changes = try await service.fetchChanges(since: state.cursor)
+            changes = try await service.fetchChanges(
+                since: state.cursor.map { $0.addingTimeInterval(-Self.cursorOverlap) }
+            )
         } catch {
             await reconcileNotifications()
             return .failed(CoachViewModel.friendlyMessage(for: error))
         }
-        apply(changes: changes, now: environment.now())
+        let fresh = apply(changes: changes, now: environment.now())
         if let unread = try? await service.fetchUnreadCount() {
             state.unreadCount = unread
         }
@@ -519,24 +562,35 @@ actor CoachSync {
         persist()
         await reconcileNotifications()
 
-        let days = Array(Set(changes.map(\.localDay))).sorted()
+        let days = Array(Set(fresh.map(\.localDay))).sorted()
         if !days.isEmpty { environment.postThreadChange(days) }
-        return .synced(changed: changes.count, generated: generated)
+        return .synced(changed: fresh.count, generated: generated)
     }
 
-    private func apply(changes: [CoachMessage], now: Date) {
+    /// Folds fetched rows in (idempotent) and returns the ones not seen
+    /// before at this version.
+    private func apply(changes: [CoachMessage], now: Date) -> [CoachMessage] {
+        var seen = state.seenVersions ?? [:]
+        let fresh = changes.filter { seen[$0.id] != $0.updatedAt }
         state.rows = CoachNotificationPolicy.merge(rows: state.rows, changes: changes, now: now)
         if let newest = changes.map(\.updatedAt).max() {
             state.cursor = max(state.cursor ?? newest, newest)
         }
+        for change in changes { seen[change.id] = change.updatedAt }
+        if let cursor = state.cursor {
+            let floor = cursor.addingTimeInterval(-Self.cursorOverlap)
+            seen = seen.filter { $0.value >= floor }
+        }
+        state.seenVersions = seen
         state.suppressed = state.suppressed.filter { $0.value > now }
+        return fresh
     }
 
     /// Re-plans pending requests from the persisted rows (no network).
     func reconcileNotifications() async {
         let status = await scheduler.authorizationStatus()
         guard status == .authorized || status == .provisional else { return }
-        guard mirror.load()?.enabled == true else { return }
+        guard let settings = mirror.load(), settings.enabled else { return }
         let now = environment.now()
         state.rows = state.rows.filter { $0.deliverAt > now }
         state.suppressed = state.suppressed.filter { $0.value > now }
@@ -544,7 +598,9 @@ actor CoachSync {
             rows: state.rows,
             unreadCount: state.unreadCount,
             suppressed: Set(state.suppressed.keys),
-            now: now
+            now: now,
+            quietHours: settings,
+            timeZone: environment.timeZone()
         )
         await scheduler.setBadge(state.unreadCount)
         persist()
@@ -552,11 +608,13 @@ actor CoachSync {
 
     // MARK: Cancel-on-log
 
-    /// Removes pending coach texts due within the next 60 minutes; they stay
-    /// suppressed locally until their time passes or the server replaces them.
+    /// Removes pending coach texts due within the post-log window (and any
+    /// snooze due soon); they stay suppressed locally until their time
+    /// passes or the server replaces them.
     @discardableResult
     func cancelUpcomingAfterLog() async -> [UUID] {
         let now = environment.now()
+        await scheduler.cancelSnoozesAfterLog(now: now)
         let ids = CoachNotificationPolicy.idsToCancelOnLog(rows: state.rows, now: now)
         guard !ids.isEmpty else { return [] }
         for row in state.rows where ids.contains(row.id) {
@@ -590,11 +648,7 @@ actor CoachSync {
         if let messageId { try? await service.markRead([messageId]) }
         let replies = result.replies.filter { !$0.body.isEmpty }
         if !replies.isEmpty {
-            state.unreadCount += replies.count
-            await scheduler.presentImmediately(
-                replies,
-                firstBadge: state.unreadCount - replies.count + 1
-            )
+            await presentReplies(replies, unreadCount: state.unreadCount)
         }
         persist()
         return replies

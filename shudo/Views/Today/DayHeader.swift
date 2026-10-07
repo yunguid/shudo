@@ -170,7 +170,7 @@ struct DayHeader: View {
             HairlineRule().padding(.top, 4)
             Button(action: onOpenInsights) {
                 HStack {
-                    Text("Week insights")
+                    Text("This week")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Design.Color.textSecondary)
                     Spacer()
@@ -183,7 +183,7 @@ struct DayHeader: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Week insights")
+            .accessibilityLabel("This week")
             .accessibilityHint("Protein, weekly patterns and the protein guide")
         }
     }

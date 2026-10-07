@@ -115,6 +115,11 @@ export const COACH_STAPLE_FIGURES: readonly number[] = [
   300,
 ];
 
+/// Lock-screen craft shared by every mode that writes push_body. The
+/// notification title already says "Shudo", so the line carries no sender.
+export const COACH_PUSH_RULES =
+  "push_body rules: lead with the number or the ask, one idea, and make it stand alone (no 'as I said', no 'it' or 'that' pointing at an earlier text). No sender, greeting or name (no 'Shudo here', no 'Luke,'). Plain sentence: no emoji, markdown, quotes or line breaks. End with a question only when you need the answer. Anchor time to the clock ('before 9'), never 'now'. Recaps and acknowledgements arrive silently: one line of 80 characters or fewer, no call to action. Snack recs lead with distance and payoff, e.g. '7-Eleven is 4 min away. Chobani + Core Power = 67g protein. Walk over?'";
+
 /// Persona bible §5 per mode (meal_ack added in the same pattern), tightened
 /// to text-message length: lock-screen lines aim for 90 characters.
 export const COACH_MODE_INSTRUCTIONS: Record<CoachMode, string> = {
@@ -188,6 +193,7 @@ export const COACH_DAY_PLAN_INSTRUCTIONS = [
   `checkin_ack: ${COACH_MODE_INSTRUCTIONS.checkin_ack}`,
   "The batch must read as one day: thread the day_theme through the slots, and don't repeat an opener, joke, or angle across slots or from the recent thread. Use at most one callback from the brief per slot, and spread different ones across the day. Each slot is read on its own, possibly hours later, so it must stand alone.",
   "body holds the in-app text: usually one bubble; two only when the second earns it (separate with a blank line). push_body is the lock-screen line, about 90 characters, required when the slot's push field is true and null otherwise. The shape field suggests length and opener for variety.",
+  COACH_PUSH_RULES,
   "memory_note: at most one short, durable thing worth remembering about him (a preference, pattern, or commitment he made), or null. Never a number the app tracks.",
 ].join("\n\n");
 

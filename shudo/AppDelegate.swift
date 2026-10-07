@@ -14,6 +14,9 @@ final class ShudoAppDelegate: NSObject, UIApplicationDelegate {
         let center = UNUserNotificationCenter.current()
         center.delegate = notificationDelegate
         CoachNotificationCategories.register(on: center)
+        #if DEBUG
+        CoachNotificationDemo.startIfRequested()
+        #endif
         return true
     }
 }
@@ -74,8 +77,15 @@ enum CoachNotificationRouting {
     }
 
     /// No banner while the thread is on screen; the message animates in.
-    static func presentationOptions(isCoach: Bool, threadVisible: Bool) -> UNNotificationPresentationOptions {
+    /// Elsewhere in the app a passive text only joins the list, as it would
+    /// on the lock screen.
+    static func presentationOptions(
+        isCoach: Bool,
+        threadVisible: Bool,
+        isPassive: Bool = false
+    ) -> UNNotificationPresentationOptions {
         if isCoach && threadVisible { return [] }
+        if isCoach && isPassive { return [.list] }
         return [.banner, .list, .sound]
     }
 
@@ -97,11 +107,13 @@ final class CoachNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
     ) {
         let identifier = notification.request.identifier
         let isCoach = identifier.hasPrefix(CoachNotificationIdentifiers.ownedPrefix)
+        let isPassive = notification.request.content.interruptionLevel == .passive
         let localDay = CoachNotificationPayload(userInfo: notification.request.content.userInfo)?.localDay
         Task { @MainActor in
             let options = CoachNotificationRouting.presentationOptions(
                 isCoach: isCoach,
-                threadVisible: CoachPresence.shared.isThreadVisible
+                threadVisible: CoachPresence.shared.isThreadVisible,
+                isPassive: isPassive
             )
             if isCoach {
                 NotificationCenter.default.post(
@@ -110,6 +122,11 @@ final class CoachNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
                     userInfo: localDay.map { ["local_days": [$0]] }
                 )
             }
+            #if DEBUG
+            if CoachNotificationDemo.isEnabled {
+                CoachNotificationDemo.log("willPresent \(identifier.suffix(8)) options=\(options.rawValue) visible=\(CoachPresence.shared.isThreadVisible)")
+            }
+            #endif
             completionHandler(options)
         }
     }
@@ -161,6 +178,11 @@ final class CoachNotificationResponder {
     }
 
     func handle(_ action: CoachNotificationAction) async {
+        #if DEBUG
+        if CoachNotificationDemo.isEnabled {
+            CoachNotificationDemo.log("didReceive \(action.actionIdentifier) \(action.notificationIdentifier.suffix(8)) → \(CoachNotificationRouting.route(action))")
+        }
+        #endif
         switch CoachNotificationRouting.route(action) {
         case .open(let url):
             AppRouter.shared.handle(url: url)

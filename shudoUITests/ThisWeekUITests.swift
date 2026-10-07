@@ -12,7 +12,7 @@ final class ThisWeekUITests: XCTestCase {
         let header = app.descendants(matching: .any)["today.header.remaining"]
         XCTAssertTrue(header.waitForExistence(timeout: 8))
         header.tap()
-        let insights = app.buttons["Week insights"]
+        let insights = app.buttons["This week"]
         XCTAssertTrue(insights.waitForExistence(timeout: 3))
         insights.tap()
         XCTAssertTrue(app.navigationBars["This week"].waitForExistence(timeout: 5))
