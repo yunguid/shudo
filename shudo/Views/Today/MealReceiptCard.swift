@@ -146,6 +146,8 @@ struct CheckInThreadCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(dayLabel.map { "Check-in · \($0)" } ?? "Check-in")
                     .eyebrowStyle(Design.Color.honey)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                 Text(checkIn.hasPhoto ? "Photo logged" : "Weight logged")
                     .font(.headline)
                     .foregroundStyle(Design.Color.textPrimary)
@@ -157,7 +159,7 @@ struct CheckInThreadCard: View {
             Spacer(minLength: 0)
         }
         .padding(10)
-        .frame(maxWidth: 260)
+        .frame(maxWidth: 280)
         .background(Design.Color.surface1, in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)

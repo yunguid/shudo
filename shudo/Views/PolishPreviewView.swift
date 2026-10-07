@@ -3,9 +3,15 @@ import SwiftUI
 import UIKit
 
 enum PolishPreviewScreen: String {
+    /// The app shell on Today (thread opens at the bottom).
     case main
+    /// Today with the day header expanded (week strip + meal ledger).
+    case todayExpanded = "today-expanded"
+    /// Today seeded with every other coach card kind.
+    case todayCards = "today-cards"
     case detail
     case settings
+    case bio
     case insights
     case heatmap
     case train
@@ -74,26 +80,42 @@ struct PolishPreviewView: View {
 
     var body: some View {
         switch screen {
-        case .main:
-            TodayView(
-                profile: Self.profile,
-                previewViewModel: Self.todayViewModel,
-                previewEntryDetail: Self.entryDetail,
-                previewComposerSeedImages: Self.composerSeedImages
+        case .main, .todayExpanded, .todayCards:
+            AppShell(
+                profile: ShellPreviewFixtures.profile,
+                dependencies: ShellPreviewFixtures.dependencies(
+                    variant: screen,
+                    makeToday: { Self.todayViewModel },
+                    entryDetail: Self.entryDetail,
+                    composerSeedImages: Self.composerSeedImages
+                )
             )
         case .detail:
             NavigationStack {
                 EntryDetailView(
                     entryId: Self.completedEntryID,
-                    previewDetail: Self.entryDetail
+                    previewDetail: Self.entryDetail,
+                    onLogAgain: { _ in }
                 )
             }
         case .settings:
             NavigationStack {
                 AccountView(
-                    previewProfile: Self.profile,
+                    previewProfile: ShellPreviewFixtures.profile,
                     profilePhoto: Self.profilePhoto,
-                    dailyTotals: Self.adherenceTotals
+                    hooks: ShellPreviewFixtures.accountHooks(
+                        settings: ProcessInfo.processInfo.arguments.contains("-shudoCoachEnabled")
+                            ? ShellPreviewFixtures.settingsEnabled
+                            : .defaults
+                    )
+                )
+            }
+        case .bio:
+            NavigationStack {
+                BioView(
+                    coachService: ShellPreviewFixtures.coachService(cards: false),
+                    loadRevisions: { ShellPreviewFixtures.revisions },
+                    onSend: { _, _ in }
                 )
             }
         case .insights:
@@ -123,25 +145,6 @@ struct PolishPreviewView: View {
     }
 
     private static let completedEntryID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
-
-    /// The fixture meal after a correction lands: smaller rice portion, so
-    /// the card visibly moves from 695 kcal to 560 kcal.
-    private static func correctedEntry(id: UUID) -> Entry {
-        Entry(
-            id: id,
-            createdAt: Date().addingTimeInterval(-7_200),
-            summary: "Chicken rice bowl",
-            imageURL: nil,
-            proteinG: 57,
-            carbsG: 49,
-            fatG: 18,
-            caloriesKcal: 560,
-            localDay: Self.localDay,
-            status: .complete,
-            statusMessage: "Ready",
-            statusUpdatedAt: Date()
-        )
-    }
 
     /// A single tall portrait photo is the worst case for the fill-overflow
     /// hit-testing bug (the invisible overflow used to swallow mic taps), so
@@ -185,58 +188,21 @@ struct PolishPreviewView: View {
         avatarPath: "00000000-0000-4000-8000-000000000001/11111111-1111-4111-8111-111111111111.jpg"
     )
 
+    /// The lean-bulk day's meals. The lunch bowl (695 → 560 kcal after a
+    /// correction) drives the correction-flow UI tests; dinner stays
+    /// analyzing so the live research card is visible.
     @MainActor
     private static var todayViewModel: TodayViewModel {
         TodayViewModel(
-            profile: profile,
+            profile: ShellPreviewFixtures.profile,
             api: APIService(
                 supabaseUrl: URL(string: "https://local-preview.invalid")!,
                 supabaseAnonKey: "local-preview",
                 sessionJWTProvider: { "local-preview" }
             ),
             reanalysis: PolishPreviewCorrectionService.shared,
-            fetchEntryById: { id in correctedEntry(id: id) },
-            preloadedEntries: [
-                Entry(
-                    id: completedEntryID,
-                    createdAt: Date().addingTimeInterval(-7_200),
-                    summary: "Chicken rice bowl",
-                    imageURL: nil,
-                    proteinG: 58,
-                    carbsG: 72,
-                    fatG: 19,
-                    caloriesKcal: 695,
-                    localDay: Self.localDay,
-                    status: .complete
-                ),
-                Entry(
-                    id: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
-                    createdAt: Date().addingTimeInterval(-4_800),
-                    summary: "Chipotle chicken burrito bowl",
-                    imageURL: nil,
-                    proteinG: 54,
-                    carbsG: 88,
-                    fatG: 24,
-                    caloriesKcal: 800,
-                    localDay: Self.localDay,
-                    status: .complete,
-                    analysisNotes: "Standard portions from the online menu.\n\nOnline sources: [chipotle.com](https://www.chipotle.com/nutrition-calculator)."
-                ),
-                Entry(
-                    id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
-                    createdAt: Date().addingTimeInterval(-2_400),
-                    summary: "Sweetgreen harvest bowl, look it up",
-                    imageURL: nil,
-                    proteinG: 0,
-                    carbsG: 0,
-                    fatG: 0,
-                    caloriesKcal: 0,
-                    localDay: Self.localDay,
-                    status: .analyzing,
-                    statusMessage: "Checking nutrition sources",
-                    statusUpdatedAt: Date()
-                )
-            ]
+            fetchEntryById: { _ in ShellPreviewFixtures.correctedChickenBowl() },
+            preloadedEntries: ShellPreviewFixtures.entries()
         )
     }
 
@@ -285,7 +251,7 @@ struct PolishPreviewView: View {
                 caloriesKcal: 190
             )
         ],
-        analysisNotes: "Values follow the restaurant's own nutrition calculator for these exact portions.\n\nOnline sources: [chipotle.com](https://www.chipotle.com/nutrition-calculator), [chipotle.com](https://www.chipotle.com/order/build/burrito-bowl), [nutritionix.com](https://www.nutritionix.com/brand/chipotle-mexican-grill).",
+        analysisNotes: "Values follow the restaurant's own nutrition calculator for these exact portions. Was the rice a full scoop or a light one?\n\nOnline sources: [chipotle.com](https://www.chipotle.com/nutrition-calculator), [chipotle.com](https://www.chipotle.com/order/build/burrito-bowl), [nutritionix.com](https://www.nutritionix.com/brand/chipotle-mexican-grill).",
         confidence: 0.9
     )
 

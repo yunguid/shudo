@@ -82,6 +82,9 @@ struct EntryComposerView: View {
     let selectedDay: Date
     let timezone: String
     let autoStartRecording: Bool
+    /// The capture bar's "Scan barcode": open the scanner once the sheet is up.
+    let opensBarcodeScannerOnAppear: Bool
+    @State private var didOpenScanner = false
     /// Hands the composed meal to the owner and returns immediately — the
     /// upload runs on the Today screen's card, so this sheet never holds the
     /// user through the network round trip.
@@ -94,11 +97,13 @@ struct EntryComposerView: View {
         autoStartRecording: Bool = false,
         voice: VoiceTranscriber,
         initialImages: [UIImage] = [],
+        opensBarcodeScannerOnAppear: Bool = false,
         onSubmit: @escaping (EntryCaptureDraft) -> Void
     ) {
         self.selectedDay = selectedDay
         self.timezone = timezone
         self.autoStartRecording = autoStartRecording
+        self.opensBarcodeScannerOnAppear = opensBarcodeScannerOnAppear
         self.voice = voice
         _voicePhase = State(initialValue: voice.phase)
         _images = State(initialValue: initialImages)
@@ -212,6 +217,14 @@ struct EntryComposerView: View {
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(400))
                 CameraPrewarmer.prewarm()
+            }
+            if opensBarcodeScannerOnAppear, !didOpenScanner {
+                didOpenScanner = true
+                Task { @MainActor in
+                    // Present over the settled sheet, not mid-animation.
+                    try? await Task.sleep(for: .milliseconds(450))
+                    isShowingBarcodeScanner = true
+                }
             }
         }
         .task {

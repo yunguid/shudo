@@ -25,8 +25,6 @@ struct AccountView: View {
     @FocusState private var focusedTarget: TargetField?
     @State private var profile: Profile
     @State private var targetDraft: MacroTargetDraft
-    @State private var dailyTotals: [DailyNutritionTotal] = []
-    @State private var targetHistory: [DailyMacroTargetSnapshot] = []
     @State private var isLoading = true
     @State private var isSavingTargets = false
     @State private var isShowingProfileEditor = false
@@ -41,20 +39,33 @@ struct AccountView: View {
     @State private var isLoadingProfilePhoto = false
     @State private var isSavingProfilePhoto = false
     @State private var isShowingRemovePhotoConfirmation = false
-    @AppStorage(DayNotificationScheduler.enabledDefaultsKey) private var notificationsEnabled = false
-    @AppStorage(DayNotificationScheduler.weighInSecondsDefaultsKey) private var weighInSeconds =
-        DayNotificationScheduler.defaultWeighInSecondsFromMidnight
+
+    /// What Settings needs from the app shell (coach settings, bio, sign-out
+    /// cleanup). Heatmap and trends moved to the Body tab.
+    struct ShellHooks {
+        var coachService: any CoachServing
+        var loadsRemotely: Bool
+        /// Opened from the iOS "Shudo Notification Settings" link.
+        var scrollToCoach = false
+        var onProfileUpdated: (Profile) -> Void
+        var onSettingsChanged: (CoachSettings) -> Void
+        var openBio: () -> Void
+        var bioDestination: () -> AnyView
+        /// Sign-out / account deletion: forget the coach queue and caches.
+        var onSignOut: () -> Void
+    }
 
     private let service: SupabaseService
     private let accountDeletionService: any AccountDeletionServing
-    private let onProfileUpdated: (Profile) -> Void
+    private let hooks: ShellHooks
     private let loadsRemotely: Bool
+    private var onProfileUpdated: (Profile) -> Void { hooks.onProfileUpdated }
 
     init(
         initialProfile: Profile,
         service: SupabaseService = SupabaseService(),
         accountDeletionService: (any AccountDeletionServing)? = nil,
-        onProfileUpdated: @escaping (Profile) -> Void = { _ in }
+        hooks: ShellHooks
     ) {
         _profile = State(initialValue: initialProfile)
         _targetDraft = State(initialValue: MacroTargetDraft(target: initialProfile.dailyMacroTarget))
@@ -66,7 +77,7 @@ struct AccountView: View {
                 supabaseAnonKey: AppConfig.supabaseAnonKey,
                 sessionJWTProvider: { try await AuthSessionManager.shared.getAccessToken() }
             )
-        self.onProfileUpdated = onProfileUpdated
+        self.hooks = hooks
         loadsRemotely = true
     }
 
@@ -74,39 +85,44 @@ struct AccountView: View {
         init(
             previewProfile: Profile,
             profilePhoto: UIImage,
-            dailyTotals: [DailyNutritionTotal]
+            hooks: ShellHooks
         ) {
             _profile = State(initialValue: previewProfile)
             _targetDraft = State(initialValue: MacroTargetDraft(target: previewProfile.dailyMacroTarget))
-            _dailyTotals = State(initialValue: dailyTotals)
             _profilePhoto = State(initialValue: profilePhoto)
             _isLoading = State(initialValue: false)
+            _email = State(initialValue: "luke@example.com")
             service = SupabaseService()
             accountDeletionService = PolishPreviewAccountDeletionService()
-            onProfileUpdated = { _ in }
+            self.hooks = hooks
             loadsRemotely = false
         }
     #endif
 
     var body: some View {
+        ScrollViewReader { proxy in
+            settingsScroll
+                .task {
+                    guard hooks.scrollToCoach else { return }
+                    try? await Task.sleep(for: .milliseconds(350))
+                    withAnimation(Design.Motion.settle) { proxy.scrollTo("settings.coach", anchor: .top) }
+                }
+        }
+    }
+
+    private var settingsScroll: some View {
         ScrollView {
             VStack(spacing: 24) {
                 profileHeader
                 profileDetails
-                weightReminderSettings
+                CoachSettingsSection(
+                    service: hooks.coachService,
+                    loadsRemotely: hooks.loadsRemotely,
+                    onSettingsChanged: hooks.onSettingsChanged
+                )
+                .id("settings.coach")
+                bioRow
                 targetEditor
-                AdherenceHeatmapView(
-                    totals: dailyTotals,
-                    target: profile.dailyMacroTarget,
-                    targetHistory: targetHistory,
-                    timezone: profile.timezone
-                )
-                NutrientTrendsView(
-                    totals: dailyTotals,
-                    target: profile.dailyMacroTarget,
-                    targetHistory: targetHistory,
-                    timezone: profile.timezone
-                )
                 if isLoading {
                     ProgressView()
                         .tint(Design.Color.accentPrimary)
@@ -126,6 +142,7 @@ struct AccountView: View {
                 }
 
                 Button {
+                    hooks.onSignOut()
                     AuthSessionManager.shared.signOut()
                     dismiss()
                 } label: {
@@ -198,11 +215,6 @@ struct AccountView: View {
                     ProfileCache.save(updated)
                     onProfileUpdated(updated)
                     isShowingTargetRecalculation = false
-                    Task {
-                        if let refreshedHistory = try? await service.fetchDailyMacroTargetHistory() {
-                            targetHistory = refreshedHistory
-                        }
-                    }
                 }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -218,6 +230,7 @@ struct AccountView: View {
                     confirmation: AccountDeletionPolicy.confirmation
                 )
                 await MainActor.run {
+                    hooks.onSignOut()
                     AuthSessionManager.shared.signOut()
                     isShowingDeleteAccount = false
                     dismiss()
@@ -475,88 +488,38 @@ struct AccountView: View {
         }
     }
 
-    private var weightReminderSettings: some View {
+    private var bioRow: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("NOTIFICATIONS")
-            VStack(spacing: 0) {
-                Toggle(
-                    isOn: Binding(
-                        get: { notificationsEnabled },
-                        set: { setNotifications(enabled: $0) }
-                    )
-                ) {
+            sectionLabel("BIO")
+            NavigationLink {
+                hooks.bioDestination()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.text.rectangle.fill")
+                        .font(.body)
+                        .foregroundStyle(Design.Color.ember)
+                        .frame(width: 30, height: 30)
+                        .background(Design.Color.ember.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Daily nudges")
+                        Text("What Shudo knows about you")
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Design.Color.ink)
-                        Text("Weigh-in reminder and meal-pacing check-ins, on this device")
+                            .foregroundStyle(Design.Color.textPrimary)
+                        Text("Your bio. Talk to update it.")
                             .font(.caption)
-                            .foregroundStyle(Design.Color.muted)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .foregroundStyle(Design.Color.textSecondary)
                     }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.textTertiary)
                 }
-                .tint(Design.Color.accentPrimary)
                 .padding(.horizontal, 16)
-                .frame(minHeight: 60)
-
-                if notificationsEnabled {
-                    HairlineRule().padding(.leading, 16)
-                    DatePicker(
-                        "Weigh-in time",
-                        selection: Binding(
-                            get: { reminderDate },
-                            set: { updateReminderTime($0) }
-                        ),
-                        displayedComponents: .hourAndMinute
-                    )
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.ink)
-                    .tint(Design.Color.accentPrimary)
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 54)
-                }
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
             }
-            .background(
-                Design.Color.elevated,
-                in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous)
-            )
-        }
-    }
-
-    private var reminderDate: Date {
-        Calendar.current.startOfDay(for: Date())
-            .addingTimeInterval(weighInSeconds)
-    }
-
-    private func setNotifications(enabled: Bool) {
-        notificationsEnabled = enabled
-        Task {
-            do {
-                try await DayNotificationScheduler.applyEnabled(
-                    enabled,
-                    weighInSecondsFromMidnight: weighInSeconds
-                )
-            } catch {
-                await MainActor.run {
-                    notificationsEnabled = false
-                    self.error = error.localizedDescription
-                }
-            }
-        }
-    }
-
-    private func updateReminderTime(_ date: Date) {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        weighInSeconds = Double((components.hour ?? 8) * 3_600 + (components.minute ?? 0) * 60)
-        Task {
-            do {
-                try await DayNotificationScheduler.applyEnabled(
-                    notificationsEnabled,
-                    weighInSecondsFromMidnight: weighInSeconds
-                )
-            } catch {
-                await MainActor.run { self.error = error.localizedDescription }
-            }
+            .buttonStyle(.plain)
+            .background(Design.Color.surface1, in: RoundedRectangle(cornerRadius: Design.Radius.l, style: .continuous))
+            .accessibilityIdentifier("settings.bio")
         }
     }
 
@@ -652,12 +615,8 @@ struct AccountView: View {
         Task {
             do {
                 let updated = try await service.updateDailyMacroTarget(target)
-                let updatedTargetHistory = try? await service.fetchDailyMacroTargetHistory()
                 await MainActor.run {
                     profile = updated
-                    if let updatedTargetHistory {
-                        targetHistory = updatedTargetHistory
-                    }
                     targetDraft = MacroTargetDraft(target: updated.dailyMacroTarget)
                     ProfileCache.save(updated)
                     onProfileUpdated(updated)
@@ -687,14 +646,7 @@ struct AccountView: View {
                 ProfileCache.save(fresh)
                 onProfileUpdated(fresh)
             }
-            // Totals need the fresh profile's timezone; the remaining loads are
-            // independent, so run them together instead of as four round trips.
-            async let totalsRequest = service.fetchDailyNutritionTotals(timezone: profile.timezone)
-            async let historyRequest = service.fetchDailyMacroTargetHistory()
-            async let emailRequest = try? loadEmail()
-            dailyTotals = try await totalsRequest
-            targetHistory = try await historyRequest
-            if let loadedEmail = await emailRequest {
+            if let loadedEmail = try? await loadEmail() {
                 email = loadedEmail
             }
         } catch {

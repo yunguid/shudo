@@ -1,0 +1,532 @@
+import PhotosUI
+import SwiftUI
+import UIKit
+
+/// The signed-in app: three tabs (Today · Body · Train) with one capture bar
+/// on every tab as the TabView's bottom accessory. The shell owns the
+/// long-lived state the tabs share — the day's meals, the coach thread, the
+/// workout logger — and every capture flow, so "Tell Shudo anything…",
+/// the meal composer, the camera menu and check-ins work from any tab.
+struct AppShell: View {
+    let profile: Profile
+    private let dependencies: ShellDependencies
+
+    @StateObject private var today: TodayViewModel
+    @StateObject private var coach: CoachViewModel
+    @StateObject private var logging: ActivityLoggingController
+    @StateObject private var dayContext: TodayDayContext
+    /// Transcribers live outside observation: their ~16 Hz meters must
+    /// re-render only the views that show them, never the whole shell.
+    @StateObject private var coachVoice = UnobservedHolder(VoiceTranscriber(profile: .coach))
+    @StateObject private var composerVoice = UnobservedHolder(VoiceTranscriber(profile: .meal))
+    @StateObject private var workoutVoice = UnobservedHolder(VoiceTranscriber(profile: .coach))
+    @ObservedObject private var router = AppRouter.shared
+
+    @State private var tab: AppTab
+    @State private var headerExpanded: Bool
+    @State private var draft = CaptureDraft()
+    @State private var isTyping = false
+    @State private var sheet: ShellSheet?
+    @State private var cover: ShellCover?
+    @State private var composerSeed = ComposerSeed()
+    @State private var isPickingMealPhoto = false
+    @State private var mealPhotoItem: PhotosPickerItem?
+    @State private var mealTracker = MealCompletionTracker()
+    @State private var bodyRefreshToken = UUID()
+    @State private var didLaunch = false
+    @Environment(\.scenePhase) private var scenePhase
+
+    init(profile: Profile, dependencies: ShellDependencies? = nil) {
+        self.profile = profile
+        let dependencies = dependencies ?? .live(profile: profile)
+        self.dependencies = dependencies
+        _today = StateObject(wrappedValue: dependencies.makeToday())
+        _coach = StateObject(wrappedValue: dependencies.makeCoach())
+        _logging = StateObject(wrappedValue: ActivityLoggingController(service: dependencies.trainService))
+        let timezone = profile.timezone
+        _dayContext = StateObject(wrappedValue: TodayDayContext(
+            localDay: LocalDayMath.today(in: timezone, now: dependencies.now()),
+            train: dependencies.trainService,
+            body: dependencies.bodyService,
+            timezone: { ProfileCache.load(userId: profile.userId)?.timezone ?? timezone }
+        ))
+        _tab = State(initialValue: dependencies.initialTab)
+        _headerExpanded = State(initialValue: dependencies.initialHeaderExpanded)
+    }
+
+    private var currentProfile: Profile { today.profile ?? profile }
+    private var todayLocalDay: String { LocalDayMath.today(in: currentProfile.timezone, now: dependencies.now()) }
+
+    var body: some View {
+        TabView(selection: $tab) {
+            Tab("Today", systemImage: "bubble.left.and.text.bubble.right.fill", value: AppTab.today) {
+                todayScreen
+            }
+            .badge(tab == .today ? 0 : coach.unreadCount)
+
+            Tab("Body", systemImage: "figure.arms.open", value: AppTab.body) {
+                dependencies.makeBodyScreen(currentProfile) { saved in checkInSaved(saved) }
+                    .id(bodyRefreshToken)
+            }
+
+            Tab("Train", systemImage: "dumbbell.fill", value: AppTab.train) {
+                NavigationStack {
+                    TrainScreen(
+                        viewModel: dependencies.makeTrainViewModel(currentProfile, logging),
+                        onAskCoach: { sendToCoach($0, mode: .typed, engine: nil) },
+                        onDictate: workoutDictation
+                    )
+                }
+            }
+        }
+        .tint(Design.Color.ember)
+        .tabViewBottomAccessory {
+            CaptureBar(voice: coachVoice.value, draft: $draft, actions: captureActions)
+        }
+        .tabBarMinimizeBehavior(.onScrollDown)
+        .overlay(alignment: .bottom) { typingOverlay }
+        .animation(Design.Motion.snap, value: isTyping)
+        .sheet(isPresented: $today.isPresentingComposer, onDismiss: composerDismissed) { composer }
+        .sheet(item: $sheet) { sheet in sheetContent(sheet) }
+        .fullScreenCover(item: $cover) { cover in coverContent(cover) }
+        .photosPicker(isPresented: $isPickingMealPhoto, selection: $mealPhotoItem, matching: .images)
+        .onChange(of: mealPhotoItem) { _, item in loadPickedMealPhoto(item) }
+        .onAppear(perform: launch)
+        .onChange(of: today.entries) { _, entries in
+            for id in mealTracker.observe(entries) {
+                dependencies.recordEvent(.mealCompleted(entryId: id))
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            updatePresence()
+            guard phase == .active else { return }
+            Task { await coach.onForeground() }
+            guard dependencies.loadsRemotely else { return }
+            Task { await today.reconcileAfterActivation() }
+            Task { await dayContext.refreshAll() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            guard dependencies.loadsRemotely else { return }
+            Task { await today.reconcileAfterActivation() }
+        }
+        .onChange(of: tab) { _, _ in updatePresence() }
+        .onChange(of: sheet?.id) { _, _ in updatePresence() }
+        .onChange(of: cover?.id) { _, _ in updatePresence() }
+        .onChange(of: today.isPresentingComposer) { _, _ in updatePresence() }
+        .onChange(of: router.coachRequest) { _, request in handle(coachRequest: request) }
+        .onChange(of: router.captureRequest) { _, request in handle(captureRequest: request) }
+        .onChange(of: profile) { _, updated in
+            guard dependencies.loadsRemotely else { return }
+            Task { await today.loadFor(profile: updated) }
+        }
+        .onDisappear { CoachPresence.shared.isThreadVisible = false }
+    }
+
+    // MARK: Tabs
+
+    private var todayScreen: some View {
+        TodayScreen(
+            profile: currentProfile,
+            today: today,
+            coach: coach,
+            context: dayContext,
+            logging: logging,
+            environment: TodayScreenEnvironment(
+                loadsRemotely: dependencies.loadsRemotely,
+                previewEntryDetail: dependencies.previewEntryDetail,
+                coachMediaURL: dependencies.coachMediaURL,
+                trainService: dependencies.trainService,
+                bodyService: dependencies.bodyService,
+                makeInsights: insightsScreen,
+                now: dependencies.now
+            ),
+            actions: TodayScreenActions(
+                openSettings: { sheet = .account(scrollToCoach: false) },
+                openBio: { sheet = .bio },
+                switchTab: { tab = $0 },
+                sendToCoach: { sendToCoach($0, mode: .typed, engine: nil) },
+                refreshProfile: refreshProfile,
+                logAgain: logAgain
+            ),
+            headerExpanded: $headerExpanded,
+            isActiveTab: tab == .today
+        )
+    }
+
+    private func insightsScreen(_ profile: Profile) -> AnyView {
+        #if DEBUG
+        if !dependencies.loadsRemotely {
+            return AnyView(WeeklyInsightsScreen(
+                previewProfile: profile,
+                summaries: [],
+                dailyTotals: dayContext.dayTotals,
+                targetHistory: dayContext.targetHistory
+            ))
+        }
+        #endif
+        return AnyView(WeeklyInsightsScreen(profile: profile))
+    }
+
+    // MARK: Capture
+
+    private var captureActions: CaptureBarActions {
+        CaptureBarActions(
+            send: { text, mode, engine in sendToCoach(text, mode: mode, engine: engine) },
+            openComposer: { autoStart in openComposer(autoStartRecording: autoStart) },
+            mealPhoto: {
+                if CameraAvailability.hasCamera {
+                    cover = .camera(.meal)
+                } else {
+                    isPickingMealPhoto = true
+                }
+            },
+            scanBarcode: { openComposer(autoStartRecording: false, opensScanner: true) },
+            workoutPhoto: {
+                if CameraAvailability.hasCamera {
+                    cover = .camera(.workout)
+                } else {
+                    sheet = .workoutLog(WorkoutLogContext(initialKind: .strength))
+                }
+            },
+            checkIn: { cover = .checkIn },
+            beginTyping: {
+                warmLocation()
+                isTyping = true
+            },
+            willCompose: warmLocation
+        )
+    }
+
+    /// The keyboard-docked composer (the accessory itself sits under the
+    /// keyboard). A light scrim; tap it to tuck the draft back into the bar.
+    @ViewBuilder
+    private var typingOverlay: some View {
+        if isTyping {
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .onTapGesture { isTyping = false }
+                    .accessibilityHidden(true)
+                CaptureComposer(
+                    draft: $draft,
+                    onSend: sendDraft,
+                    onDictate: {
+                        isTyping = false
+                        let voice = coachVoice.value
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(250))
+                            _ = await voice.start()
+                        }
+                    },
+                    onClose: { isTyping = false }
+                )
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private func sendDraft() {
+        guard let submission = draft.submission else { return }
+        sendToCoach(submission.text, mode: submission.mode, engine: submission.speechEngine)
+        draft.clear()
+        isTyping = false
+    }
+
+    private func sendToCoach(_ text: String, mode: CoachInputMode, engine: String?, hint: CoachContextHint? = nil) {
+        guard coach.send(text: text, mode: mode, speechEngine: engine, contextHint: hint) != nil else { return }
+        if hint != .bio { tab = .today }
+    }
+
+    /// "Nearby store recs": refresh the on-device store scan while Luke is
+    /// composing so the send carries a fresh `LocationContext`.
+    private func warmLocation() {
+        guard dependencies.loadsRemotely else { return }
+        Task { _ = await NearbyStoreScout.shared.contextIfEnabled(maxAge: 10 * 60, refreshIfStale: true) }
+    }
+
+    /// The classic composer. A voice start begins the microphone warm-up at
+    /// the tap so session activation overlaps the sheet animation.
+    private func openComposer(autoStartRecording: Bool, images: [UIImage] = [], opensScanner: Bool = false) {
+        Perf.mark(autoStartRecording ? "mic.tap" : "compose.tap")
+        composerSeed = ComposerSeed(
+            autoStartRecording: autoStartRecording,
+            images: images.isEmpty ? dependencies.composerSeedImages : images,
+            opensScanner: opensScanner
+        )
+        if coachVoice.value.isBusy { coachVoice.value.cancel() }
+        if autoStartRecording, sheet == nil, cover == nil {
+            let voice = composerVoice.value
+            Task { await voice.start() }
+        }
+        sheet = nil
+        today.isPresentingComposer = true
+    }
+
+    private var composer: some View {
+        let capturedDay = today.currentDay
+        return EntryComposerView(
+            selectedDay: capturedDay,
+            timezone: currentProfile.timezone,
+            autoStartRecording: composerSeed.autoStartRecording,
+            voice: composerVoice.value,
+            initialImages: composerSeed.images,
+            opensBarcodeScannerOnAppear: composerSeed.opensScanner
+        ) { draft in
+            today.acceptEntrySubmission(
+                text: draft.text,
+                speechEngine: draft.speechEngine,
+                imageJPEG: draft.imageJPEG,
+                for: capturedDay,
+                clientRequestId: draft.clientRequestId
+            )
+            dependencies.recordEvent(.mealLogged)
+            tab = .today
+        }
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(Design.Radius.sheet)
+    }
+
+    private func composerDismissed() {
+        let voice = composerVoice.value
+        CaptureDiagnostics.record(.composerDismissed, state: voice.controlState)
+        voice.cancel()
+    }
+
+    private func logAgain(_ text: String) {
+        today.acceptEntrySubmission(text: text, speechEngine: nil, imageJPEG: nil, for: Date())
+        dependencies.recordEvent(.mealLogged)
+    }
+
+    private var workoutDictation: WorkoutDictationHook {
+        let voice = workoutVoice.value
+        return WorkoutDictationHook(
+            start: { await voice.start() },
+            stop: {
+                guard let take = await voice.stop() else { return nil }
+                return WorkoutDictation(text: take.text, speechEngine: take.engine.rawValue)
+            },
+            cancel: { voice.cancel() }
+        )
+    }
+
+    private func submitWorkout(_ draft: WorkoutLogDraft, sessionName: String?) {
+        logging.submit(draft, localDay: todayLocalDay, timezone: currentProfile.timezone, sessionName: sessionName)
+        tab = .today
+    }
+
+    // MARK: Sheets and covers
+
+    @ViewBuilder
+    private func sheetContent(_ sheet: ShellSheet) -> some View {
+        switch sheet {
+        case .account(let scrollToCoach):
+            NavigationStack {
+                dependencies.makeAccountView(currentProfile, accountHooks(scrollToCoach: scrollToCoach))
+            }
+        case .bio:
+            NavigationStack {
+                BioView(
+                    coachService: dependencies.coachService,
+                    loadRevisions: dependencies.bioRevisions,
+                    onSend: { text, engine in
+                        sendToCoach(text, mode: engine == nil ? .typed : .dictated, engine: engine, hint: .bio)
+                    }
+                )
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { self.sheet = nil }
+                    }
+                }
+            }
+        case .workoutLog(let context):
+            WorkoutLogSheet(
+                session: context.session,
+                targets: context.targets,
+                initialKind: context.initialKind,
+                initialImage: context.initialImage,
+                onDictate: workoutDictation
+            ) { draft in
+                submitWorkout(draft, sessionName: context.session?.name)
+            }
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(Design.Radius.sheet)
+        }
+    }
+
+    @ViewBuilder
+    private func coverContent(_ cover: ShellCover) -> some View {
+        switch cover {
+        case .camera(let purpose):
+            CameraPicker { image in
+                Task { @MainActor in
+                    // Let the camera dismiss before the next presentation.
+                    try? await Task.sleep(for: .milliseconds(450))
+                    switch purpose {
+                    case .meal: openComposer(autoStartRecording: false, images: [image])
+                    case .workout: sheet = .workoutLog(WorkoutLogContext(initialKind: .strength, initialImage: image))
+                    }
+                }
+            }
+            .ignoresSafeArea()
+        case .checkIn:
+            BodyCheckInFlow(
+                localDay: todayLocalDay,
+                units: currentProfile.units,
+                existing: dayContext.checkIns.first { $0.localDay == todayLocalDay },
+                start: .camera,
+                service: dependencies.bodyService
+            ) { saved in
+                checkInSaved(saved)
+                bodyRefreshToken = UUID()
+            }
+        }
+    }
+
+    private func loadPickedMealPhoto(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        Task {
+            let data = try? await item.loadTransferable(type: Data.self)
+            mealPhotoItem = nil
+            guard let data, let image = UIImage(data: data) else { return }
+            openComposer(autoStartRecording: false, images: [image])
+        }
+    }
+
+    private func accountHooks(scrollToCoach: Bool) -> AccountView.ShellHooks {
+        AccountView.ShellHooks(
+            coachService: dependencies.coachService,
+            loadsRemotely: dependencies.loadsRemotely,
+            scrollToCoach: scrollToCoach,
+            onProfileUpdated: { updated in today.applyProfile(updated) },
+            onSettingsChanged: { settings in
+                guard dependencies.loadsRemotely else { return }
+                Task { await CoachSync.shared.apply(settings: settings) }
+            },
+            openBio: { sheet = .bio },
+            bioDestination: {
+                AnyView(BioView(
+                    coachService: dependencies.coachService,
+                    loadRevisions: dependencies.bioRevisions,
+                    onSend: { text, engine in
+                        sendToCoach(text, mode: engine == nil ? .typed : .dictated, engine: engine, hint: .bio)
+                    }
+                ))
+            },
+            onSignOut: {
+                guard dependencies.loadsRemotely else { return }
+                Task { await CoachSync.shared.reset() }
+                NearbyStoreScout.shared.clear()
+                CoachPresence.shared.isThreadVisible = false
+            }
+        )
+    }
+
+    // MARK: Events
+
+    private func launch() {
+        guard !didLaunch else { return }
+        didLaunch = true
+        mealTracker = MealCompletionTracker()
+        _ = mealTracker.observe(today.entries)
+        logging.onActivityAccepted = { _ in dependencies.recordEvent(.activityLogged) }
+        logging.onActivitySettled = { activity in
+            if activity.status == .complete {
+                dependencies.recordEvent(.activityCompleted(activityId: activity.id))
+            }
+            Task { await dayContext.load(localDay: dayContext.localDay) }
+        }
+        updatePresence()
+        handle(coachRequest: router.coachRequest)
+        handle(captureRequest: router.captureRequest)
+        Task {
+            await coach.refresh()
+            dependencies.onLaunch?(coach)
+        }
+        Task { await dayContext.refreshAll() }
+    }
+
+    private func checkInSaved(_ saved: WeightCheckIn) {
+        dayContext.upsert(saved)
+        dependencies.recordEvent(.checkInLogged)
+    }
+
+    private func refreshProfile() {
+        guard dependencies.loadsRemotely else { return }
+        Task {
+            guard let fresh = try? await SupabaseService().fetchProfile(userId: currentProfile.userId) else { return }
+            ProfileCache.save(fresh)
+            today.applyProfile(fresh)
+        }
+    }
+
+    private func updatePresence() {
+        CoachPresence.shared.isThreadVisible = CoachPresencePolicy.isThreadVisible(
+            tab: tab,
+            sceneActive: scenePhase == .active,
+            isPresentingOverThread: sheet != nil || cover != nil || today.isPresentingComposer
+        )
+    }
+
+    private func handle(coachRequest request: AppRouter.CoachRequest?) {
+        guard let request else { return }
+        router.consume(request)
+        switch request.destination {
+        case .settings:
+            today.isPresentingComposer = false
+            cover = nil
+            sheet = .account(scrollToCoach: true)
+        case .thread(let messageId, let localDay):
+            sheet = nil
+            cover = nil
+            today.isPresentingComposer = false
+            tab = .today
+            Task { await coach.focus(messageId: messageId, day: localDay) }
+        }
+    }
+
+    private func handle(captureRequest request: AppRouter.CaptureRequest?) {
+        guard let request else { return }
+        router.consume(request)
+        tab = .today
+        openComposer(autoStartRecording: request.autoStartRecording)
+    }
+}
+
+// MARK: - Presentation state
+
+struct ComposerSeed {
+    var autoStartRecording = false
+    var images: [UIImage] = []
+    var opensScanner = false
+}
+
+enum ShellSheet: Identifiable {
+    case account(scrollToCoach: Bool)
+    case bio
+    case workoutLog(WorkoutLogContext)
+
+    var id: String {
+        switch self {
+        case .account: return "account"
+        case .bio: return "bio"
+        case .workoutLog(let context): return "workout-\(context.id.uuidString)"
+        }
+    }
+}
+
+enum ShellCover: Identifiable {
+    enum CameraPurpose: String { case meal, workout }
+    case camera(CameraPurpose)
+    case checkIn
+
+    var id: String {
+        switch self {
+        case .camera(let purpose): return "camera-\(purpose.rawValue)"
+        case .checkIn: return "check-in"
+        }
+    }
+}
+
+enum CameraAvailability {
+    @MainActor static var hasCamera: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+}

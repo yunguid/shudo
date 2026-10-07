@@ -11,6 +11,9 @@ struct CaptureBarActions {
     var scanBarcode: () -> Void
     var workoutPhoto: () -> Void
     var checkIn: () -> Void
+    /// Open the keyboard composer (the bottom accessory sits under the
+    /// keyboard, so typing happens in a field docked above it).
+    var beginTyping: () -> Void
     /// The bar is about to listen or type: a chance to warm location.
     var willCompose: () -> Void = {}
 }
@@ -39,13 +42,20 @@ struct CaptureDraft: Equatable {
         text = ""
         speechEngine = nil
     }
+
+    /// What a send carries: the trimmed text, and dictated vs typed.
+    var submission: (text: String, mode: CoachInputMode, speechEngine: String?)? {
+        guard !isEmpty else { return nil }
+        return (trimmed, speechEngine == nil ? .typed : .dictated, speechEngine)
+    }
 }
 
 /// "Tell Shudo anything…" — the one input on every tab, mounted as the
 /// TabView's bottom accessory. The ember mic dictates on-device:
 /// tap = words stream into the field (edit, then send), hold = talk and
-/// release to send (slide left to cancel). The field sends to the coach;
-/// "+" opens the classic meal composer; the camera menu routes photos.
+/// release to send (slide left to cancel). Tapping the field opens a
+/// keyboard-docked composer; "+" opens the classic meal composer (hold it
+/// for a quick voice meal or a barcode); the camera menu routes photos.
 struct CaptureBar: View {
     @ObservedObject var voice: VoiceTranscriber
     @Binding var draft: CaptureDraft
@@ -53,7 +63,6 @@ struct CaptureBar: View {
 
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.openURL) private var openURL
-    @FocusState private var isFocused: Bool
     @State private var pressStartedAt: Date?
     @State private var holdTask: Task<Void, Never>?
     @State private var isHolding = false
@@ -142,7 +151,6 @@ struct CaptureBar: View {
                         isHolding = true
                         holdCancels = false
                         actions.willCompose()
-                        isFocused = false
                         _ = await voice.start()
                     }
                 }
@@ -176,7 +184,6 @@ struct CaptureBar: View {
             return
         }
         actions.willCompose()
-        isFocused = false
         if !(await voice.start()), let message = voice.errorMessage {
             show(notice: message)
         }
@@ -194,49 +201,35 @@ struct CaptureBar: View {
 
     // MARK: Field
 
+    @ViewBuilder
     private var field: some View {
-        ZStack(alignment: .leading) {
-            if isCapturing {
-                liveTranscript
-            } else if let notice {
-                Text(notice)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.honey)
-                    .lineLimit(1)
-                    .transition(.opacity)
+        if isCapturing {
+            liveTranscript
+        } else {
+            Button {
+                actions.beginTyping()
+            } label: {
+                Group {
+                    if let notice {
+                        Text(notice).foregroundStyle(Design.Color.honey)
+                    } else if draft.isEmpty {
+                        Text(isInline ? "Tell Shudo…" : "Tell Shudo anything…")
+                            .foregroundStyle(Design.Color.textTertiary)
+                    } else {
+                        Text(draft.text).foregroundStyle(Design.Color.textPrimary)
+                    }
+                }
+                .font(.body)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            TextField(
-                "",
-                text: $draft.text,
-                prompt: Text(isInline ? "Tell Shudo…" : "Tell Shudo anything…")
-                    .foregroundStyle(Design.Color.textTertiary)
-            )
-            .font(.body)
-            .foregroundStyle(Design.Color.textPrimary)
-            .tint(Design.Color.ember)
-            .focused($isFocused)
-            .submitLabel(.send)
-            .onSubmit(send)
-            .opacity(isCapturing || notice != nil ? 0 : 1)
-            .disabled(isCapturing)
+            .buttonStyle(.plain)
+            .accessibilityLabel(draft.isEmpty ? "Tell Shudo anything" : "Draft: \(draft.text)")
+            .accessibilityHint("Opens the keyboard")
             .accessibilityIdentifier("capture.field")
-            .onChange(of: isFocused) { _, focused in
-                if focused { actions.willCompose() }
-            }
-            .onChange(of: draft.text) { _, text in
-                if text.isEmpty { draft.speechEngine = nil }
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 36)
-        .contentShape(Rectangle())
-        // Long-press on the empty field: the classic meal composer.
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                guard draft.isEmpty, !isFocused, !isCapturing else { return }
-                actions.openComposer(false)
-            }
-        )
     }
 
     private var liveTranscript: some View {
@@ -248,7 +241,8 @@ struct CaptureBar: View {
             .foregroundStyle(text.isEmpty ? Design.Color.textTertiary : Design.Color.textPrimary)
             .lineLimit(1)
             .truncationMode(.head)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("Live transcript")
             .accessibilityValue(text)
             .accessibilityIdentifier("capture.live")
@@ -320,12 +314,9 @@ struct CaptureBar: View {
     // MARK: Actions
 
     private func send() {
-        let text = draft.trimmed
-        guard !text.isEmpty else { return }
-        let engine = draft.speechEngine
-        actions.send(text, engine == nil ? .typed : .dictated, engine)
+        guard let submission = draft.submission else { return }
+        actions.send(submission.text, submission.mode, submission.speechEngine)
         draft.clear()
-        isFocused = false
         sentCount += 1
     }
 
@@ -336,6 +327,77 @@ struct CaptureBar: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             withAnimation(Design.Motion.snap) { notice = nil }
+        }
+    }
+}
+
+/// The typing surface: the tab bar's accessory sits under the keyboard, so
+/// "Tell Shudo anything…" opens this glass field docked right above it,
+/// bound to the same draft. Losing focus (swipe the thread, tap away)
+/// tucks it back into the bar with the draft kept.
+struct CaptureComposer: View {
+    @Binding var draft: CaptureDraft
+    var onSend: () -> Void
+    var onDictate: () -> Void
+    var onClose: () -> Void
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            Button(action: onDictate) {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Design.Color.onEmber)
+                    .frame(width: 36, height: 36)
+                    .background(Design.Color.emberFill, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dictate instead")
+
+            TextField(
+                "",
+                text: $draft.text,
+                prompt: Text("Tell Shudo anything…").foregroundStyle(Design.Color.textTertiary),
+                axis: .vertical
+            )
+            .lineLimit(1...6)
+            .font(.body)
+            .foregroundStyle(Design.Color.textPrimary)
+            .tint(Design.Color.ember)
+            .focused($focused)
+            .padding(.vertical, 8)
+            .accessibilityIdentifier("capture.input")
+            .onChange(of: draft.text) { _, text in
+                if text.isEmpty { draft.speechEngine = nil }
+            }
+
+            Button {
+                onSend()
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Design.Color.onEmber)
+                    .frame(width: 34, height: 34)
+                    .background(draft.isEmpty ? Design.Color.surface3 : Design.Color.ember, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(draft.isEmpty)
+            .accessibilityLabel("Send to Shudo")
+            .accessibilityIdentifier("capture.input.send")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .chromeGlass(
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous),
+            tint: Design.Color.canvas.opacity(0.35),
+            interactive: true
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .onAppear { focused = true }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { onClose() }
         }
     }
 }

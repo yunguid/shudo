@@ -136,19 +136,14 @@ struct DayHeader: View {
                     .foregroundStyle(Design.Color.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 10)
+            } else if meals.count <= 5 {
+                ledgerRows
             } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(Array(meals.enumerated()), id: \.element.id) { index, meal in
-                            if index > 0 { HairlineRule() }
-                            LedgerSwipeRow(onDelete: { onDeleteMeal(meal) }, canDelete: meal.canDelete) {
-                                ledgerRow(meal)
-                            }
-                        }
-                    }
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight: min(CGFloat(meals.count) * 58, 290))
+                // A long day scrolls inside the header instead of pushing
+                // the thread off screen.
+                ScrollView { ledgerRows }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(height: 300)
             }
             HairlineRule().padding(.top, 4)
             Button(action: onOpenInsights) {
@@ -166,6 +161,17 @@ struct DayHeader: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Week insights")
+        }
+    }
+
+    private var ledgerRows: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(meals.enumerated()), id: \.element.id) { index, meal in
+                if index > 0 { HairlineRule() }
+                LedgerSwipeRow(onDelete: { onDeleteMeal(meal) }, canDelete: meal.canDelete) {
+                    ledgerRow(meal)
+                }
+            }
         }
     }
 

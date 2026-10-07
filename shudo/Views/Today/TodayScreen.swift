@@ -1,0 +1,1038 @@
+import SwiftUI
+import UIKit
+
+enum TodayRoute: Hashable {
+    enum ZoomSource: String, Hashable { case thread, ledger }
+
+    case meal(UUID, from: ZoomSource)
+    case activity(UUID)
+    case insights
+
+    static func zoomID(_ id: UUID, from source: ZoomSource) -> String {
+        "\(source.rawValue)-\(id.uuidString)"
+    }
+}
+
+/// What Today needs from the shell.
+struct TodayScreenActions {
+    var openSettings: () -> Void
+    var openBio: () -> Void
+    var switchTab: (AppTab) -> Void
+    var sendToCoach: (String) -> Void
+    /// Targets/goal changed server-side (goal card): refresh the profile.
+    var refreshProfile: () -> Void
+    var logAgain: (String) -> Void
+}
+
+struct TodayScreenEnvironment {
+    var loadsRemotely: Bool
+    var previewEntryDetail: SupabaseService.EntryDetail?
+    var coachMediaURL: (String) async -> URL?
+    var trainService: any TrainServing
+    var bodyService: any BodyServicing
+    var makeInsights: (Profile) -> AnyView
+    var now: () -> Date
+}
+
+/// Today: the day's coach thread under a pinned macro header. Coach texts,
+/// Luke's replies, his meals (streaming receipts), workouts and the body
+/// check-in, in time order, iMessage-style. Opens at the bottom; edge-swipe
+/// or the calendar walks back through past days, which read as a diary.
+struct TodayScreen: View {
+    let profile: Profile
+    @ObservedObject var today: TodayViewModel
+    @ObservedObject var coach: CoachViewModel
+    @ObservedObject var context: TodayDayContext
+    @ObservedObject var logging: ActivityLoggingController
+    let environment: TodayScreenEnvironment
+    let actions: TodayScreenActions
+    @Binding var headerExpanded: Bool
+    var isActiveTab: Bool
+
+    @StateObject private var photoLoader: BodyPhotoLoader
+    @State private var formatterCache = DayFormatterCache()
+    @State private var path = NavigationPath()
+    @State private var pendingDeletion: Entry?
+    @State private var deletionTask: Task<Void, Never>?
+    @State private var isShowingDatePicker = false
+    @State private var highlightedRowId: String?
+    @State private var settledDay: String?
+    @State private var coachNotice: String?
+    @State private var showErrorAlert = false
+    @State private var nudgeRescheduleTask: Task<Void, Never>?
+    @Namespace private var zoomNamespace
+    @GestureState private var daySwipePreview: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
+    init(
+        profile: Profile,
+        today: TodayViewModel,
+        coach: CoachViewModel,
+        context: TodayDayContext,
+        logging: ActivityLoggingController,
+        environment: TodayScreenEnvironment,
+        actions: TodayScreenActions,
+        headerExpanded: Binding<Bool>,
+        isActiveTab: Bool
+    ) {
+        self.profile = profile
+        self.today = today
+        self.coach = coach
+        self.context = context
+        self.logging = logging
+        self.environment = environment
+        self.actions = actions
+        _headerExpanded = headerExpanded
+        self.isActiveTab = isActiveTab
+        _photoLoader = StateObject(wrappedValue: BodyPhotoLoader(service: environment.bodyService))
+    }
+
+    // MARK: Derived state
+
+    private var currentProfile: Profile { today.profile ?? profile }
+    private var formatters: DayFormatterCache { formatterCache.resolved(for: currentProfile.timezone) }
+    private var selectedDay: String { formatters.localDayFormatter.string(from: today.currentDay) }
+    private var todayDay: String { formatters.localDayFormatter.string(from: environment.now()) }
+    private var isToday: Bool { selectedDay >= todayDay }
+    private var units: String { currentProfile.units }
+
+    private var hiddenIds: Set<String> {
+        guard let pendingDeletion else { return [] }
+        return [DayThreadItem.meal(pendingDeletion).id]
+    }
+
+    private var headerTotals: DayTotals {
+        DayHeaderMath.totals(today.todayTotals, excluding: pendingDeletion.map { [$0] } ?? [])
+    }
+
+    private var dayMeals: [Entry] {
+        today.entries
+            .filter { $0.id != pendingDeletion?.id }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    private var dayActivities: [Activity] {
+        guard context.localDay == selectedDay else { return [] }
+        return context.activities(overlay: Array(logging.overlay.values))
+    }
+
+    private var threadItems: [DayThreadItem] {
+        let showsCoach = coach.localDay == selectedDay
+        return DayThreadPolicy.merge(
+            messages: showsCoach ? coach.messages : [],
+            pending: coach.pendingSends.filter { $0.localDay == selectedDay },
+            entries: dayMeals,
+            activities: dayActivities,
+            checkIn: context.checkIns.first { $0.localDay == selectedDay },
+            typing: showsCoach ? coach.typing : nil,
+            now: environment.now(),
+            hiddenIds: hiddenIds
+        )
+    }
+
+    private var phaseDayLabel: String? {
+        DayLabelPolicy.phaseDay(
+            localDay: selectedDay,
+            goalStartedOn: context.goal?.goalStartedOn,
+            goalType: context.goal?.goalType ?? currentProfile.goalType
+        )
+    }
+
+    private var isTyping: Bool { coach.typing != nil && coach.localDay == selectedDay }
+
+    // MARK: Body
+
+    var body: some View {
+        let rows = DayThreadPolicy.rows(for: threadItems)
+        NavigationStack(path: $path) {
+            GeometryReader { geometry in
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        thread(rows)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 6)
+                            .padding(.bottom, 16)
+                    }
+                    .defaultScrollAnchor(.bottom, for: .initialOffset)
+                    .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                    .scrollDismissesKeyboard(.interactively)
+                    .offset(x: daySwipePreview)
+                    .refreshable {
+                        guard environment.loadsRemotely else { return }
+                        await reloadDay()
+                    }
+                    .onChange(of: selectedDay) { _, day in
+                        Task { await coach.refresh(day: day) }
+                        Task { await context.load(localDay: day) }
+                        settledDay = nil
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(60))
+                            proxy.scrollTo("thread.bottom", anchor: .bottom)
+                            try? await Task.sleep(for: .milliseconds(500))
+                            settledDay = day
+                        }
+                    }
+                    .onChange(of: coach.focusedMessageId) { _, id in
+                        guard let id else { return }
+                        focus(on: id, proxy: proxy)
+                    }
+                    .onAppear {
+                        if let id = coach.focusedMessageId { focus(on: id, proxy: proxy) }
+                    }
+                    .onChange(of: rows.last?.id) { _, _ in
+                        guard settledDay == selectedDay else { return }
+                        withAnimation(Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion)) {
+                            proxy.scrollTo("thread.bottom", anchor: .bottom)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+                .simultaneousGesture(daySwipeGesture(containerWidth: geometry.size.width))
+            }
+            .background(Design.Color.canvas.ignoresSafeArea())
+            .safeAreaBar(edge: .top, spacing: 0) { header }
+            .overlay(alignment: .bottom) { bottomOverlay }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbar }
+            .navigationDestination(for: TodayRoute.self) { route in destination(route) }
+        }
+        .sensoryFeedback(.selection, trigger: selectedDay)
+        .sensoryFeedback(trigger: lastCoachMessageId) { _, _ in
+            isActiveTab && isToday ? .impact(flexibility: .soft, intensity: 0.5) : nil
+        }
+        .sensoryFeedback(.impact(weight: .medium), trigger: pendingDeletion?.id)
+        .popover(isPresented: $isShowingDatePicker) { datePicker }
+        .task {
+            settledDay = selectedDay
+            if context.localDay != selectedDay { await context.load(localDay: selectedDay) }
+            if coach.localDay != selectedDay { await coach.refresh(day: selectedDay) }
+        }
+        .task(id: readKey) {
+            guard isActiveTab, scenePhase == .active else { return }
+            await coach.markVisibleRead()
+        }
+        .onChange(of: coach.localDay) { _, day in
+            // Sending from a past day jumps the thread back to today.
+            if day != selectedDay { select(day: day) }
+        }
+        .onChange(of: today.entries) { _, _ in
+            context.scheduleWeekRefresh()
+            rescheduleDayNudges()
+        }
+        .onChange(of: coach.errorMessage) { _, message in
+            guard let message else { return }
+            show(notice: message)
+        }
+        .onChange(of: today.errorMessage) { _, message in showErrorAlert = message != nil }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { commitPendingDeletion() }
+            if phase == .active { rescheduleDayNudges() }
+        }
+        .alert("Couldn’t finish that", isPresented: $showErrorAlert) {
+            Button("OK") { today.errorMessage = nil }
+        } message: {
+            Text(today.errorMessage ?? "Please try again.")
+        }
+    }
+
+    private var readKey: String {
+        "\(isActiveTab)|\(scenePhase == .active)|\(coach.localDay)|\(coach.messages.count)"
+    }
+
+    private var lastCoachMessageId: UUID? {
+        coach.messages.last { $0.role == .coach }?.id
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        let numbers = DayHeaderMath.numbers(totals: headerTotals, target: today.effectiveTarget)
+        return DayHeader(
+            expanded: $headerExpanded,
+            numbers: numbers,
+            totals: headerTotals,
+            target: today.effectiveTarget,
+            weekDays: WeekStripPolicy.days(
+                selectedDay: selectedDay,
+                today: todayDay,
+                totals: context.dayTotals,
+                targetHistory: context.targetHistory,
+                fallbackTarget: today.effectiveTarget,
+                selectedTotals: headerTotals
+            ),
+            meals: dayMeals,
+            timeText: timeText,
+            onSelectDay: { select(day: $0) },
+            onOpenMeal: { meal in
+                guard meal.status == .complete else { return }
+                path.append(TodayRoute.meal(meal.id, from: .ledger))
+            },
+            onDeleteMeal: beginDeletion,
+            onOpenInsights: { path.append(TodayRoute.insights) },
+            zoomNamespace: zoomNamespace
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 6)
+    }
+
+    // MARK: Thread
+
+    @ViewBuilder
+    private func thread(_ rows: [DayThreadRow]) -> some View {
+        let receipt = DayThreadPolicy.readReceipt(for: rows)
+        VStack(alignment: .leading, spacing: 3) {
+            dayLabel
+            if rows.isEmpty {
+                if today.isLoadingDay || coach.isLoading {
+                    loadingRows
+                } else {
+                    emptyState
+                }
+            }
+            ForEach(rows) { row in
+                rowView(row, receipt: receipt)
+                    .id(row.id)
+                    .transition(arrival(for: row.item.side))
+            }
+            Color.clear.frame(height: 1).id("thread.bottom")
+        }
+        .animation(
+            settledDay == selectedDay ? Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion) : nil,
+            value: rows.map(\.id)
+        )
+    }
+
+    private func arrival(for side: ThreadSide) -> AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        let anchor: UnitPoint = side == .me ? .bottomTrailing : .bottomLeading
+        return .asymmetric(
+            insertion: .move(edge: .bottom)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.96, anchor: anchor)),
+            removal: .opacity
+        )
+    }
+
+    private var dayLabel: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(dayTitle).eyebrowStyle()
+            Spacer()
+            if let phaseDayLabel {
+                Text(phaseDayLabel)
+                    .font(Design.Typeface.meta)
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var dayTitle: String {
+        let weekday = formatters.weekdayFormatter.string(from: today.currentDay)
+        return "\(weekday) · \(formatters.dateFormatter.string(from: today.currentDay))"
+    }
+
+    @ViewBuilder
+    private func rowView(_ row: DayThreadRow, receipt: (rowId: String, readAt: Date)?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let timestamp = row.timestamp {
+                ThreadTimestamp(text: timeText(timestamp))
+            }
+            Group {
+                switch row.item {
+                case .message(let message): messageRow(message, row: row)
+                case .pending(let pending): pendingRow(pending, row: row)
+                case .meal(let entry): mealRow(entry)
+                case .activity(let activity): activityRow(activity)
+                case .checkIn(let checkIn): checkInRow(checkIn)
+                case .typing(let label, _): typingRow(label: label)
+                }
+            }
+            .background {
+                if highlightedRowId == row.id {
+                    RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
+                        .fill(Design.Color.ember.opacity(0.14))
+                        .padding(-5)
+                        .transition(.opacity)
+                }
+            }
+            if receipt?.rowId == row.id, let readAt = receipt?.readAt {
+                Text("Read \(timeText(readAt))")
+                    .font(Design.Typeface.meta)
+                    .foregroundStyle(Design.Color.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 4)
+                    .padding(.top, 3)
+            }
+        }
+        .padding(.top, row.startsGroup && row.timestamp == nil ? 8 : 0)
+    }
+
+    // MARK: Rows
+
+    @ViewBuilder
+    private func messageRow(_ message: CoachMessage, row: DayThreadRow) -> some View {
+        switch message.role {
+        case .user:
+            MeRow {
+                VStack(alignment: .trailing, spacing: 4) {
+                    if let path = message.attachmentPath {
+                        ChatPhoto(path: path, loadURL: environment.coachMediaURL)
+                    }
+                    if !message.body.isEmpty {
+                        MessageBubble(text: message.body, isMine: true, position: row.position)
+                    }
+                    if let interruption = coach.interruption(forUserMessage: message.id) {
+                        interruptionLine(interruption)
+                    }
+                }
+            }
+        case .systemEvent:
+            Text(message.body)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Design.Color.textSecondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Design.Color.surface2, in: Capsule())
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        case .coach:
+            let hasBody = !message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let card = cardView(for: message)
+            CoachRow(showsAvatar: row.showsAvatar, isThinking: message.isStreaming) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if hasBody {
+                        MessageBubble(
+                            text: message.body,
+                            isMine: false,
+                            position: card == nil ? row.position : Self.positionBeforeCard(row.position)
+                        )
+                        .contentTransition(.opacity)
+                    }
+                    if let card { card }
+                }
+            }
+        }
+    }
+
+    /// A bubble followed by its own card keeps a tight bottom corner.
+    static func positionBeforeCard(_ position: BubblePosition) -> BubblePosition {
+        switch position {
+        case .single, .first: return .first
+        case .middle, .last: return .middle
+        }
+    }
+
+    private func cardView(for message: CoachMessage) -> AnyView? {
+        let cardActions = self.cardActions
+        switch message.payload {
+        case .plan(let card):
+            return AnyView(GamePlanCardView(card: card, localDay: message.localDay))
+        case .recap(let card):
+            let hour = formatters.calendar.component(.hour, from: message.deliverAt)
+            return AnyView(RecapCardView(
+                card: card,
+                eyebrow: ThreadCardCopy.recapEyebrow(card: card, localDay: message.localDay, deliveredHour: hour),
+                actions: cardActions
+            ))
+        case .snackRec(let card):
+            return AnyView(SnackRecCardView(
+                message: message,
+                card: card,
+                target: today.effectiveTarget,
+                liftLater: liftLaterToday(after: message.deliverAt),
+                actions: cardActions
+            ))
+        case .trainingPlan(let card):
+            return AnyView(TrainingPlanCardView(card: card, actions: cardActions))
+        case .goalChange(let card):
+            return AnyView(GoalChangeCardView(card: card, units: units, actions: cardActions))
+        case .profileUpdate(let card):
+            return AnyView(ProfileUpdateCardView(message: message, card: card, actions: cardActions))
+        case .workoutAck(let card):
+            let activity = card.activityId.flatMap { id in dayActivities.first { $0.id == id } }
+            return AnyView(WorkoutAckCardView(card: card, activity: activity, actions: cardActions))
+        case .checkIn(let card):
+            guard card.review != nil || card.weightKg != nil else { return nil }
+            return AnyView(CheckInFeedbackCardView(card: card, units: units))
+        case .mealAck, .none, .unknown:
+            return nil
+        }
+    }
+
+    /// Wording only: a lift is still ahead today (an un-logged activity).
+    private func liftLaterToday(after date: Date) -> Bool {
+        !dayActivities.contains { $0.kind == .strength && $0.occurredAt > date.addingTimeInterval(-3_600) }
+            && isToday
+    }
+
+    private var cardActions: ThreadCardActions {
+        ThreadCardActions(
+            act: { action in await coach.act(on: action) },
+            isActing: { id in coach.actionsInFlight.contains(id) },
+            send: { text in actions.sendToCoach(text) },
+            openTab: actions.switchTab,
+            openBio: actions.openBio,
+            openActivity: { id in path.append(TodayRoute.activity(id)) },
+            targetsChanged: actions.refreshProfile,
+            mealLogged: {
+                guard environment.loadsRemotely else { return }
+                Task { await today.load(day: today.currentDay) }
+            }
+        )
+    }
+
+    private func pendingRow(_ pending: CoachPendingSend, row: DayThreadRow) -> some View {
+        MeRow {
+            VStack(alignment: .trailing, spacing: 4) {
+                if let data = pending.attachmentJPEG, let image = UIImage(data: data) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 180, height: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous))
+                }
+                if !pending.text.isEmpty {
+                    MessageBubble(text: pending.text, isMine: true, position: row.position)
+                        .opacity(pending.isFailed ? 0.6 : 0.85)
+                }
+                switch pending.state {
+                case .sending:
+                    Text("Sending…")
+                        .font(Design.Typeface.meta)
+                        .foregroundStyle(Design.Color.textTertiary)
+                case .failed(let message, let retryable):
+                    HStack(spacing: 10) {
+                        Text(message)
+                            .font(.caption2)
+                            .foregroundStyle(Design.Color.danger)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                        if retryable {
+                            Button("Retry") { coach.retry(pending.clientRequestId) }
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Design.Color.ember)
+                                .accessibilityLabel("Retry message")
+                        }
+                        Button("Delete") { coach.discardPending(pending.clientRequestId) }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Design.Color.textSecondary)
+                            .accessibilityLabel("Delete unsent message")
+                    }
+                }
+            }
+        }
+    }
+
+    private func interruptionLine(_ interruption: CoachTurnInterruption) -> some View {
+        HStack(spacing: 8) {
+            Text("Shudo got cut off")
+                .font(.caption2)
+                .foregroundStyle(Design.Color.textTertiary)
+            if interruption.retryable {
+                Button("Ask again") { coach.retry(interruption.clientRequestId) }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Design.Color.ember)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func mealRow(_ entry: Entry) -> some View {
+        MeRow {
+            VStack(alignment: .trailing, spacing: 6) {
+                if entry.status == .complete {
+                    NavigationLink(value: TodayRoute.meal(entry.id, from: .thread)) {
+                        MealReceiptCard(
+                            entry: entry,
+                            animateCompletion: today.completionRevealEntryIds.contains(entry.id),
+                            onCompletionRevealFinished: { today.consumeCompletionReveal(for: entry.id) }
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .matchedTransitionSource(id: TodayRoute.zoomID(entry.id, from: .thread), in: zoomNamespace)
+                    .contextMenu { mealMenu(entry) }
+                } else {
+                    MealReceiptCard(
+                        entry: entry,
+                        isRetrying: today.resumingEntryIds.contains(entry.id),
+                        onRetry: entry.canRetry ? { Task { await today.retryEntry(entry) } } : nil
+                    )
+                    .contextMenu { mealMenu(entry) }
+                }
+                if entry.status == .complete, let failure = today.failedCorrections[entry.id] {
+                    CorrectionRetryBanner(
+                        message: failure,
+                        onRetry: { today.retryCorrection(entryId: entry.id) },
+                        onDismiss: { today.dismissFailedCorrection(entryId: entry.id) }
+                    )
+                    .frame(maxWidth: 300)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func mealMenu(_ entry: Entry) -> some View {
+        if entry.status == .complete {
+            Button("Open", systemImage: "doc.text.magnifyingglass") {
+                path.append(TodayRoute.meal(entry.id, from: .thread))
+            }
+        }
+        if entry.canDelete {
+            Button("Delete meal", systemImage: "trash", role: .destructive) { beginDeletion(entry) }
+        }
+    }
+
+    @ViewBuilder
+    private func activityRow(_ activity: Activity) -> some View {
+        MeRow {
+            let card = ActivityCard(
+                activity: activity,
+                units: units,
+                onRetry: activity.isNotSent ? { logging.retry(activity.id) } : nil,
+                onDiscard: activity.isNotSent ? { logging.discard(activity.id) } : nil
+            )
+            .frame(maxWidth: 300)
+            if activity.isLocalOnly {
+                card
+            } else {
+                NavigationLink(value: TodayRoute.activity(activity.id)) { card }
+                    .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func checkInRow(_ checkIn: WeightCheckIn) -> some View {
+        MeRow {
+            CheckInThreadCard(
+                checkIn: checkIn,
+                dayLabel: phaseDayLabel.map { $0.replacingOccurrences(of: " of the bulk", with: "").replacingOccurrences(of: " of the cut", with: "") },
+                units: units,
+                photoLoader: photoLoader,
+                onOpenBody: { actions.switchTab(.body) }
+            )
+        }
+    }
+
+    private func typingRow(label: String?) -> some View {
+        CoachRow(showsAvatar: true, isThinking: true) {
+            VStack(alignment: .leading, spacing: 4) {
+                CoachTypingBubble()
+                if let label {
+                    Text(label)
+                        .font(Design.Typeface.meta)
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .padding(.leading, 4)
+                        .transition(.opacity)
+                }
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            CoachAvatar(size: 44)
+            Text(isToday ? "Fresh day." : "Nothing logged this day.")
+                .font(.headline)
+                .foregroundStyle(Design.Color.textPrimary)
+            Text(
+                isToday
+                    ? "Tell Shudo what you ate, what you lifted, or what’s on your mind."
+                    : "Swipe from the edge or use the calendar to move between days."
+            )
+            .font(.subheadline)
+            .foregroundStyle(Design.Color.textSecondary)
+            .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+        .padding(.horizontal, 24)
+    }
+
+    private var loadingRows: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(0..<3, id: \.self) { index in
+                HStack {
+                    if index == 1 { Spacer() }
+                    RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous)
+                        .fill(Design.Color.surface2)
+                        .frame(width: [220, 160, 250][index], height: 40)
+                    if index != 1 { Spacer() }
+                }
+                .shimmering()
+            }
+        }
+        .padding(.top, 20)
+    }
+
+    // MARK: Overlays
+
+    @ViewBuilder
+    private var bottomOverlay: some View {
+        VStack(spacing: 8) {
+            if let coachNotice {
+                Text(coachNotice)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.6))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            if let pendingDeletion {
+                HStack(spacing: 12) {
+                    Text("Deleted “\(pendingDeletion.summary)”")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(Design.Color.textPrimary)
+                        .lineLimit(1)
+                    Button("Undo") { undoDeletion() }
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(Design.Color.ember)
+                        .accessibilityIdentifier("today.undoDelete")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.6), interactive: true)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if !isToday {
+                Button {
+                    select(day: todayDay)
+                } label: {
+                    Label("Back to today", systemImage: "arrow.down.to.line")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Design.Color.textPrimary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                }
+                .buttonStyle(.plain)
+                .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.5), interactive: true)
+                .transition(.opacity)
+            }
+        }
+        .padding(.bottom, 10)
+        .animation(Design.Motion.snap, value: pendingDeletion?.id)
+        .animation(Design.Motion.snap, value: coachNotice)
+        .animation(Design.Motion.snap, value: isToday)
+    }
+
+    // MARK: Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                isShowingDatePicker = true
+            } label: {
+                Image(systemName: "calendar")
+                    .foregroundStyle(Design.Color.textSecondary)
+            }
+            .accessibilityLabel("Pick a day")
+        }
+        ToolbarItem(placement: .principal) { coachTitle }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button(action: actions.openSettings) {
+                AccountAvatarIcon(
+                    userId: currentProfile.userId,
+                    avatarPath: currentProfile.avatarPath,
+                    displayName: currentProfile.displayName,
+                    loadsRemotely: environment.loadsRemotely
+                )
+            }
+            .accessibilityLabel("Account")
+            .accessibilityHint("Settings and your bio")
+        }
+    }
+
+    private var coachTitle: some View {
+        HStack(spacing: 8) {
+            CoachAvatar(size: 26, isThinking: isTyping)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Shudo")
+                    .font(.headline)
+                    .foregroundStyle(Design.Color.textPrimary)
+                Text(titleSubtitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(isTyping ? Design.Color.ember : Design.Color.textTertiary)
+                    .lineLimit(1)
+                    .contentTransition(.opacity)
+            }
+        }
+        .animation(Design.Motion.snap, value: isTyping)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var titleSubtitle: String {
+        if isTyping {
+            if case .thinking(let label?)? = coach.typing { return label }
+            return "typing…"
+        }
+        if isToday { return "Today" }
+        let weekday = formatters.weekdayFormatter.string(from: today.currentDay)
+        return "\(weekday) · diary"
+    }
+
+    private var datePicker: some View {
+        DatePicker(
+            "Day",
+            selection: Binding(
+                get: { today.currentDay },
+                set: { selected in
+                    isShowingDatePicker = false
+                    select(day: formatters.localDayFormatter.string(from: selected))
+                }
+            ),
+            in: ...environment.now(),
+            displayedComponents: .date
+        )
+        .datePickerStyle(.graphical)
+        .tint(Design.Color.ember)
+        .padding()
+        .presentationCompactAdaptation(.sheet)
+    }
+
+    // MARK: Destinations
+
+    @ViewBuilder
+    private func destination(_ route: TodayRoute) -> some View {
+        switch route {
+        case .meal(let id, let source):
+            mealDetail(id)
+                .navigationTransition(.zoom(sourceID: TodayRoute.zoomID(id, from: source), in: zoomNamespace))
+        case .activity(let id):
+            activityDetail(id)
+        case .insights:
+            environment.makeInsights(currentProfile)
+        }
+    }
+
+    @ViewBuilder
+    private func mealDetail(_ id: UUID) -> some View {
+        let submit: (EntryCorrectionSubmission) -> Void = { submission in
+            _ = today.submitCorrection(entryId: id, submission: submission)
+        }
+        if let preview = environment.previewEntryDetail {
+            EntryDetailView(entryId: id, previewDetail: preview, onCorrectionSubmit: submit, onLogAgain: actions.logAgain)
+        } else {
+            EntryDetailView(
+                entryId: id,
+                seed: today.entries.first { $0.id == id },
+                onCorrectionSubmit: submit,
+                onLogAgain: actions.logAgain
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func activityDetail(_ id: UUID) -> some View {
+        if let activity = dayActivities.first(where: { $0.id == id }) {
+            ActivityDetailView(
+                activity: activity,
+                units: units,
+                loadImageURL: environment.coachMediaURL,
+                onRetry: activity.isNotSent ? { logging.retry(id) } : nil,
+                onDelete: {
+                    do {
+                        try await environment.trainService.deleteActivity(id: id)
+                        context.remove(activityId: id)
+                        logging.forget(id)
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+            )
+        } else {
+            ContentUnavailableView("Workout not found", systemImage: "dumbbell")
+        }
+    }
+
+    // MARK: Day navigation
+
+    private func select(day: String) {
+        guard day <= todayDay, day != selectedDay,
+              let date = formatters.date(forLocalDay: day) else { return }
+        commitPendingDeletion()
+        if day == todayDay {
+            Task { await today.load(day: environment.now()) }
+        } else {
+            Task { await today.load(day: date) }
+        }
+    }
+
+    private func shift(by delta: Int) {
+        guard let target = LocalDayMath.adding(delta, to: selectedDay), target <= todayDay else { return }
+        select(day: target)
+    }
+
+    private func daySwipeGesture(containerWidth: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .updating($daySwipePreview) { value, preview, _ in
+                let startsAtRightEdge = DayEdgeSwipePolicy.originatingEdge(
+                    startX: value.startLocation.x,
+                    containerWidth: containerWidth
+                ) == .right
+                guard !(isToday && startsAtRightEdge), path.isEmpty else {
+                    preview = 0
+                    return
+                }
+                preview = DayEdgeSwipePolicy.previewOffset(
+                    startX: value.startLocation.x,
+                    translation: value.translation,
+                    containerWidth: containerWidth
+                )
+            }
+            .onEnded { value in
+                guard path.isEmpty,
+                      let delta = DayEdgeSwipePolicy.dayDelta(
+                        startX: value.startLocation.x,
+                        translation: value.translation,
+                        predictedEndTranslation: value.predictedEndTranslation,
+                        containerWidth: containerWidth
+                      ),
+                      !(delta > 0 && isToday)
+                else { return }
+                shift(by: delta)
+            }
+    }
+
+    private func reloadDay() async {
+        async let meals: Void = today.load(day: today.currentDay)
+        async let thread: Void = coach.refresh(day: selectedDay)
+        async let extras: Void = context.refreshAll()
+        _ = await (meals, thread, extras)
+    }
+
+    // MARK: Deep links
+
+    private func focus(on id: UUID, proxy: ScrollViewProxy) {
+        let rowId = DayThreadPolicy.rowId(forMessage: id)
+        Task { @MainActor in
+            // Let a day switch settle so the row exists before scrolling.
+            try? await Task.sleep(for: .milliseconds(350))
+            withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                proxy.scrollTo(rowId, anchor: .center)
+                highlightedRowId = rowId
+            }
+            coach.consumeFocus()
+            try? await Task.sleep(for: .seconds(2.2))
+            withAnimation(Design.Motion.settle) {
+                if highlightedRowId == rowId { highlightedRowId = nil }
+            }
+        }
+    }
+
+    // MARK: Delete with undo
+
+    private func beginDeletion(_ entry: Entry) {
+        guard entry.canDelete else { return }
+        commitPendingDeletion()
+        withAnimation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion)) {
+            pendingDeletion = entry
+        }
+        deletionTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            commitPendingDeletion()
+        }
+    }
+
+    private func undoDeletion() {
+        deletionTask?.cancel()
+        deletionTask = nil
+        withAnimation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion)) {
+            pendingDeletion = nil
+        }
+    }
+
+    private func commitPendingDeletion() {
+        deletionTask?.cancel()
+        deletionTask = nil
+        guard let entry = pendingDeletion else { return }
+        pendingDeletion = nil
+        Task { await today.deleteEntry(entry) }
+    }
+
+    // MARK: Misc
+
+    private func timeText(_ date: Date) -> String {
+        formatters.timeFormatter.string(from: date)
+    }
+
+    private func show(notice message: String) {
+        coachNotice = message
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3.5))
+            if coachNotice == message { coachNotice = nil }
+            if coach.errorMessage == message { coach.errorMessage = nil }
+        }
+    }
+
+    /// The offline fallback nudges (coach disabled + the legacy toggle on);
+    /// `DayNotificationScheduler` itself no-ops otherwise. Debounced because
+    /// status polling touches `entries` every ~650 ms.
+    private func rescheduleDayNudges() {
+        guard environment.loadsRemotely, isToday,
+              UserDefaults.standard.bool(forKey: DayNotificationScheduler.enabledDefaultsKey)
+        else { return }
+        nudgeRescheduleTask?.cancel()
+        let timezone = TimeZone(identifier: currentProfile.timezone) ?? .autoupdatingCurrent
+        let loggedMeals = today.entries.filter { $0.status != .failed }
+        let nudgeContext = DayNudgeContext(
+            now: Date(),
+            timezone: timezone,
+            totals: today.todayTotals,
+            target: today.effectiveTarget,
+            loggedMealCount: loggedMeals.count,
+            lastMealAt: loggedMeals.map(\.createdAt).max(),
+            goalType: currentProfile.goalType,
+            targetWeightKG: currentProfile.targetWeightKG,
+            units: currentProfile.units,
+            weightCheckIns: context.checkIns,
+            recentNutrition: context.dayTotals,
+            targetHistory: context.targetHistory,
+            displayName: currentProfile.displayName
+        )
+        let weighInSeconds =
+            UserDefaults.standard.object(forKey: DayNotificationScheduler.weighInSecondsDefaultsKey) as? Double
+            ?? DayNotificationScheduler.defaultWeighInSecondsFromMidnight
+        nudgeRescheduleTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            await DayNotificationScheduler.reschedule(context: nudgeContext, weighInSecondsFromMidnight: weighInSeconds)
+        }
+    }
+}
+
+/// A photo Luke sent in chat (coach-media, signed on demand).
+struct ChatPhoto: View {
+    let path: String
+    let loadURL: (String) async -> URL?
+    @State private var url: URL?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous)
+                .fill(Design.Color.surface2)
+            if let url {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    }
+                }
+                .allowsHitTesting(false)
+            } else {
+                Image(systemName: "photo")
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
+        }
+        .frame(width: 180, height: 180)
+        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous))
+        .task(id: path) { url = await loadURL(path) }
+        .accessibilityLabel("Photo you sent")
+    }
+}

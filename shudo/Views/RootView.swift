@@ -31,6 +31,9 @@ struct RootView: View {
             guard PolishPreviewScreen.launchValue == nil else { return }
             #endif
             if newSession == nil {
+                // Any sign-out path (Settings, an expired session): drop the
+                // coach queue and pending coach notifications with it.
+                Task { await CoachSync.shared.reset() }
                 profile = nil
                 profileError = nil
                 refreshGeneration = UUID()
@@ -55,7 +58,7 @@ struct RootView: View {
             case .loading:
                 loadingView
             case .today:
-                TodayView(profile: profile)
+                AppShell(profile: profile)
                     .id(profile.userId)
             }
         } else {
@@ -68,29 +71,30 @@ struct RootView: View {
             if let profileError {
                 Image(systemName: "wifi.exclamationmark")
                     .font(.title2)
-                    .foregroundStyle(Design.Color.muted)
+                    .foregroundStyle(Design.Color.textSecondary)
                 Text("Couldn’t open your profile")
                     .font(.headline)
-                    .foregroundStyle(Design.Color.ink)
+                    .foregroundStyle(Design.Color.textPrimary)
                 Text(profileError)
                     .font(.subheadline)
-                    .foregroundStyle(Design.Color.muted)
+                    .foregroundStyle(Design.Color.textSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try again") { prepareProfile() }
                     .buttonStyle(PrimaryButtonStyle())
                     .frame(maxWidth: 220)
-                Button("Sign out") { AuthSessionManager.shared.signOut() }
+                Button("Sign out") {
+                    Task { await CoachSync.shared.reset() }
+                    AuthSessionManager.shared.signOut()
+                }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Design.Color.muted)
+                    .foregroundStyle(Design.Color.textSecondary)
                     .padding(.top, 4)
             } else {
-                ProgressView()
-                    .controlSize(.large)
-                    .tint(Design.Color.accentPrimary)
+                CoachAvatar(size: 56, isThinking: true)
                 Text("Opening Shudo…")
                     .font(.subheadline)
-                    .foregroundStyle(Design.Color.muted)
+                    .foregroundStyle(Design.Color.textSecondary)
             }
         }
         .padding(28)
