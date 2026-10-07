@@ -1,3 +1,5 @@
+import AVFoundation
+import Speech
 import SwiftUI
 import UIKit
 
@@ -69,7 +71,8 @@ struct BodyCheckInFlow: View {
         self.updatesProfileWeight = updatesProfileWeight
         self.onSaved = onSaved
         _step = State(initialValue: start == .weight ? .weight : .camera)
-        _pose = State(initialValue: existing?.photoPose ?? .frontRelaxed)
+        let pose = existing?.photoPose ?? .frontRelaxed
+        _pose = State(initialValue: pose == .front ? .frontRelaxed : pose)
         _note = State(initialValue: existing?.note ?? "")
         let shown = existing?.weightKG.map { WeightCheckInPolicy.displayedValue(kilograms: $0, units: units) }
         _weightText = State(initialValue: shown.map { String(format: "%.1f", $0) } ?? "")
@@ -179,8 +182,13 @@ struct BodyCheckInFlow: View {
             .safeAreaInset(edge: .bottom) { saveBar }
         }
         .task(id: step) {
-            // "Add weight" goes straight to voice, like the 1.x weigh-in.
-            guard step == .weight, existing?.weightKG == nil else { return }
+            // "Add weight" goes straight to voice, like the 1.x weigh-in —
+            // once permission exists. A first-time user taps the mic, so the
+            // sheet never opens onto a system prompt.
+            guard step == .weight, existing?.weightKG == nil,
+                SFSpeechRecognizer.authorizationStatus() == .authorized,
+                AVAudioApplication.shared.recordPermission == .granted
+            else { return }
             await voice.start()
         }
     }
@@ -189,8 +197,7 @@ struct BodyCheckInFlow: View {
         VStack(alignment: .leading, spacing: 12) {
             if let image = capture?.image {
                 Color.clear
-                    .aspectRatio(3 / 4, contentMode: .fit)
-                    .frame(maxHeight: 360)
+                    .frame(width: 285, height: 380)
                     .overlay {
                         Image(uiImage: image).resizable().scaledToFill()
                     }

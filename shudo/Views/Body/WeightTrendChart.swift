@@ -30,14 +30,18 @@ struct WeightTrendChart: View {
     var body: some View {
         let window = windowStart
         let plots = points.compactMap { point -> Plot? in
-            guard point.localDay >= window, let date = LocalDayMath.date(point.localDay) else { return nil }
+            guard point.localDay >= window, let date = Self.chartDate(point.localDay) else { return nil }
             return Plot(id: point.localDay, date: date, raw: display(point.raw), trend: display(point.trend))
         }
         let lane = lanePoints(from: window)
         let start = startMarker(window: window)
         let target = goal?.targetWeightKG.map(display)
         let domain = yDomain(plots: plots, lane: lane, start: start?.value, target: target)
-        let xDomain = (LocalDayMath.date(window) ?? Date())...(LocalDayMath.date(today) ?? Date())
+        // A little air on both ends so edge markers (the self-reported start,
+        // today's dot) and their labels are never cut in half.
+        let xLower = LocalDayMath.adding(-2, to: window).flatMap(Self.chartDate) ?? Date()
+        let xUpper = LocalDayMath.adding(1, to: today).flatMap(Self.chartDate) ?? Date()
+        let xDomain = xLower...max(xUpper, xLower)
 
         Chart {
             ForEach(lane) { point in
@@ -84,9 +88,8 @@ struct WeightTrendChart: View {
         }
         .chartXScale(domain: xDomain)
         .chartYScale(domain: domain)
-        .chartPlotStyle { $0.clipped() }
         .chartXAxis {
-            AxisMarks(values: .stride(by: .weekOfYear)) { _ in
+            AxisMarks(values: weeklyTicks(from: xLower)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: false)
                     .foregroundStyle(Design.Color.textTertiary)
             }
@@ -102,7 +105,7 @@ struct WeightTrendChart: View {
     }
 
     /// Up to 12 weeks back, never before the goal started or the first weigh-in.
-    private var windowStart: String {
+    var windowStart: String {
         let earliest = LocalDayMath.adding(-Self.maxWindowDays, to: today) ?? today
         let first = [goal?.startDay, points.first?.localDay].compactMap { $0 }.min() ?? today
         let start = max(first, earliest)
@@ -113,19 +116,55 @@ struct WeightTrendChart: View {
 
     private func display(_ kilograms: Double) -> Double { BodyUnits.display(kilograms, units: units) }
 
+    /// Charts formats axis dates in the device zone, so plot each local day
+    /// at the device's local midnight (UTC midnight would label as the
+    /// previous day anywhere west of Greenwich).
+    static func chartDate(_ localDay: String) -> Date? {
+        let parts = localDay.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3, LocalDayMath.date(localDay) != nil else { return nil }
+        return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+
+    /// Weekly ticks counted back from a week before today, so the last
+    /// label always has room before the trailing axis.
+    private func weeklyTicks(from lower: Date) -> [Date] {
+        let floor = lower.addingTimeInterval(2 * 86_400)
+        return (1...13).compactMap { week in
+            LocalDayMath.adding(-7 * week, to: today).flatMap(Self.chartDate)
+        }
+        .filter { $0 >= floor }
+        .reversed()
+    }
+
+    /// Weekly lane samples from the goal's start, ending exactly at today
+    /// (interpolated) so nothing draws past the plot.
     private func lanePoints(from window: String) -> [LanePoint] {
-        guard let goal, let days = goal.startDay.flatMap({ LocalDayMath.days(from: $0, to: today) }) else { return [] }
-        let weeks = max(1, Int((Double(days) / 7).rounded(.up)))
-        return TrajectoryPolicy.lane(goal: goal, weeks: weeks).compactMap { point in
-            guard let date = LocalDayMath.date(point.day) else { return nil }
+        guard let goal, let startDay = goal.startDay,
+            let days = LocalDayMath.days(from: startDay, to: today), days > 0
+        else { return [] }
+        let weeks = Int((Double(days) / 7).rounded(.up))
+        let lane = TrajectoryPolicy.lane(goal: goal, weeks: weeks)
+        var result: [LanePoint] = lane.compactMap { point in
+            guard point.day <= today, let date = Self.chartDate(point.day) else { return nil }
             return LanePoint(id: point.day, date: date, low: display(point.low), high: display(point.high))
         }
+        if result.last?.id != today, let first = lane.first, let last = lane.last,
+            let span = LocalDayMath.days(from: first.day, to: last.day), span > 0,
+            let date = Self.chartDate(today)
+        {
+            let t = Double(days) / Double(span)
+            result.append(LanePoint(
+                id: today, date: date,
+                low: display(first.low + (last.low - first.low) * t),
+                high: display(first.high + (last.high - first.high) * t)))
+        }
+        return result
     }
 
     private func startMarker(window: String) -> (date: Date, value: Double)? {
         guard let goal, let weight = goal.startWeightKG, let day = goal.startDay,
             day >= window, !points.contains(where: { $0.localDay == day }),
-            let date = LocalDayMath.date(day)
+            let date = Self.chartDate(day)
         else { return nil }
         return (date, display(weight))
     }

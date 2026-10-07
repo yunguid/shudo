@@ -21,8 +21,11 @@ public struct WeightCheckIn: Identifiable, Equatable, Sendable {
     public var hasWeight: Bool { weightKG != nil }
 }
 
-/// `weight_checkins.photo_pose` values (DB check constraint).
+/// `weight_checkins.photo_pose` values (DB check constraint). The app writes
+/// `front_relaxed` for a plain front shot; plain `front` is accepted by the
+/// schema too, so it decodes.
 public enum PhysiquePose: String, CaseIterable, Sendable, Identifiable {
+    case front
     case frontRelaxed = "front_relaxed"
     case frontFlexed = "front_flexed"
     case side
@@ -33,7 +36,7 @@ public enum PhysiquePose: String, CaseIterable, Sendable, Identifiable {
 
     var label: String {
         switch self {
-        case .frontRelaxed: "Front"
+        case .front, .frontRelaxed: "Front"
         case .frontFlexed: "Flexed"
         case .side: "Side"
         case .back: "Back"

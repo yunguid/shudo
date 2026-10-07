@@ -51,7 +51,9 @@ struct WeeklyRecapList: View {
                 .font(Design.Typeface.numeral(.caption, weight: .bold))
                 .foregroundStyle(Design.Color.ember)
                 .monospacedDigit()
-                .frame(width: 82, alignment: .leading)
+                .lineLimit(1)
+                .frame(minWidth: 76, alignment: .leading)
+                .fixedSize()
             Text(summary.headline)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Design.Color.textPrimary)
@@ -83,8 +85,21 @@ enum WeeklyRecapFormat {
         return formatter
     }()
 
+    private static let dayOnly: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "d"
+        return formatter
+    }()
+
+    /// "Sep 23–29", or "Sep 30–Oct 6" across a month boundary.
     static func range(_ summary: WeeklyInsightSummary) -> String {
-        "\(formatter.string(from: summary.weekStart))–\(formatter.string(from: summary.weekEnd))"
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        let sameMonth = calendar.isDate(summary.weekStart, equalTo: summary.weekEnd, toGranularity: .month)
+        let end = sameMonth ? dayOnly.string(from: summary.weekEnd) : formatter.string(from: summary.weekEnd)
+        return "\(formatter.string(from: summary.weekStart))–\(end)"
     }
 }
 

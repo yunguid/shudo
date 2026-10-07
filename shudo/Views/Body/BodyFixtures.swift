@@ -9,7 +9,8 @@
     /// Launch with `-shudoPolishPreview body`, optionally plus
     /// `-shudoBodyPreview <options>` (comma-separated): `noscale` (no
     /// weigh-ins yet), `empty` (today not checked in), `revealed` (veil off),
-    /// and one action: `compare`, `camera`, `review`, `weight`, `viewer`.
+    /// one action: `compare`, `camera`, `review`, `weight`, `viewer`, and a
+    /// section to scroll to: `meter`, `trend`, `log`, `fuel`, `recaps`.
     /// `-shudoBodyCameraFixture <path>` makes the camera shoot that image.
     enum BodyFixtures {
         static let timezone = "America/New_York"
@@ -30,7 +31,8 @@
             return BodyScreen(
                 previewModel: model(noScale: options.contains("noscale"), empty: options.contains("empty")),
                 previewAction: action,
-                revealed: options.contains("revealed")
+                revealed: options.contains("revealed"),
+                scrollTo: options.compactMap(BodySection.init(rawValue:)).first
             )
         }
 

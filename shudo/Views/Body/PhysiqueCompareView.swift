@@ -15,6 +15,7 @@ struct PhysiqueCompareView: View {
     /// Photo check-ins (any order).
     let checkIns: [WeightCheckIn]
     let units: String
+    let trendPoints: [WeightTrendPoint]
     @ObservedObject var loader: BodyPhotoLoader
 
     @Environment(\.dismiss) private var dismiss
@@ -25,10 +26,17 @@ struct PhysiqueCompareView: View {
     @State private var picking: Side = .before
     @State private var wipe: CGFloat = 0.5
 
-    init(checkIns: [WeightCheckIn], units: String, loader: BodyPhotoLoader, before: WeightCheckIn? = nil) {
+    init(
+        checkIns: [WeightCheckIn],
+        units: String,
+        loader: BodyPhotoLoader,
+        trendPoints: [WeightTrendPoint] = [],
+        before: WeightCheckIn? = nil
+    ) {
         let ordered = checkIns.filter(\.hasPhoto).sorted { $0.localDay < $1.localDay }
         self.checkIns = ordered
         self.units = units
+        self.trendPoints = trendPoints
         self.loader = loader
         _beforeID = State(initialValue: (before ?? ordered.first)?.id)
         _afterID = State(initialValue: ordered.last?.id)
@@ -159,6 +167,10 @@ struct PhysiqueCompareView: View {
                     stat(
                         BodyUnits.signed(BodyUnits.display(end - start, units: units)),
                         caption: "\(BodyUnits.label(units)) change")
+                } else if let start = trendNear(before.localDay), let end = trendNear(after.localDay) {
+                    stat(
+                        BodyUnits.signed(BodyUnits.display(end - start, units: units)),
+                        caption: "\(BodyUnits.label(units)) trend change")
                 } else {
                     stat("—", caption: "weigh both days for a change")
                 }
@@ -166,6 +178,17 @@ struct PhysiqueCompareView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
+    }
+
+    /// The trend weight from a weigh-in within 3 days of `day`, if any.
+    private func trendNear(_ day: String) -> Double? {
+        trendPoints
+            .compactMap { point -> (gap: Int, trend: Double)? in
+                guard let gap = LocalDayMath.days(from: point.localDay, to: day), abs(gap) <= 3 else { return nil }
+                return (abs(gap), point.trend)
+            }
+            .min { $0.gap < $1.gap }?
+            .trend
     }
 
     private func stat(_ value: String, caption: String) -> some View {

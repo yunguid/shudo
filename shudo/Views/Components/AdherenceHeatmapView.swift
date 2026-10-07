@@ -82,7 +82,7 @@ struct AdherenceHeatmapView: View {
                 }
             }
 
-            dayReadout(selected, formatter: labelFormatter)
+            dayReadout(selected, formatter: labelFormatter, todayLocalDay: cells.last?.localDay)
         }
         .padding(16)
         .cardSurface()
@@ -272,14 +272,14 @@ struct AdherenceHeatmapView: View {
     // MARK: - Day readout
 
     @ViewBuilder
-    private func dayReadout(_ cell: AdherenceHeatmapCell?, formatter: DateFormatter) -> some View {
+    private func dayReadout(_ cell: AdherenceHeatmapCell?, formatter: DateFormatter, todayLocalDay: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let cell {
                 Text(formatter.string(from: cell.date))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Design.Color.textPrimary)
                 if let total = cell.total, total.entryCount > 0 {
-                    Text(verdict(for: cell))
+                    Text(verdict(for: cell, isToday: cell.localDay == todayLocalDay))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Design.Color.ember)
                         .monospacedDigit()
@@ -307,12 +307,15 @@ struct AdherenceHeatmapView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func verdict(for cell: AdherenceHeatmapCell) -> String {
+    private func verdict(for cell: AdherenceHeatmapCell, isToday: Bool = false) -> String {
         guard let phase else {
             return cell.adherence.map { "\(Int(($0 * 100).rounded()))%" } ?? ""
         }
-        guard let day = AdherencePolicy.day(total: cell.total, target: cell.effectiveTarget, phase: phase)
+        guard let day = AdherencePolicy.day(
+            total: cell.total, target: cell.effectiveTarget, phase: phase, isToday: isToday)
         else { return "" }
+        // Today isn't over: no verdict until it's already a hit.
+        if day.isPending { return day.proteinHit ? "So far · protein hit" : "So far" }
         let calories = switch day.calories {
         case .under: "Under"
         case .onPlan: "On plan"

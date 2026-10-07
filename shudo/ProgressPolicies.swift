@@ -326,13 +326,20 @@ enum TrajectoryPolicy {
             planned * laneHighFactor,
             current * (goal.phase == .bulk ? maxBulkPercentPerWeek : maxCutPercentPerWeek)
         )
-        switch directional {
-        case ...(-planned * stallFactor): result.status = .wrongDirection
-        case ..<(planned * stallFactor): result.status = .stalled
-        case ..<(planned * laneLowFactor): result.status = .behind
-        case let value where value > ceiling: result.status = .tooFast
-        case let value where value > planned * laneHighFactor: result.status = .ahead
-        default: result.status = .onPace
+        // Lane edges count as inside the lane (kg/lb round-trips wobble by an ulp).
+        let epsilon = 1e-9
+        if directional <= -planned * stallFactor {
+            result.status = .wrongDirection
+        } else if directional < planned * stallFactor - epsilon {
+            result.status = .stalled
+        } else if directional < planned * laneLowFactor - epsilon {
+            result.status = .behind
+        } else if directional > ceiling + epsilon {
+            result.status = .tooFast
+        } else if directional > planned * laneHighFactor + epsilon {
+            result.status = .ahead
+        } else {
+            result.status = .onPace
         }
 
         if directional > 0 {
@@ -480,12 +487,15 @@ enum AdherencePolicy {
         )
     }
 
-    /// Heatmap level 0 (nothing logged) … 4 (calories on plan and protein hit).
+    /// Heatmap level 0 (nothing logged) … 4 (calories on plan and protein
+    /// hit). One of the two lands on 3 when the other was close, else 2;
+    /// missing both is 1 however near the misses were.
     static func level(_ day: FuelDay?) -> Int {
         guard let day else { return 0 }
-        if day.calories == .onPlan && day.proteinHit { return 4 }
-        if day.score >= 0.8 { return 3 }
-        if day.score >= 0.6 { return 2 }
-        return 1
+        switch (day.calories == .onPlan ? 1 : 0) + (day.proteinHit ? 1 : 0) {
+        case 2: return 4
+        case 1: return day.score >= 0.9 ? 3 : 2
+        default: return 1
+        }
     }
 }

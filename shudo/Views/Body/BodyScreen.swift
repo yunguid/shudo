@@ -18,6 +18,8 @@ struct BodyScreen: View {
     @State private var pendingDelete: WeightCheckIn?
     @State private var showsAllPhotos = false
     @State private var previewAction: BodyPreviewAction?
+    /// One-shot scroll on appear (deep links / preview screenshots).
+    @State private var scrollTarget: BodySection?
     #if DEBUG
         @State private var previewReviewImage: UIImage?
     #endif
@@ -38,11 +40,17 @@ struct BodyScreen: View {
     }
 
     #if DEBUG
-        init(previewModel: BodyViewModel, previewAction: BodyPreviewAction? = nil, revealed: Bool = false) {
+        init(
+            previewModel: BodyViewModel,
+            previewAction: BodyPreviewAction? = nil,
+            revealed: Bool = false,
+            scrollTo section: BodySection? = nil
+        ) {
             _model = StateObject(wrappedValue: previewModel)
             onCheckInSaved = { _ in }
             _revealed = State(initialValue: revealed)
             _previewAction = State(initialValue: previewAction)
+            _scrollTarget = State(initialValue: section)
         }
     #endif
 
@@ -51,28 +59,38 @@ struct BodyScreen: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let message = model.errorMessage {
-                        errorBanner(message)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if let message = model.errorMessage {
+                            errorBanner(message)
+                        }
+                        checkInHero.id(BodySection.hero)
+                        if snapshot.goal?.phase != .maintain, snapshot.meterTargetKG != nil, snapshot.meterStartKG != nil {
+                            bulkMeter.id(BodySection.meter)
+                        }
+                        trendCard.id(BodySection.trend)
+                        physiqueLog.id(BodySection.log)
+                        AdherenceHeatmapView(
+                            totals: model.nutrition.totals,
+                            target: model.profile.dailyMacroTarget,
+                            targetHistory: model.nutrition.targetHistory,
+                            timezone: model.profile.timezone,
+                            phase: model.phase
+                        )
+                        .id(BodySection.fuel)
+                        WeeklyRecapList(summaries: model.summaries, isLoading: model.isLoading && !model.hasLoaded)
+                            .id(BodySection.recaps)
                     }
-                    checkInHero
-                    if snapshot.goal?.phase != .maintain, snapshot.meterTargetKG != nil, snapshot.meterStartKG != nil {
-                        bulkMeter
-                    }
-                    trendCard
-                    physiqueLog
-                    AdherenceHeatmapView(
-                        totals: model.nutrition.totals,
-                        target: model.profile.dailyMacroTarget,
-                        targetHistory: model.nutrition.targetHistory,
-                        timezone: model.profile.timezone,
-                        phase: model.phase
-                    )
-                    WeeklyRecapList(summaries: model.summaries, isLoading: model.isLoading && !model.hasLoaded)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 28)
+                .task {
+                    guard let section = scrollTarget else { return }
+                    scrollTarget = nil
+                    try? await Task.sleep(for: .milliseconds(300))
+                    proxy.scrollTo(section, anchor: .top)
+                }
             }
             .background(Design.Color.canvas.ignoresSafeArea())
             .navigationTitle("Body")
@@ -119,7 +137,11 @@ struct BodyScreen: View {
         }
         .fullScreenCover(item: $compare) { request in
             PhysiqueCompareView(
-                checkIns: snapshot.photoCheckIns, units: units, loader: model.photos, before: request.before)
+                checkIns: snapshot.photoCheckIns,
+                units: units,
+                loader: model.photos,
+                trendPoints: snapshot.trendPoints,
+                before: request.before)
         }
         .fullScreenCover(item: $viewer) { request in
             PhysiquePhotoViewer(
@@ -355,18 +377,20 @@ struct BodyScreen: View {
     private var trendCard: some View {
         let count = snapshot.weighInCount
         let showsTrend = snapshot.showsTrendChart
+        let chart = WeightTrendChart(
+            points: snapshot.trendPoints,
+            goal: snapshot.goal,
+            today: snapshot.today,
+            units: units,
+            showsTrend: showsTrend
+        )
+        let weeks = max(1, Int((Double(LocalDayMath.days(from: chart.windowStart, to: snapshot.today) ?? 7) / 7).rounded()))
         return VStack(alignment: .leading, spacing: 10) {
-            BodyCardHeader(title: showsTrend ? "Trend · \(trendWeeks) weeks" : "Trend") {
+            BodyCardHeader(title: "Trend · \(weeks) weeks") {
                 trendBadge(showsTrend: showsTrend, count: count)
             }
-            WeightTrendChart(
-                points: snapshot.trendPoints,
-                goal: snapshot.goal,
-                today: snapshot.today,
-                units: units,
-                showsTrend: showsTrend
-            )
-            .frame(height: showsTrend ? 150 : 110)
+            chart
+                .frame(height: showsTrend ? 150 : 110)
             if showsTrend, let trend = snapshot.trend {
                 HStack(spacing: 14) {
                     trendStat(
@@ -390,12 +414,6 @@ struct BodyScreen: View {
         }
         .padding(16)
         .cardSurface(radius: Design.Radius.cardLarge)
-    }
-
-    private var trendWeeks: Int {
-        let first = snapshot.trendPoints.first?.localDay ?? snapshot.today
-        let days = LocalDayMath.days(from: first, to: snapshot.today) ?? 0
-        return max(1, Int((Double(min(days, WeightTrendChart.maxWindowDays)) / 7).rounded(.up)))
     }
 
     @ViewBuilder
@@ -554,6 +572,10 @@ struct BodyScreen: View {
 
 enum BodyPreviewAction: String {
     case compare, camera, review, weight, viewer
+}
+
+enum BodySection: String, Hashable {
+    case hero, meter, trend, log, fuel, recaps
 }
 
 private struct CompareRequest: Identifiable {
