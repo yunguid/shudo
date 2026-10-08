@@ -296,10 +296,14 @@ function checkText(
   if (EXTREME_DIET_PATTERNS.some((pattern) => pattern.test(text))) {
     return new CoachCopyViolation("extreme_diet", field);
   }
-  if (DOSING_PATTERN.test(text)) {
+  // In conversation he asked, and he gets a real answer about drugs, doses
+  // and labs. Copy Shudo writes on his own (check-ins, lock screen) stays
+  // clear of it.
+  const conversation = policy.mode === "chat_reply" && !push;
+  if (!conversation && DOSING_PATTERN.test(text)) {
     return new CoachCopyViolation("medical", field, "dosing");
   }
-  if (MEDICAL_PATTERN.test(text)) {
+  if (!conversation && MEDICAL_PATTERN.test(text)) {
     if (
       push || !MEDICAL_REFERRAL_PATTERN.test(text) ||
       MEDICAL_ASSERTION_PATTERN.test(text)
@@ -377,7 +381,7 @@ export function coachCopyViolation(
   if (output.skip) return null;
   const limits = MODE_LIMITS[policy.mode];
   const total = policy.mode === "chat_reply" && policy.longForm
-    ? 900
+    ? 1_500
     : limits.total;
   if (output.bubbles.length === 0) {
     return new CoachCopyViolation("length", "bubbles", "empty");
@@ -393,7 +397,7 @@ export function coachCopyViolation(
     if (!bubble.trim()) return new CoachCopyViolation("length", field, "empty");
     // Chat "why" answers may run longer in each bubble; totals still bind.
     const bubbleLimit = policy.mode === "chat_reply" && policy.longForm
-      ? 450
+      ? 600
       : COACH_BUBBLE_MAX_CHARS;
     if (length > bubbleLimit) return new CoachCopyViolation("length", field);
     const violation = checkText(bubble, field, policy, false);

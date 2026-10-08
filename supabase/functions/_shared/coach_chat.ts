@@ -489,8 +489,11 @@ const CHAT_REWRITE_SCHEMA = {
   required: ["bubbles"],
 } as const;
 
+/// A real question about how something works (or a long message) earns a
+/// real answer, not a text-length one.
 function wantsLongForm(text: string): boolean {
-  return /\b(?:why|explain|how come|walk me through)\b/iu.test(text);
+  return /\b(?:why|explain|how come|walk me through|how (?:does|do|is|would|will)|what (?:happens|does|is the difference)|difference|versus|vs\.?|compare|biolog\w*|scien\w*|mechanism|half-?life|good (?:thing|idea) to)\b/iu
+    .test(text) || text.split(/\s+/u).filter(Boolean).length > 60;
 }
 
 /// Bio merges reason over his whole bio; everything else is a quick text.

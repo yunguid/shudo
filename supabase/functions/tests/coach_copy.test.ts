@@ -189,6 +189,27 @@ Deno.test("medical words are allowed in a bubble only alongside a referral", () 
   );
 });
 
+Deno.test("in conversation he gets a real answer about drugs and doses", () => {
+  const answer =
+    "Your 5 mg of Adderall is amphetamine: it pushes dopamine and norepinephrine out of the neuron instead of blocking adenosine like caffeine. Half-life is around 10 hours, so a morning dose is still in you at dinner, which is why appetite tanks.";
+  assertEquals(
+    violationCode(answer, { mode: "chat_reply", longForm: true }),
+    null,
+  );
+  assertEquals(
+    violationCode("200 mg of caffeine is about two coffees.", {
+      mode: "chat_reply",
+    }),
+    null,
+  );
+  // Shudo never raises it on his own: check-ins and the lock screen stay clear.
+  assertEquals(violationCode(answer, { mode: "checkpoint_nudge" }), "medical");
+  assertEquals(
+    pushViolationCode("Take your 5 mg with breakfast.", { mode: "chat_reply" }),
+    "medical",
+  );
+});
+
 Deno.test("profanity follows the setting and never goes salty on the lock screen", () => {
   assertEquals(
     violationCode("Rough night. Shit happens.", { profanity: "off" }),
