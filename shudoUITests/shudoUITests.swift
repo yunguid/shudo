@@ -300,12 +300,17 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 5))
     }
 
-    /// Press and hold the Shudo mark, slide to option `index` in the fan
-    /// (a row above the mark, 92 pt apart, 104 pt up) and let go.
+    /// Press and hold the Shudo mark, slide toward option `index` on the
+    /// quarter dial (straight up, up-right, right; 96 pt out) and let go.
+    private static func fanOffset(_ index: Int) -> CGVector {
+        let radians = Double(index) * 45 * .pi / 180
+        return CGVector(dx: sin(radians) * 96, dy: -cos(radians) * 96)
+    }
+
     @MainActor
     private func chooseFanOption(_ index: Int, in app: XCUIApplication) {
         let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: CGFloat(index) * 92, dy: -104)))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(Self.fanOffset(index)))
     }
 
     @MainActor

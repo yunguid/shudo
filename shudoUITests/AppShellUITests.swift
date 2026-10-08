@@ -85,7 +85,7 @@ final class AppShellUITests: XCTestCase {
     func testHoldingShudoFansOutToLogFood() throws {
         let app = launch()
         let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 92, dy: -104)))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 68, dy: -68)))
         XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 5))
     }
 

@@ -77,7 +77,6 @@ struct CaptureBar: View {
 
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.openURL) private var openURL
-    @State private var pressStartedAt: Date?
     @State private var holdTask: Task<Void, Never>?
     /// This press only closes a fan left open; it does nothing else.
     @State private var pressClosesFan = false
@@ -124,7 +123,7 @@ struct CaptureBar: View {
             guard ProcessInfo.processInfo.arguments.contains("-shudoPreviewFan") else { return }
             try? await Task.sleep(for: .milliseconds(1_500))
             openFan()
-            fan.track(CaptureFanLayout.offset(index: 1))
+            fan.track(CaptureFanLayout.offset(index: 1, count: 3))
         }
         #endif
         .onChange(of: voice.phase) { _, phase in
@@ -188,40 +187,61 @@ struct CaptureBar: View {
         }
     }
 
-    /// A quick tap is start / send / retry. A hold past ~0.3 s from idle
-    /// fans the options out; the thumb slides onto one and lets go.
-    private var pressGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                if pressStartedAt == nil {
-                    pressStartedAt = Date()
-                    holdTask?.cancel()
-                    pressClosesFan = fan.isOpen
-                    if pressClosesFan {
-                        fan.close()
-                        return
-                    }
-                    guard leadingRole == .mic else { return }
-                    holdTask = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(300))
-                        guard !Task.isCancelled, pressStartedAt != nil else { return }
-                        openFan()
-                    }
-                }
-                if fan.isOpen, !pressClosesFan { fan.track(value.translation) }
-            }
-            .onEnded { value in
-                holdTask?.cancel()
-                holdTask = nil
-                pressStartedAt = nil
-                if pressClosesFan {
-                    pressClosesFan = false
-                } else if fan.isOpen {
-                    fan.release(value.translation)
-                } else {
-                    Task { await leadingTapped() }
-                }
-            }
+    /// One UIKit press owns the touch from the first contact: a quick tap
+    /// is start / send / retry; holding ~0.2 s (or starting to slide) fans
+    /// the options out, and the same touch slides onto one and lets go.
+    private var pressGesture: ThumbPressGesture {
+        ThumbPressGesture(
+            onBegan: pressBegan,
+            onChanged: pressMoved,
+            onEnded: pressEnded,
+            onCancelled: pressCancelled
+        )
+    }
+
+    private func pressBegan() {
+        holdTask?.cancel()
+        pressClosesFan = fan.isOpen
+        if pressClosesFan {
+            fan.close()
+            return
+        }
+        guard leadingRole == .mic else { return }
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled, !fan.isOpen else { return }
+            openFan()
+        }
+    }
+
+    private func pressMoved(_ translation: CGSize) {
+        guard !pressClosesFan, leadingRole == .mic else { return }
+        // Sliding before the hold lands opens the fan right away.
+        if !fan.isOpen, hypot(translation.width, translation.height) > 12 {
+            holdTask?.cancel()
+            openFan()
+        }
+        if fan.isOpen { fan.track(translation) }
+    }
+
+    private func pressEnded(_ translation: CGSize) {
+        holdTask?.cancel()
+        holdTask = nil
+        if pressClosesFan {
+            pressClosesFan = false
+        } else if fan.isOpen {
+            fan.release(translation)
+        } else if hypot(translation.width, translation.height) < 12 {
+            Task { await leadingTapped() }
+        }
+    }
+
+    private func pressCancelled() {
+        holdTask?.cancel()
+        holdTask = nil
+        pressClosesFan = false
+        // The system took the touch: leave the fan up for a tap.
+        if fan.isOpen { fan.pin() }
     }
 
     // MARK: Fan
