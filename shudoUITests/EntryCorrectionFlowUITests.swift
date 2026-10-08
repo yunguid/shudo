@@ -3,9 +3,9 @@
 //  shudoUITests
 //
 //  Drives the offline PolishPreview harness through the estimate-update
-//  journey: meal card → detail → correction sheet → immediate return to the
-//  timeline with a visible updating state → refreshed estimate (or a
-//  recoverable failure with retry).
+//  journey: meal card → detail → the fix bar at its bottom → immediate
+//  return to the timeline with a visible updating state → refreshed
+//  estimate (or a recoverable failure with retry).
 //
 
 import XCTest
@@ -48,14 +48,10 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         mealCard.tap()
     }
 
-    /// Walks from the timeline into the correction sheet and submits the
-    /// given typed correction.
+    /// Walks from the timeline into the meal and submits the given typed
+    /// correction from the fix bar at its bottom.
     private func submitCorrection(_ text: String, in app: XCUIApplication) {
         openLunch(in: app)
-
-        let updateMeal = app.buttons["Update meal"].firstMatch
-        XCTAssertTrue(updateMeal.waitForExistence(timeout: 5))
-        updateMeal.tap()
 
         let note = correctionInput(in: app)
         XCTAssertTrue(note.waitForExistence(timeout: 5))
@@ -63,36 +59,28 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         note.tap()
         note.typeText(text)
 
-        let submit = app.buttons["Update estimate"].firstMatch
+        let submit = app.buttons["correction.submit"].firstMatch
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         submit.tap()
     }
 
     @MainActor
-    func testExistingMealUpdateOffersPhotoLibraryAndCameraWithoutChangingTheDraft() throws {
+    func testTheMealPageIsJustTheMealAndItsFixBar() throws {
         let app = launchPreviewApp()
         openLunch(in: app)
 
-        let updateMeal = app.buttons["Update meal"].firstMatch
-        XCTAssertTrue(updateMeal.waitForExistence(timeout: 5))
-        updateMeal.tap()
-
-        XCTAssertTrue(app.buttons["Photos"].firstMatch.waitForExistence(timeout: 5))
-        // Simulator camera availability varies. When present it uses the same
-        // action label and capture surface as the new-meal composer.
-        if app.buttons["Camera"].firstMatch.exists {
-            XCTAssertTrue(app.buttons["Camera"].firstMatch.isEnabled)
-        }
+        // No extra buttons or pages: the fix bar sits at the bottom.
+        XCTAssertTrue(app.buttons["correction.mic"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Update meal"].exists)
+        XCTAssertFalse(app.buttons["Log again"].exists)
         // Nothing to send yet: the bar shows only the mic and the field.
         XCTAssertFalse(app.buttons["correction.submit"].exists)
-        XCTAssertTrue(app.buttons["correction.mic"].exists)
 
         let note = correctionInput(in: app)
         note.tap()
         note.typeText("The rice was one cup")
-        XCTAssertTrue(app.buttons["Update estimate"].firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["Update estimate"].firstMatch.isEnabled)
-        XCTAssertTrue(app.buttons["Photos"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["correction.submit"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["correction.submit"].firstMatch.isEnabled)
     }
 
     private func correctionInput(in app: XCUIApplication) -> XCUIElement {
@@ -105,10 +93,10 @@ final class EntryCorrectionFlowUITests: XCTestCase {
 
         submitCorrection("The rice was one cup, not two", in: app)
 
-        // The sheet leaves right away — long before the ~2s "server"
+        // The meal page leaves right away — long before the ~2s "server"
         // recalculation completes — instead of holding the user on it.
         XCTAssertTrue(
-            app.buttons["Update estimate"].firstMatch.waitForNonExistence(timeout: 2)
+            app.buttons["correction.mic"].firstMatch.waitForNonExistence(timeout: 2)
         )
 
         // The timeline is back with the corrected meal in a visible

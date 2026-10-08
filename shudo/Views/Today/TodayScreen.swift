@@ -21,7 +21,6 @@ struct TodayScreenActions {
     var sendToCoach: (String) -> Void
     /// Targets/goal changed server-side (goal card): refresh the profile.
     var refreshProfile: () -> Void
-    var logAgain: (String) -> Void
 }
 
 struct TodayScreenEnvironment {
@@ -859,13 +858,12 @@ struct TodayScreen: View {
             _ = today.submitCorrection(entryId: id, submission: submission)
         }
         if let preview = environment.previewEntryDetail {
-            EntryDetailView(entryId: id, previewDetail: preview, onCorrectionSubmit: submit, onLogAgain: actions.logAgain)
+            EntryDetailView(entryId: id, previewDetail: preview, onCorrectionSubmit: submit)
         } else {
             EntryDetailView(
                 entryId: id,
                 seed: today.entries.first { $0.id == id },
-                onCorrectionSubmit: submit,
-                onLogAgain: actions.logAgain
+                onCorrectionSubmit: submit
             )
         }
     }

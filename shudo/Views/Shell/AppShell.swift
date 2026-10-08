@@ -158,8 +158,7 @@ struct AppShell: View {
                 openBio: { sheet = .bio },
                 switchTab: { tab = $0 },
                 sendToCoach: { sendToCoach($0, mode: .typed, engine: nil) },
-                refreshProfile: refreshProfile,
-                logAgain: logAgain
+                refreshProfile: refreshProfile
             ),
             headerExpanded: $headerExpanded,
             isActiveTab: tab == .today
@@ -320,11 +319,6 @@ struct AppShell: View {
         let voice = composerVoice.value
         CaptureDiagnostics.record(.composerDismissed, state: voice.controlState)
         voice.cancel()
-    }
-
-    private func logAgain(_ text: String) {
-        today.acceptEntrySubmission(text: text, speechEngine: nil, imageJPEG: nil, for: Date())
-        dependencies.recordEvent(.mealLogged)
     }
 
     private func submitWorkout(_ draft: WorkoutLogDraft, sessionName: String?) {

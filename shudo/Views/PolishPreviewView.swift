@@ -22,7 +22,7 @@ enum PolishPreviewScreen: String {
     case auth
     /// The meal composer sheet (`-shudoPreviewRecord` starts a take).
     case composer
-    /// The "Update meal" correction sheet.
+    /// The meal page with its inline fix bar.
     case correction
     /// The barcode scanner (manual entry on the Simulator).
     case scanner
@@ -143,11 +143,7 @@ struct PolishPreviewView: View {
             .task { await Self.driveCapture() }
         case .detail:
             NavigationStack {
-                EntryDetailView(
-                    entryId: Self.completedEntryID,
-                    previewDetail: Self.entryDetail,
-                    onLogAgain: { _ in }
-                )
+                EntryDetailView(entryId: Self.completedEntryID, previewDetail: Self.entryDetail)
             }
         case .settings:
             NavigationStack {
@@ -203,14 +199,10 @@ struct PolishPreviewView: View {
         case .composer:
             PreviewComposerHost()
         case .correction:
-            EntryCorrectionSheet(
-                entryTitle: Self.entryDetail.title,
-                question: ProcessInfo.processInfo.arguments.contains("-shudoPreviewAnswer")
-                    ? "Was the rice a full scoop or a light one?"
-                    : nil,
-                onSubmit: { _ in },
-                onAccepted: {}
-            )
+            // Update meal lives on the meal itself now.
+            NavigationStack {
+                EntryDetailView(entryId: Self.completedEntryID, previewDetail: Self.entryDetail)
+            }
         case .scanner:
             BarcodeScannerSheet { _ in }
         }
