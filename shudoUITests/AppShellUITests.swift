@@ -79,12 +79,14 @@ final class AppShellUITests: XCTestCase {
         XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 3))
     }
 
-    /// Hold the mic to talk; letting go sends.
+    /// Hold the Shudo mark, slide right to Log food, let go: the meal
+    /// logger opens.
     @MainActor
-    func testHoldToTalkSendsOnRelease() throws {
-        let app = launch(extra: ["-shudoScriptedSpeech", "what should I eat tonight"])
-        app.buttons["capture.mic"].press(forDuration: 1.6)
-        XCTAssertTrue(app.staticTexts["what should I eat tonight"].waitForExistence(timeout: 10))
+    func testHoldingShudoFansOutToLogFood() throws {
+        let app = launch()
+        let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 92, dy: -104)))
+        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 5))
     }
 
     /// The trailing ✕ throws a recording away without sending anything.

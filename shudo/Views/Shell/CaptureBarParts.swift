@@ -51,10 +51,23 @@ enum CaptureLeadingRole: Equatable {
 struct CaptureLeadingFace: View {
     let role: CaptureLeadingRole
     var size: CGFloat = 36
+    /// The tab bar's bar: Shudo's mark at rest instead of the mic.
+    var showsMark = false
 
     var body: some View {
+        if showsMark, role == .mic {
+            CoachAvatar(size: size + 2)
+                .shadow(color: Design.Color.ember.opacity(0.3), radius: 6)
+                .frame(width: size + 6, height: size + 6)
+                .contentShape(Circle())
+        } else {
+            face
+        }
+    }
+
+    private var face: some View {
         let active = role != .mic
-        ZStack {
+        return ZStack {
             Circle()
                 .fill(active ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.emberFill))
                 .frame(width: size, height: size)
@@ -438,5 +451,184 @@ struct VoiceMeterView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .accessibilityHidden(true)
+    }
+}
+
+
+// MARK: - Fan (hold the Shudo mark)
+
+/// The hold menu's live state. The bar owns the gesture; the shell draws
+/// the fan above everything (the bar's accessory clips its own content).
+@MainActor
+final class CaptureFan: ObservableObject {
+    struct Option: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let symbol: String
+    }
+
+    @Published private(set) var options: [Option] = []
+    /// The Shudo mark's center, in global coordinates.
+    @Published private(set) var origin: CGPoint = .zero
+    @Published private(set) var selection: Int?
+    @Published private(set) var isOpen = false
+    /// Let go without sliding: the fan stays up for a tap.
+    @Published private(set) var isPinned = false
+    private var onChoose: ((Int) -> Void)?
+
+    func open(options: [Option], origin: CGPoint, onChoose: @escaping (Int) -> Void) {
+        self.options = options
+        self.origin = origin
+        self.onChoose = onChoose
+        selection = nil
+        isPinned = false
+        isOpen = true
+    }
+
+    func track(_ translation: CGSize) {
+        let next = CaptureFanLayout.selection(for: translation, count: options.count)
+        if next != selection { selection = next }
+    }
+
+    /// The thumb lifted: choose what it's on, stay up if it never moved,
+    /// otherwise close.
+    func release(_ translation: CGSize) {
+        if let index = CaptureFanLayout.selection(for: translation, count: options.count) {
+            choose(index)
+        } else if hypot(translation.width, translation.height) < CaptureFanLayout.deadZone {
+            isPinned = true
+        } else {
+            close()
+        }
+    }
+
+    func choose(_ index: Int) {
+        let handler = onChoose
+        close()
+        handler?(index)
+    }
+
+    func close() {
+        isOpen = false
+        isPinned = false
+        selection = nil
+        onChoose = nil
+    }
+}
+
+/// The options sit in a row above the bar, the first straight above the
+/// thumb: slide up for it, then right for the rest.
+enum CaptureFanLayout {
+    static let spacing: CGFloat = 92
+    static let lift: CGFloat = 104
+    /// Movement below this is still a press, not a choice.
+    static let deadZone: CGFloat = 20
+
+    static func offset(index: Int) -> CGSize {
+        CGSize(width: CGFloat(index) * spacing, height: -lift)
+    }
+
+    /// The option nearest the thumb, horizontal distance weighted over
+    /// vertical so a sideways slide reads as left/right. Nil inside the
+    /// dead zone or once the thumb heads down or left of the mark.
+    static func selection(for translation: CGSize, count: Int) -> Int? {
+        guard count > 0,
+              hypot(translation.width, translation.height) >= deadZone,
+              translation.width > -spacing * 0.6,
+              translation.height < spacing * 0.5 else { return nil }
+        return (0..<count).min { a, b in
+            distance(translation, offset(index: a)) < distance(translation, offset(index: b))
+        }
+    }
+
+    private static func distance(_ point: CGSize, _ target: CGSize) -> CGFloat {
+        hypot(point.width - target.width, (point.height - target.height) * 0.45)
+    }
+}
+
+/// Draws the open fan over the whole app: a light scrim, then each option
+/// springing out of the Shudo mark into its spot.
+struct CaptureFanOverlay: View {
+    @ObservedObject var fan: CaptureFan
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if fan.isOpen {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Color.black.opacity(0.45))
+                    .onTapGesture { fan.close() }
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+                // The mark stays lit under the thumb: the options come out of it.
+                CoachAvatar(size: 42)
+                    .shadow(color: Design.Color.ember.opacity(0.5), radius: 12)
+                    .position(fan.origin)
+                    .transition(.opacity)
+                ForEach(Array(fan.options.enumerated()), id: \.element.id) { index, option in
+                    let offset = CaptureFanLayout.offset(index: index)
+                    CaptureFanItem(
+                        option: option,
+                        index: index,
+                        offset: offset,
+                        isSelected: fan.selection == index,
+                        onTap: { fan.choose(index) }
+                    )
+                    .position(x: fan.origin.x + offset.width, y: fan.origin.y + offset.height)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
+        .allowsHitTesting(fan.isPinned)
+        .animation(Design.Motion.snap, value: fan.isOpen)
+        .sensoryFeedback(.selection, trigger: fan.selection) { _, new in new != nil }
+    }
+}
+
+private struct CaptureFanItem: View {
+    let option: CaptureFan.Option
+    let index: Int
+    let offset: CGSize
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    @State private var isOut = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let size: CGFloat = 60
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: option.symbol)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(isSelected ? Design.Color.onEmber : Design.Color.textPrimary)
+                .frame(width: Self.size, height: Self.size)
+                .background {
+                    Circle()
+                        .fill(isSelected ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.surface3))
+                        .overlay(Circle().stroke(Design.Color.strokeStrong, lineWidth: isSelected ? 0 : 0.5))
+                        .shadow(color: isSelected ? Design.Color.ember.opacity(0.55) : .black.opacity(0.4), radius: 14)
+                }
+                .overlay(alignment: .top) {
+                    Text(option.title)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(isSelected ? Design.Color.textPrimary : Design.Color.textSecondary)
+                        .fixedSize()
+                        .offset(y: Self.size + 6)
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option.title)
+        .accessibilityIdentifier("capture.fan.\(option.id)")
+        .scaleEffect(isOut ? (isSelected ? 1.16 : 1) : 0.3)
+        .offset(isOut ? .zero : CGSize(width: -offset.width, height: -offset.height))
+        .opacity(isOut ? 1 : 0)
+        .animation(.snappy(duration: 0.18), value: isSelected)
+        .onAppear {
+            let spring = Animation.spring(response: 0.34, dampingFraction: 0.72).delay(Double(index) * 0.035)
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : spring) { isOut = true }
+        }
     }
 }

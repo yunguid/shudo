@@ -60,26 +60,28 @@ struct CaptureDraft: Equatable {
 /// `CaptureController`; sheets that cover it use `SheetCaptureBar`, the
 /// same shape).
 ///
-/// Three controls. Bottom-left, under Luke's left thumb: the mic — tap to
-/// record (the field becomes a timer and meter, no live words), tap the
-/// same spot to send (it transcribes, then goes to Shudo); hold to talk and
-/// release to send. A failed transcription keeps the recording and the same
-/// spot retries. The field opens the keyboard. Trailing: "+" — a labeled
-/// menu to log a meal, photo, barcode, workout or check-in, the tab's own
-/// first — or ✕ to discard while recording. The placeholder and `context_hint`
-/// follow `context`.
+/// Bottom-left, under Luke's left thumb: the Shudo mark. Tap it to record
+/// (the field becomes a timer and meter, no live words), tap the same spot
+/// to send (it transcribes, then goes to Shudo). Touch and hold it and three
+/// options fan out above — Talk, Log food, Photo (the tab's own kinds on
+/// Train and Body) — slide onto one and let go. A failed transcription keeps
+/// the recording and the same spot retries. The field opens the keyboard;
+/// trailing is send for a draft, or ✕ to discard while recording. The
+/// placeholder and `context_hint` follow `context`.
 struct CaptureBar: View {
     @ObservedObject var voice: VoiceTranscriber
     @Binding var draft: CaptureDraft
     var context: CaptureContext = .today
     let actions: CaptureBarActions
+    @ObservedObject var fan: CaptureFan
 
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.openURL) private var openURL
     @State private var pressStartedAt: Date?
     @State private var holdTask: Task<Void, Never>?
-    @State private var isHolding = false
-    @State private var holdCancels = false
+    /// This press only closes a fan left open; it does nothing else.
+    @State private var pressClosesFan = false
+    @State private var buttonCenter: CGPoint = .zero
     /// Send was tapped: the take this stop produces goes to Shudo, not into
     /// the draft.
     @State private var isSendingVoice = false
@@ -89,22 +91,17 @@ struct CaptureBar: View {
 
     private var isInline: Bool { placement == .inline }
     /// The field is a recording / transcribing / retry strip.
-    private var isVoiceActive: Bool { CaptureLeadingRole.isVoiceActive(voice) || isHolding }
+    private var isVoiceActive: Bool { CaptureLeadingRole.isVoiceActive(voice) }
     private var showsDraftSend: Bool { !isVoiceActive && !draft.isEmpty }
 
     var body: some View {
         HStack(spacing: isInline ? 6 : 8) {
-            // Always the same view, so a hold that starts recording keeps
-            // its gesture: mic → send arrow → (spinner) → mic.
+            // Always the same view, so its gesture survives the role change:
+            // Shudo → send arrow → (spinner) → Shudo.
             leadingButton
             if isVoiceActive {
-                CaptureVoiceStrip(
-                    voice: voice,
-                    compact: isInline,
-                    holdHint: isHolding ? (holdCancels ? "Release to cancel" : "Release to send") : nil,
-                    holdCancels: holdCancels
-                )
-                CaptureCircleButton(kind: .discard, isEnabled: !isHolding, action: discardRecording)
+                CaptureVoiceStrip(voice: voice, compact: isInline)
+                CaptureCircleButton(kind: .discard, action: discardRecording)
                     .accessibilityLabel("Discard recording")
                     .accessibilityIdentifier("capture.discard")
             } else {
@@ -113,8 +110,6 @@ struct CaptureBar: View {
                     CaptureCircleButton(kind: .send, action: send)
                         .accessibilityLabel("Send to Shudo")
                         .accessibilityIdentifier("capture.send")
-                } else if context != .bio {
-                    logButton
                 }
             }
         }
@@ -123,10 +118,19 @@ struct CaptureBar: View {
         .animation(Design.Motion.snap, value: isVoiceActive)
         .animation(Design.Motion.snap, value: showsDraftSend)
         .sensoryFeedback(.impact(weight: .light), trigger: sentCount)
+        #if DEBUG
+        .task {
+            // `-shudoPreviewFan`: open the fan with the second option lit.
+            guard ProcessInfo.processInfo.arguments.contains("-shudoPreviewFan") else { return }
+            try? await Task.sleep(for: .milliseconds(1_500))
+            openFan()
+            fan.track(CaptureFanLayout.offset(index: 1))
+        }
+        #endif
         .onChange(of: voice.phase) { _, phase in
             // A take the system ended on its own (time limit, interruption)
             // parks as `.ready`; fold it into the draft to review and send.
-            if phase == .ready, !isHolding, !isSendingVoice, let take = voice.collectReadyTake() {
+            if phase == .ready, !isSendingVoice, let take = voice.collectReadyTake() {
                 draft.append(take)
             }
             if !voice.canRetryTranscription, let message = voice.errorMessage {
@@ -137,27 +141,40 @@ struct CaptureBar: View {
         }
     }
 
-    // MARK: Leading: mic / send / retry (one spot)
+    // MARK: Leading: Shudo / send / retry (one spot)
 
-    private var leadingRole: CaptureLeadingRole { .role(for: voice, isHolding: isHolding) }
+    private var leadingRole: CaptureLeadingRole { .role(for: voice) }
 
     private var leadingButton: some View {
         let role = leadingRole
-        return CaptureLeadingFace(role: role, size: isInline ? 30 : 36)
+        return CaptureLeadingFace(role: role, size: isInline ? 30 : 36, showsMark: true)
+            .scaleEffect(fan.isOpen ? 1.12 : 1)
             .gesture(pressGesture)
+            .onGeometryChange(for: CGPoint.self) { proxy in
+                let frame = proxy.frame(in: .global)
+                return CGPoint(x: frame.midX, y: frame.midY)
+            } action: { buttonCenter = $0 }
             .sensoryFeedback(trigger: voice.isListening) { _, listening in listening ? .start : .stop }
+            .sensoryFeedback(.impact(weight: .medium), trigger: fan.isOpen) { _, open in open }
             .accessibilityElement()
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel(leadingLabel(role))
-            .accessibilityHint(CaptureBarCopy.leadingHint(role))
+            .accessibilityHint(role == .mic ? "Tap to talk. Touch and hold for more." : CaptureBarCopy.leadingHint(role))
             .accessibilityIdentifier(leadingIdentifier(role))
             .accessibilityAction { Task { await leadingTapped() } }
-            .animation(Design.Motion.snap, value: isHolding)
+            .accessibilityActions {
+                if role == .mic {
+                    ForEach(fanItems.dropFirst(), id: \.option.id) { item in
+                        Button(item.option.title, action: item.action)
+                    }
+                }
+            }
+            .animation(Design.Motion.snap, value: fan.isOpen)
     }
 
     private func leadingLabel(_ role: CaptureLeadingRole) -> String {
         switch role {
-        case .mic: return "Talk to Shudo"
+        case .mic: return "Shudo"
         case .send: return "Send to Shudo"
         case .hold, .working, .retry: return CaptureBarCopy.leadingLabel(role, send: "Send to Shudo")
         }
@@ -171,39 +188,83 @@ struct CaptureBar: View {
         }
     }
 
-    /// A quick tap is start / send / retry; a hold past ~0.35 s from idle is
-    /// push-to-talk (release sends; slide well away to cancel).
+    /// A quick tap is start / send / retry. A hold past ~0.3 s from idle
+    /// fans the options out; the thumb slides onto one and lets go.
     private var pressGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if pressStartedAt == nil {
                     pressStartedAt = Date()
                     holdTask?.cancel()
+                    pressClosesFan = fan.isOpen
+                    if pressClosesFan {
+                        fan.close()
+                        return
+                    }
                     guard leadingRole == .mic else { return }
                     holdTask = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(350))
+                        try? await Task.sleep(for: .milliseconds(300))
                         guard !Task.isCancelled, pressStartedAt != nil else { return }
-                        isHolding = true
-                        holdCancels = false
-                        await startRecording()
+                        openFan()
                     }
                 }
-                if isHolding {
-                    holdCancels = abs(value.translation.width) > 110 || value.translation.height < -90
-                }
+                if fan.isOpen, !pressClosesFan { fan.track(value.translation) }
             }
-            .onEnded { _ in
+            .onEnded { value in
                 holdTask?.cancel()
                 holdTask = nil
                 pressStartedAt = nil
-                let wasHolding = isHolding
-                isHolding = false
-                if wasHolding {
-                    Task { await finishHold(cancelled: holdCancels) }
+                if pressClosesFan {
+                    pressClosesFan = false
+                } else if fan.isOpen {
+                    fan.release(value.translation)
                 } else {
                     Task { await leadingTapped() }
                 }
             }
+    }
+
+    // MARK: Fan
+
+    private struct FanItem {
+        let option: CaptureFan.Option
+        let action: () -> Void
+    }
+
+    /// Talk first (straight up from the thumb), then the tab's own logging.
+    private var fanItems: [FanItem] {
+        let talk = FanItem(option: .init(id: "talk", title: "Talk", symbol: "mic.fill")) {
+            Task { await startRecording() }
+        }
+        let food = FanItem(option: .init(id: "food", title: "Log food", symbol: "fork.knife"), action: actions.logMeal)
+        switch context {
+        case .train:
+            return [
+                talk,
+                FanItem(option: .init(id: "workout", title: "Log workout", symbol: "dumbbell.fill"), action: actions.logWorkout),
+                FanItem(option: .init(id: "photo", title: "Photo", symbol: "camera.fill"), action: actions.workoutPhoto),
+            ]
+        case .body:
+            return [
+                talk,
+                FanItem(option: .init(id: "checkin", title: "Check-in", symbol: "figure.arms.open"), action: actions.checkIn),
+                food,
+            ]
+        case .today, .bio:
+            return [
+                talk,
+                food,
+                FanItem(option: .init(id: "photo", title: "Photo", symbol: "camera.fill"), action: actions.mealPhoto),
+            ]
+        }
+    }
+
+    private func openFan() {
+        let items = fanItems
+        fan.open(options: items.map(\.option), origin: buttonCenter) { index in
+            guard items.indices.contains(index) else { return }
+            items[index].action()
+        }
     }
 
     private func leadingTapped() async {
@@ -235,17 +296,9 @@ struct CaptureBar: View {
     private func startRecording() async {
         actions.willCompose()
         voice.transcriptionPurposeOverride = context.transcriptionPurpose
-        if !(await voice.start()), !isHolding, let message = voice.errorMessage {
+        if !(await voice.start()), let message = voice.errorMessage {
             show(notice: message)
         }
-    }
-
-    private func finishHold(cancelled: Bool) async {
-        if cancelled {
-            discardRecording()
-            return
-        }
-        await sendRecording()
     }
 
     // MARK: Field
@@ -274,50 +327,6 @@ struct CaptureBar: View {
         .accessibilityLabel(draft.isEmpty ? context.placeholder : "Draft: \(draft.text)")
         .accessibilityHint("Opens the keyboard")
         .accessibilityIdentifier("capture.field")
-    }
-
-    // MARK: Log
-
-    private struct LogOption {
-        let title: String
-        let symbol: String
-        let action: () -> Void
-    }
-
-    /// Everything Luke can log, the tab's own kind first.
-    private var logOptions: [LogOption] {
-        let meal = LogOption(title: "Log a meal", symbol: "fork.knife", action: actions.logMeal)
-        let mealPhoto = LogOption(title: "Meal photo", symbol: "camera", action: actions.mealPhoto)
-        let barcode = LogOption(title: "Scan barcode", symbol: "barcode.viewfinder", action: actions.scanBarcode)
-        let workout = LogOption(title: "Log a workout", symbol: "dumbbell", action: actions.logWorkout)
-        let workoutPhoto = LogOption(title: "Workout photo", symbol: "camera", action: actions.workoutPhoto)
-        let checkIn = LogOption(title: "Daily check-in", symbol: "figure.arms.open", action: actions.checkIn)
-        switch context {
-        case .train: return [workout, workoutPhoto, meal, checkIn]
-        case .body: return [checkIn, meal, workout]
-        case .today, .bio: return [meal, mealPhoto, barcode, workout, checkIn]
-        }
-    }
-
-    /// A tap opens the labeled menu, so every way to log is findable.
-    private var logButton: some View {
-        Menu {
-            ForEach(logOptions, id: \.title) { option in
-                Button(option.title, systemImage: option.symbol, action: option.action)
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: isInline ? 16 : 18, weight: .semibold))
-                .foregroundStyle(Design.Color.textPrimary)
-                .frame(width: 36, height: 36)
-                .background(Design.Color.textPrimary.opacity(0.1), in: Circle())
-                .contentShape(Circle())
-        }
-        .menuOrder(.priority)
-        .buttonStyle(.plain)
-        .accessibilityLabel("Log")
-        .accessibilityHint("A meal, photo, barcode, workout or check-in")
-        .accessibilityIdentifier("capture.log")
     }
 
     // MARK: Actions
@@ -456,3 +465,4 @@ struct CaptureComposer: View {
         }
     }
 }
+

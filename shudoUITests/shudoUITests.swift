@@ -80,7 +80,7 @@ final class shudoUITests: XCTestCase {
         ]
         app.launch()
         XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 8))
-        openComposerFromBarcode(in: app)
+        openComposerFromFan(in: app)
         XCTAssertTrue(app.buttons["Remove photo 1"].waitForExistence(timeout: 3))
 
         let mic = app.buttons["meal.mic"]
@@ -278,14 +278,11 @@ final class shudoUITests: XCTestCase {
         return app
     }
 
-    /// The bar's "+" → Meal photo (the Simulator has no camera, so it's the
-    /// photo picker) opens the composer with it.
+    /// Hold the Shudo mark → slide to Photo (the Simulator has no camera,
+    /// so it's the photo picker) opens the composer with it.
     @MainActor
     private func openComposerWithPhoto(in app: XCUIApplication) {
-        app.buttons["capture.log"].tap()
-        let mealPhoto = app.buttons["Meal photo"]
-        XCTAssertTrue(mealPhoto.waitForExistence(timeout: 3))
-        mealPhoto.tap()
+        chooseFanOption(2, in: app)
         let photos = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'"))
         XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 8))
         photos.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -295,17 +292,20 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Remove photo 1"].waitForExistence(timeout: 8))
     }
 
-    /// The bar's "+" → Scan barcode → close the scanner: the composer is
-    /// left with whatever the shell seeded.
+    /// Hold the Shudo mark → slide to Log food: the composer opens with
+    /// whatever the shell seeded.
     @MainActor
-    private func openComposerFromBarcode(in app: XCUIApplication) {
-        app.buttons["capture.log"].tap()
-        let scan = app.buttons["Scan barcode"]
-        XCTAssertTrue(scan.waitForExistence(timeout: 3))
-        scan.tap()
-        XCTAssertTrue(app.navigationBars["Scan barcode"].waitForExistence(timeout: 5))
-        app.navigationBars["Scan barcode"].buttons["Close"].tap()
+    private func openComposerFromFan(in app: XCUIApplication) {
+        chooseFanOption(1, in: app)
         XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 5))
+    }
+
+    /// Press and hold the Shudo mark, slide to option `index` in the fan
+    /// (a row above the mark, 92 pt apart, 104 pt up) and let go.
+    @MainActor
+    private func chooseFanOption(_ index: Int, in app: XCUIApplication) {
+        let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: CGFloat(index) * 92, dy: -104)))
     }
 
     @MainActor

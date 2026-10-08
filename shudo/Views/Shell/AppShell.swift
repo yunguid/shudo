@@ -29,6 +29,9 @@ struct AppShell: View {
     @State private var draft = CaptureDraft()
     @State private var isTyping = false
     @State private var composerHeight: CGFloat = 0
+    /// Held, not observed: the bar and the overlay watch the fan, so opening
+    /// it mid-press doesn't rebuild the shell (which cancels the press).
+    @StateObject private var fanHolder = UnobservedHolder(CaptureFan())
     @State private var sheet: ShellSheet?
     @State private var cover: ShellCover?
     @State private var composerSeed = ComposerSeed()
@@ -85,10 +88,11 @@ struct AppShell: View {
         }
         .tint(Design.Color.ember)
         .tabViewBottomAccessory {
-            CaptureBar(voice: coachVoice.value, draft: $draft, context: capture.context, actions: captureActions)
+            CaptureBar(voice: coachVoice.value, draft: $draft, context: capture.context, actions: captureActions, fan: fanHolder.value)
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .overlay(alignment: .bottom) { typingOverlay }
+        .overlay { CaptureFanOverlay(fan: fanHolder.value) }
         .environment(\.captureComposerInset, isTyping ? composerHeight : 0)
         .animation(Design.Motion.snap, value: isTyping)
         .sheet(isPresented: $today.isPresentingComposer, onDismiss: composerDismissed) { composer }
