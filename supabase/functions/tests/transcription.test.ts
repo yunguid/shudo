@@ -1,5 +1,6 @@
 import { HttpError } from "../_shared/errors.ts";
 import {
+  isLikelySilenceTranscript,
   OPENAI_TRANSCRIPTION_MODEL,
   parseTranscriptionPurpose,
   transcribeAudio,
@@ -74,4 +75,27 @@ Deno.test("transcription rejects empty, oversized and unknown inputs", async () 
   }
   assertEquals((purposeError as HttpError).status, 400);
   assertEquals(parseTranscriptionPurpose(" Coach "), "coach");
+});
+
+Deno.test("silence transcripts (stock phrases, the prompt echoed) never reach Luke's thread", () => {
+  const prompt = TRANSCRIPTION_PROMPTS.coach;
+  assertEquals(
+    isLikelySilenceTranscript("Thank you for watching.", prompt),
+    true,
+  );
+  assertEquals(
+    isLikelySilenceTranscript("Shudo, Chipotle, guac, Core Power.", prompt),
+    true,
+  );
+  assertEquals(
+    isLikelySilenceTranscript(
+      "I had a Chipotle bowl with pollo asado and guac.",
+      prompt,
+    ),
+    false,
+  );
+  assertEquals(
+    isLikelySilenceTranscript("Blasting two IR addys", prompt),
+    false,
+  );
 });

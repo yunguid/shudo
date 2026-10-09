@@ -24,18 +24,40 @@ export type TranscriptionPurpose =
   | "onboarding"
   | "workout";
 
+/// Vocabulary only. A prompt that describes the situation ("a voice message
+/// to a coach…") is what gpt-4o-transcribe writes when the audio is near
+/// silent — that's how "Hey Coach Sarah, today I had…" got sent for a
+/// tap-tap with nothing said. A word list only nudges spelling.
+const SHARED_VOCABULARY =
+  "Shudo, Chipotle, pollo asado, guac, Chobani, Core Power, Greek yogurt, whey, creatine, oatmeal, PB, RDL, PR, reps, sets, macros";
+
 export const TRANSCRIPTION_PROMPTS: Record<TranscriptionPurpose, string> = {
-  meal:
-    "A personal meal log. Preserve every stated food, brand, preparation, quantity, unit, sauce, drink, and correction accurately. Preserve explicit lookup, search, or online-research intent so it remains available for routing.",
-  correction:
-    "A correction to a personal meal log. Preserve foods, brands, quantities, portions, units, sauces, drinks, additions, and removals accurately.",
-  onboarding:
-    "Personal nutrition onboarding. Preserve stated goals, routines, foods, quantities, height, weight, units, allergies, dietary restrictions, dietary preferences, and corrections accurately.",
-  coach:
-    "A personal voice message to a fitness and nutrition coach. Preserve foods, brands, quantities, units, exercises, sets, reps, weights, distances, times, places, and names accurately.",
-  workout:
-    "A spoken workout log. Preserve exercise names, sets, reps, weights and units, distances, durations, and times accurately.",
+  meal: SHARED_VOCABULARY,
+  correction: SHARED_VOCABULARY,
+  onboarding: SHARED_VOCABULARY,
+  coach: SHARED_VOCABULARY,
+  workout: `${SHARED_VOCABULARY}, bench, squat, deadlift, incline, pull-up`,
 };
+
+/// Things the model says over silence: stock phrases, or the prompt's own
+/// words echoed back. Neither is Luke talking.
+const SILENCE_PHRASES =
+  /^(?:thank you(?: for watching)?|thanks for watching|you|bye|okay|subtitles? by .*|transcribed by .*|\.+)[.!]?$/iu;
+
+export function isLikelySilenceTranscript(
+  text: string,
+  prompt: string,
+): boolean {
+  const trimmed = text.trim();
+  if (SILENCE_PHRASES.test(trimmed)) return true;
+  const vocabulary = new Set(
+    prompt.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean),
+  );
+  const words = trimmed.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (words.length === 0) return true;
+  const echoed = words.filter((word) => vocabulary.has(word)).length;
+  return words.length >= 3 && echoed / words.length >= 0.6;
+}
 
 export function parseTranscriptionPurpose(
   value: unknown,
@@ -81,6 +103,8 @@ export async function transcribeAudio(
   form.append("model", OPENAI_TRANSCRIPTION_MODEL);
   form.append("response_format", "json");
   form.append("prompt", TRANSCRIPTION_PROMPTS[purpose]);
+  // Luke speaks English; left open, near-silence came back in German.
+  form.append("language", "en");
   form.append(
     "file",
     new File([await audio.arrayBuffer()], audioFilename(type), { type }),
@@ -115,6 +139,10 @@ export async function transcribeAudio(
   }
   const payload = await response.json().catch(() => null);
   const text = typeof payload?.text === "string" ? payload.text.trim() : "";
-  if (!text) throw new HttpError(422, "Didn't catch anything. Try again.");
+  if (
+    !text || isLikelySilenceTranscript(text, TRANSCRIPTION_PROMPTS[purpose])
+  ) {
+    throw new HttpError(422, "Didn't catch anything. Try again.");
+  }
   return text;
 }

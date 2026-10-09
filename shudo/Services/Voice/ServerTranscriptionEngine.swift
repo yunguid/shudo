@@ -93,6 +93,12 @@ enum TranscriptionError: LocalizedError, Equatable {
 final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked Sendable {
     static let filePrefix = "shudo-voice-"
     static let encoderBitRate = 64_000
+    /// A buffer louder than this (RMS, dBFS) counts as voice; room tone and
+    /// a phone in a pocket sit well below it.
+    static let voiceThresholdDB: Float = -45
+    /// Less voice than this and nothing is uploaded: near-silence makes the
+    /// transcriber invent a whole message.
+    static let minimumVoicedSeconds: Double = 0.25
 
     let id: SpeechEngineID = .openAITranscribe
 
@@ -103,6 +109,7 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
     private var file: AVAudioFile?
     private var fileURL: URL?
     private var framesWritten: AVAudioFramePosition = 0
+    private var voicedSeconds: Double = 0
     private var writeFailed = false
     private var isClosed = false
     private var purpose: TranscriptionPurpose = .meal
@@ -133,6 +140,7 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
             fileURL = url
             file = nil
             framesWritten = 0
+            voicedSeconds = 0
             writeFailed = false
             isClosed = false
             self.continuation = continuation
@@ -145,6 +153,9 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.withLock {
             guard !isClosed, !writeFailed, let fileURL, buffer.frameLength > 0 else { return }
+            if Self.loudnessDB(of: buffer) > Self.voiceThresholdDB, buffer.format.sampleRate > 0 {
+                voicedSeconds += Double(buffer.frameLength) / buffer.format.sampleRate
+            }
             if file == nil {
                 do {
                     file = try Self.makeFile(at: fileURL, inputFormat: buffer.format)
@@ -175,14 +186,18 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
     }
 
     func transcribeRecording() async throws -> String {
-        let (url, frames, failedWrite, purpose, requestId) = lock.withLock {
+        let (url, frames, failedWrite, purpose, requestId, voiced) = lock.withLock {
             closeFileLocked()
-            return (fileURL, framesWritten, writeFailed, self.purpose, clientRequestId)
+            return (fileURL, framesWritten, writeFailed, self.purpose, clientRequestId, voicedSeconds)
         }
         guard let url else { throw TranscriptionError.recordingMissing }
         guard frames > 0 else {
             removeRecording()
             throw failedWrite ? TranscriptionError.recordingFailed : TranscriptionError.nothingRecorded
+        }
+        guard voiced >= Self.minimumVoicedSeconds else {
+            removeRecording()
+            throw TranscriptionError.nothingHeard
         }
         let audio: Data
         do {
@@ -222,6 +237,21 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
         }
         removeRecording()
         continuation?.finish()
+    }
+
+    /// RMS loudness of a microphone buffer in dBFS. Non-float formats count
+    /// as voice, so nothing real is ever dropped for being unmeasurable.
+    static func loudnessDB(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let channel = buffer.floatChannelData?[0] else { return 0 }
+        let count = Int(buffer.frameLength)
+        guard count > 0 else { return -160 }
+        var sum: Float = 0
+        for index in 0..<count {
+            let sample = channel[index]
+            sum += sample * sample
+        }
+        let rms = (sum / Float(count)).squareRoot()
+        return rms > 0 ? 20 * log10(rms) : -160
     }
 
     // MARK: File
