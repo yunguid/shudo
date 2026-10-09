@@ -58,7 +58,9 @@ struct TrainWeekHeader: View {
                 .font(Design.Typeface.text(.footnote, weight: .medium))
                 .foregroundStyle(Design.Color.textSecondary)
                 .lineLimit(1)
-            if let count = week.countLabel {
+            // "3 of 4" against a plan; without one, just the tally.
+            if let count = week.countLabel
+                ?? (week.completed > 0 ? "\(week.completed) session\(week.completed == 1 ? "" : "s")" : nil) {
                 Text("·")
                     .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
