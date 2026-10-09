@@ -26,6 +26,7 @@ struct AdherenceHeatmapView: View {
     private static let weekdayGutterWidth: CGFloat = 12
     /// How much of its cell a pad fills.
     private static let padScale: CGFloat = 0.66
+    private static let litOpacity: Double = 0.82
 
     var body: some View {
         // One cells pass and one DateFormatter per render.
@@ -236,6 +237,9 @@ struct AdherenceHeatmapView: View {
         return ZStack {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(Self.fillColor(level: level))
+                // Lit pads sit a step back into the walnut so twelve weeks of
+                // good days read as a texture, not a light board.
+                .opacity(level >= 3 ? Self.litOpacity : 1)
                 .frame(width: pad, height: pad)
             if isSelected {
                 RoundedRectangle(cornerRadius: ringRadius, style: .continuous)
