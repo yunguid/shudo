@@ -121,7 +121,7 @@ struct ActivityDetailView: View {
 
     private var dateText: String {
         let day = TrainSnapshot.displayTitle(localDay: activity.localDay)
-        return "\(day) · \(activity.occurredAt.formatted(date: .omitted, time: .shortened))"
+        return "\(day) · \(Design.Clock.short(activity.occurredAt))"
     }
 
     @ViewBuilder

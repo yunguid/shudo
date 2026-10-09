@@ -170,7 +170,7 @@ struct EntryDetailView: View {
                     .foregroundStyle(Design.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                Text(createdAt, style: .time)
+                Text(Design.Clock.short(createdAt))
                     .font(Design.Typeface.numeral(.subheadline, weight: .regular))
                     .foregroundStyle(Design.Color.textTertiary)
             }

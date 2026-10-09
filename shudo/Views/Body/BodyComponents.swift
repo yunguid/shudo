@@ -286,11 +286,8 @@ enum BodyDayLabel {
         LocalDayMath.date(localDay).map { short.string(from: $0) } ?? localDay
     }
 
+    @MainActor
     static func time(_ date: Date, timezone: String) -> String {
-        let formatter = DateFormatter()
-        formatter.timeZone = TimeZone(identifier: timezone) ?? .autoupdatingCurrent
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
+        Design.Clock.short(date, timeZone: TimeZone(identifier: timezone) ?? .autoupdatingCurrent)
     }
 }

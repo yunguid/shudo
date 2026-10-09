@@ -211,6 +211,27 @@ enum Design {
         }
     }
 
+    /// Clock times the way the thread writes them: "7:12 am" (lowercase,
+    /// spaced), or "19:12" where the phone uses a 24-hour clock.
+    enum Clock {
+        @MainActor private static var formatters: [String: DateFormatter] = [:]
+
+        @MainActor
+        static func short(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+            let formatter = formatters[timeZone.identifier] ?? {
+                let made = DateFormatter()
+                made.locale = .autoupdatingCurrent
+                made.timeZone = timeZone
+                made.setLocalizedDateFormatFromTemplate("jmm")
+                made.amSymbol = "am"
+                made.pmSymbol = "pm"
+                formatters[timeZone.identifier] = made
+                return made
+            }()
+            return formatter.string(from: date)
+        }
+    }
+
     enum Space {
         static let xxs: CGFloat = 2
         static let xs: CGFloat = 4
