@@ -275,6 +275,13 @@ enum TrainPreviewFixtures {
         )
     }
 
+    /// Today's Lower B, stuck before it reached the server.
+    static var unsentToday: Activity {
+        var row = processingToday
+        row.localState = .notSent(message: "No connection — not sent")
+        return row
+    }
+
     /// Today's Lower B once it has been read.
     static var completedToday: Activity {
         var row = processingToday
@@ -334,6 +341,14 @@ enum TrainPreviewFixtures {
         case "detail-today":
             NavigationStack {
                 ActivityDetailView(activity: completedToday, units: profile.units, onDelete: { true })
+            }
+        case "detail-reading":
+            NavigationStack {
+                ActivityDetailView(activity: processingToday, units: profile.units, onDelete: { true })
+            }
+        case "detail-unsent":
+            NavigationStack {
+                ActivityDetailView(activity: unsentToday, units: profile.units, onRetry: {}, onDelete: { true })
             }
         case "empty":
             NavigationStack {
