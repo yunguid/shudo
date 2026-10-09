@@ -193,6 +193,7 @@ struct BioView: View {
                             .foregroundStyle(Design.Color.textSecondary)
                             .frame(width: 50, height: 50)
                             .background(Design.Color.surface2, in: Circle())
+                            .machinedEdge(Circle())
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -227,6 +228,7 @@ struct BioView: View {
                         .foregroundStyle(Design.Color.textPrimary)
                         .frame(width: 44, height: 44)
                         .background(Design.Color.surface2, in: Circle())
+                        .machinedEdge(Circle())
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -321,6 +323,24 @@ struct BioView: View {
             loadFailed = true
         }
         isLoading = false
+    }
+}
+
+private extension View {
+    /// A quiet echo of the command key: a fine warm-titanium edge, catching
+    /// the light along the top and falling off below.
+    func machinedEdge<S: InsettableShape>(_ shape: S) -> some View {
+        overlay(
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [CommandWell.metal.opacity(0.28), CommandWell.metal.opacity(0.04)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                lineWidth: 0.75
+            )
+            .allowsHitTesting(false)
+        )
     }
 }
 
