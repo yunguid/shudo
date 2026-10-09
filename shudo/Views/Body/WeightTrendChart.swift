@@ -1,10 +1,11 @@
 import Charts
 import SwiftUI
 
-/// Raw weigh-ins as dots, the gap-aware EMA as the ember line, the goal as a
-/// dashed honey rule, and the on-pace lean-bulk lane shaded from the goal's
-/// start. The goal's starting weight is a hollow marker; before there are
-/// enough weigh-ins the dots stand alone, with no trend line.
+/// Raw weigh-ins as faint dots, the gap-aware EMA as one thin Pernambuco
+/// line ending in a dot at today, the goal as a dashed oak rule, and the
+/// on-pace lean-bulk lane barely shaded from the goal's start. The goal's
+/// starting weight is a small hollow marker; before there are enough
+/// weigh-ins the dots stand alone, with no trend line. Axes stay quiet.
 struct WeightTrendChart: View {
     let points: [WeightTrendPoint]
     let goal: BodyGoal?
@@ -50,34 +51,43 @@ struct WeightTrendChart: View {
                     yStart: .value("Lane low", point.low),
                     yEnd: .value("Lane high", point.high)
                 )
-                .foregroundStyle(Design.Color.ember.opacity(0.09))
+                .foregroundStyle(Design.Color.pernambuco.opacity(0.07))
                 .interpolationMethod(.linear)
             }
             if let target, domain.contains(target) {
                 RuleMark(y: .value("Goal", target))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
-                    .foregroundStyle(Design.Color.honey.opacity(0.55))
+                    .lineStyle(StrokeStyle(lineWidth: 0.75, dash: [2, 4]))
+                    .foregroundStyle(Design.Color.oak.opacity(0.5))
             }
             if let start {
                 PointMark(x: .value("Day", start.date), y: .value("Self-reported", start.value))
                     .symbol {
                         Circle()
-                            .strokeBorder(Design.Color.honey, lineWidth: 2)
-                            .background(Circle().fill(Design.Color.surface1))
-                            .frame(width: 11, height: 11)
+                            .strokeBorder(Design.Color.oak.opacity(0.8), lineWidth: 1.25)
+                            .background(Circle().fill(Design.Color.canvas))
+                            .frame(width: 8, height: 8)
                     }
             }
             ForEach(plots) { plot in
                 PointMark(x: .value("Day", plot.date), y: .value("Weight", plot.raw))
-                    .symbolSize(showsTrend ? 14 : 30)
-                    .foregroundStyle(showsTrend ? Design.Color.textTertiary : Design.Color.ember)
+                    .symbolSize(showsTrend ? 9 : 24)
+                    .foregroundStyle(showsTrend ? Design.Color.textTertiary.opacity(0.8) : Design.Color.pernambuco)
             }
             if showsTrend {
                 ForEach(plots) { plot in
                     LineMark(x: .value("Day", plot.date), y: .value("Trend", plot.trend), series: .value("Series", "trend"))
                         .interpolationMethod(.catmullRom)
-                        .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .foregroundStyle(Design.Color.ember)
+                        .lineStyle(StrokeStyle(lineWidth: 1.75, lineCap: .round))
+                        .foregroundStyle(Design.Color.pernambuco)
+                }
+                // Today's end of the line: where the figure above comes from.
+                if let last = plots.last {
+                    PointMark(x: .value("Day", last.date), y: .value("Trend", last.trend))
+                        .symbol {
+                            Circle()
+                                .fill(Design.Color.pernambuco)
+                                .frame(width: 6, height: 6)
+                        }
                 }
             }
         }
@@ -86,13 +96,17 @@ struct WeightTrendChart: View {
         .chartXAxis {
             AxisMarks(values: weeklyTicks(from: xLower)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: false)
+                    .font(.caption2)
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { _ in
-                AxisGridLine().foregroundStyle(Design.Color.hairline)
-                AxisValueLabel().foregroundStyle(Design.Color.textTertiary)
+            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                    .foregroundStyle(Design.Color.hairline)
+                AxisValueLabel()
+                    .font(.caption2)
+                    .foregroundStyle(Design.Color.textTertiary)
             }
         }
         // Weekly date ticks collide past xLarge; the chart's VoiceOver

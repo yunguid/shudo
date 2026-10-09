@@ -33,7 +33,7 @@ struct BodyPhotoImage: View {
                 return
             }
             let loaded = await loader.image(path: path, maxPixel: maxPixel)
-            withAnimation(.easeOut(duration: 0.2)) { image = loaded }
+            withAnimation(Design.Motion.breath) { image = loaded }
         }
         .accessibilityHidden(true)
     }
@@ -51,17 +51,17 @@ struct PhysiqueVeil: ViewModifier {
             .overlay {
                 if !isRevealed {
                     ZStack {
-                        Design.Color.canvas.opacity(0.25)
+                        Design.Color.canvas.opacity(0.3)
                         if let iconSize {
-                            Image(systemName: "eye.slash.fill")
-                                .font(iconSize.weight(.semibold))
+                            Image(systemName: "eye.slash")
+                                .font(iconSize)
                                 .foregroundStyle(Design.Color.textSecondary)
                         }
                     }
                     .transition(.opacity)
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: isRevealed)
+            .animation(Design.Motion.breath, value: isRevealed)
     }
 }
 
@@ -73,50 +73,56 @@ extension View {
 
 // MARK: - Buttons & placeholders
 
+/// Small capsule actions on the Body page. `prominent` is the accent CTA
+/// (flat Pernambuco, sumi ink) and appears at most once; the quiet one is a
+/// walnut step with cream ink.
 struct BodyPillButtonStyle: ButtonStyle {
     var prominent = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.semibold))
+            .font(.subheadline.weight(prominent ? .semibold : .medium))
             .labelStyle(.titleAndIcon)
             .foregroundStyle(prominent ? Design.Color.onEmber : Design.Color.textPrimary)
             .padding(.horizontal, 14)
-            .frame(minHeight: 38)
+            .frame(minHeight: 36)
             .background {
                 if prominent {
                     Capsule().fill(Design.Color.emberFill)
                 } else {
-                    Capsule().fill(Design.Color.surface3)
+                    Capsule().fill(Design.Color.surface2)
                 }
             }
             .contentShape(Capsule())
             .opacity(configuration.isPressed ? 0.82 : 1)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(Design.Motion.snap, value: configuration.isPressed)
     }
 }
 
-/// The empty slot for today's photo: dashed ember outline + viewfinder.
+/// The empty slot for today's photo: a faint dashed frame and a camera
+/// glyph, the shape the photo will take.
 struct CheckInPhotoPlaceholder: View {
     var body: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(Design.Color.surface2)
+        RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous)
+            .fill(Design.Color.surface1)
             .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous)
                     .strokeBorder(
-                        Design.Color.ember.opacity(0.8),
-                        style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])
+                        Design.Color.oak.opacity(0.45),
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 4])
                     )
             }
             .overlay {
-                Image(systemName: "camera.viewfinder")
-                    .font(.title.weight(.semibold))
-                    .foregroundStyle(Design.Color.ember)
+                Image(systemName: "camera")
+                    .font(.body)
+                    .foregroundStyle(Design.Color.oak)
             }
     }
 }
 
+/// A section's name (a small eyebrow) and an optional quiet action.
 struct BodyCardHeader<Trailing: View>: View {
     let title: String
     @ViewBuilder var trailing: Trailing
@@ -124,6 +130,7 @@ struct BodyCardHeader<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title).eyebrowStyle()
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
             trailing
         }
@@ -132,9 +139,10 @@ struct BodyCardHeader<Trailing: View>: View {
 
 // MARK: - Barbell meter
 
-/// Bulk progress as a loaded barbell: one plate pair per 2.5 lb between the
-/// goal's start and target. Full plates glow ember, the plate being earned
-/// is a dashed outline, the rest are bare iron.
+/// Bulk progress as a loaded barbell, drawn quietly: a hairline bar and
+/// slim plates, one pair per 2.5 lb between the goal's start and target.
+/// Loaded plates are Pernambuco, the plate being earned fills from the
+/// floor, the rest are bare walnut.
 struct BarbellMeter: View {
     let gainedPounds: Double
     let goalPounds: Double
@@ -151,26 +159,29 @@ struct BarbellMeter: View {
         return fraction * Double(slots(goalPounds: goalPounds))
     }
 
+    private static let plateWidth: CGFloat = 8
+    private static let plateSpacing: CGFloat = 3
+
     var body: some View {
         let slots = Self.slots(goalPounds: goalPounds)
         let filled = Self.filled(gainedPounds: gainedPounds, goalPounds: goalPounds)
         GeometryReader { geo in
-            let mid = geo.size.height / 2
-            let plateWidth = min(14, max(8, (geo.size.width / 2 - 40) / CGFloat(slots) - 4))
+            let height = geo.size.height
             ZStack {
+                // The bar, its sleeves running a touch past the plates.
                 Capsule()
-                    .fill(LinearGradient(
-                        colors: [Color(hex: 0x8C857A), Color(hex: 0x4A453F)],
-                        startPoint: .top, endPoint: .bottom))
-                    .frame(height: 7)
-                    .position(x: geo.size.width / 2, y: mid)
-                HStack(spacing: 4) {
-                    plates(slots: slots, filled: filled, reversed: true, width: plateWidth, height: geo.size.height)
+                    .fill(Design.Color.hinoki.opacity(0.18))
+                    .frame(height: 2)
+                HStack(spacing: 0) {
+                    plates(slots: slots, filled: filled, reversed: true, height: height)
+                    collar(height: height)
                     Spacer(minLength: 0)
-                    plates(slots: slots, filled: filled, reversed: false, width: plateWidth, height: geo.size.height)
+                    collar(height: height)
+                    plates(slots: slots, filled: filled, reversed: false, height: height)
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 10)
             }
+            .frame(maxHeight: .infinity)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
@@ -178,24 +189,28 @@ struct BarbellMeter: View {
         )
     }
 
-    private func plates(
-        slots: Int, filled: Double, reversed: Bool, width: CGFloat, height: CGFloat
-    ) -> some View {
+    private func collar(height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(Design.Color.hinoki.opacity(0.22))
+            .frame(width: 3, height: height * 0.3)
+            .padding(.horizontal, 3)
+    }
+
+    /// Heaviest plates sit innermost, stepping down toward the sleeve ends.
+    private func plates(slots: Int, filled: Double, reversed: Bool, height: CGFloat) -> some View {
         let order = reversed ? Array((0..<slots).reversed()) : Array(0..<slots)
-        return HStack(spacing: 4) {
+        return HStack(spacing: Self.plateSpacing) {
             ForEach(order, id: \.self) { index in
                 let amount = min(max(filled - Double(index), 0), 1)
-                let scale = 1 - CGFloat(min(index, 4)) * 0.11
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(amount >= 1 ? AnyShapeStyle(Design.Color.emberFill) : AnyShapeStyle(Design.Color.surface2))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .stroke(
-                                amount > 0 && amount < 1 ? Design.Color.ember : Design.Color.hairline,
-                                style: StrokeStyle(lineWidth: 1, dash: amount > 0 && amount < 1 ? [3, 2] : []))
-                    )
-                    .frame(width: width, height: height * scale)
-                    .shadow(color: amount >= 1 ? Design.Color.ember.opacity(0.45) : .clear, radius: 5)
+                let plateHeight = height * (1 - CGFloat(min(index, 4)) * 0.1)
+                ZStack(alignment: .bottom) {
+                    Rectangle().fill(Design.Color.surface3)
+                    Rectangle()
+                        .fill(Design.Color.pernambuco)
+                        .frame(height: plateHeight * amount)
+                }
+                .frame(width: Self.plateWidth, height: plateHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
             }
         }
     }
@@ -205,7 +220,7 @@ struct BarbellMeter: View {
 
 extension PaceStatus {
     /// The one-word verdict next to the rate; nil when there's no judgment
-    /// to make (no goal, or not enough data), so the badge shows the rate alone.
+    /// to make (no goal, or not enough data), so the line shows the rate alone.
     var label: String? {
         switch self {
         case .onPace: "on pace"

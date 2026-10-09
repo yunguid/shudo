@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// "Fuel": twelve weeks of daily adherence as a weekday-aligned calendar
-/// grid of icon-style pads (the app icon's ember ramp): columns are real
+/// grid of small pads in the wood ramp (bare walnut → heartwood →
+/// Pernambuco → oak), drawn straight on the page with no card: columns are real
 /// weeks, rows are weekdays, with month and weekday anchors so any pad can be
 /// traced to an actual day. Five discrete levels (nothing logged + four
 /// adherence buckets), and tapping a day shows its logged numbers against
@@ -21,8 +22,10 @@ struct AdherenceHeatmapView: View {
     @State private var selectedLocalDay: String?
     @State private var gridWidth: CGFloat = 0
 
-    private static let cellSpacing: CGFloat = 4
+    private static let cellSpacing: CGFloat = 3
     private static let weekdayGutterWidth: CGFloat = 12
+    /// How much of its cell a pad fills.
+    private static let padScale: CGFloat = 0.66
 
     var body: some View {
         // One cells pass and one DateFormatter per render.
@@ -83,10 +86,8 @@ struct AdherenceHeatmapView: View {
             }
 
             dayReadout(selected, formatter: labelFormatter, todayLocalDay: cells.last?.localDay)
+                .padding(.top, Design.Space.xs)
         }
-        .padding(16)
-        .cardSurface(radius: Design.Radius.cardLarge)
-        .sensoryFeedback(.selection, trigger: selectedLocalDay) { old, _ in old != nil }
         .onAppear {
             if selectedLocalDay == nil {
                 selectedLocalDay = cells.last?.localDay
@@ -100,8 +101,8 @@ struct AdherenceHeatmapView: View {
     private func summary(cells: [AdherenceHeatmapCell]) -> some View {
         if let line = summaryLine(cells: cells) {
             Text(line)
-                .font(Design.Typeface.meta)
-                .foregroundStyle(Design.Color.ember)
+                .font(.footnote)
+                .foregroundStyle(Design.Color.textSecondary)
                 .monospacedDigit()
         }
     }
@@ -227,22 +228,28 @@ struct AdherenceHeatmapView: View {
     ) -> some View {
         let level = level(for: cell, isToday: isToday)
         let isSelected = cell.localDay == selectedLocalDay
-        let radius = max(2.5, size * 0.2)
-        return RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(Self.fillColor(level: level))
-            .shadow(color: level >= 3 ? Design.Color.ember.opacity(0.35) : .clear, radius: 3)
-            .overlay {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(Design.Color.textPrimary, lineWidth: 1.5)
-                } else if isToday {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(Design.Color.ember, lineWidth: 1.2)
-                }
+        // Pads sit a little inside their cell so the grid breathes; the
+        // selection and today rings sit in that air instead of on the pad.
+        let pad = (size * Self.padScale).rounded()
+        let radius = max(2, pad * 0.26)
+        let ringRadius = radius + (size - pad) / 2
+        return ZStack {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(Self.fillColor(level: level))
+                .frame(width: pad, height: pad)
+            if isSelected {
+                RoundedRectangle(cornerRadius: ringRadius, style: .continuous)
+                    .strokeBorder(Design.Color.textPrimary.opacity(0.85), lineWidth: 1)
+            } else if isToday {
+                RoundedRectangle(cornerRadius: ringRadius, style: .continuous)
+                    .strokeBorder(Design.Color.pernambuco, lineWidth: 1)
             }
+        }
             .frame(width: size, height: size)
             .contentShape(Rectangle())
-            .onTapGesture { selectedLocalDay = cell.localDay }
+            .onTapGesture {
+                withAnimation(Design.Motion.snap) { selectedLocalDay = cell.localDay }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel(cell, formatter: formatter))
             .accessibilityAddTraits(.isButton)
@@ -256,17 +263,17 @@ struct AdherenceHeatmapView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let cell {
                 Text(formatter.string(from: cell.date))
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(Design.Color.textPrimary)
                 if let total = cell.total, total.entryCount > 0 {
                     Text(verdict(for: cell, isToday: cell.localDay == todayLocalDay))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Design.Color.ember)
+                        .font(.caption)
+                        .foregroundStyle(Design.Color.oak)
                         .monospacedDigit()
                     Spacer(minLength: 4)
                     Text(readoutNumbers(total: total, target: cell.effectiveTarget))
-                        .font(Design.Typeface.numeral(.caption2, weight: .medium))
-                        .foregroundStyle(Design.Color.textSecondary)
+                        .font(Design.Typeface.numeral(.caption2, weight: .regular))
+                        .foregroundStyle(Design.Color.textTertiary)
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)

@@ -1,6 +1,6 @@
 import XCTest
 
-/// The morning ritual in the fewest taps: Snap → shutter → Save, and the
+/// The morning ritual in the fewest taps: Check in → shutter → Save, and the
 /// keypad-only weight entry. Runs on the offline Body fixture (the
 /// Simulator's "camera" shoots a drawn stand-in).
 final class BodyCheckInUITests: XCTestCase {
@@ -10,7 +10,7 @@ final class BodyCheckInUITests: XCTestCase {
         app.launchArguments = ["-shudoPolishPreview", "body", "-shudoBodyPreview", "empty"]
         app.launch()
 
-        let snap = app.buttons["Snap"]
+        let snap = app.buttons["Check in"]
         XCTAssertTrue(snap.waitForExistence(timeout: 8))
         snap.tap()
 
@@ -24,9 +24,9 @@ final class BodyCheckInUITests: XCTestCase {
         XCTAssertTrue(save.waitForExistence(timeout: 15), "the timer fires and review opens")
         save.tap()
 
-        XCTAssertTrue(app.staticTexts["Checked in"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Checked in")).firstMatch.waitForExistence(timeout: 5))
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "Checked in after Snap → shutter → Save"
+        shot.name = "Checked in after Check in → shutter → Save"
         shot.lifetime = .keepAlways
         add(shot)
     }

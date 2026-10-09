@@ -15,9 +15,10 @@ struct WeeklyRecapList: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("Weekly recaps").eyebrowStyle()
-                .padding(.bottom, 6)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.bottom, Design.Space.s)
             ForEach(Array(summaries.prefix(12).enumerated()), id: \.offset) { index, summary in
                 if index > 0 { HairlineRule() }
                 Button {
@@ -25,11 +26,9 @@ struct WeeklyRecapList: View {
                 } label: {
                     row(summary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LedgerRowStyle())
             }
         }
-        .padding(16)
-        .cardSurface(radius: Design.Radius.cardLarge)
         .task(id: presentsLatest) {
             if presentsLatest, let latest = summaries.first {
                 selected = WeeklyRecapSelection(summary: latest)
@@ -58,22 +57,33 @@ struct WeeklyRecapList: View {
             : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
         return layout {
             Text(WeeklyRecapFormat.range(summary))
-                .font(Design.Typeface.numeral(.caption, weight: .bold))
-                .foregroundStyle(Design.Color.ember)
+                .font(Design.Typeface.numeral(.footnote, weight: .regular))
+                .foregroundStyle(Design.Color.textTertiary)
                 .monospacedDigit()
                 .lineLimit(1)
-                .frame(minWidth: 76, alignment: .leading)
+                .frame(minWidth: dateColumnWidth, alignment: .leading)
                 .fixedSize()
             Text(summary.headline)
-                .font(.subheadline.weight(.medium))
+                .font(.subheadline)
                 .foregroundStyle(Design.Color.textPrimary)
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, Design.Space.m + 2)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens the full recap")
+    }
+
+    @ScaledMetric(relativeTo: .footnote) private var dateColumnWidth: CGFloat = 92
+}
+
+/// A ledger row: no chrome, just a soft dim while pressed.
+private struct LedgerRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .animation(Design.Motion.snap, value: configuration.isPressed)
     }
 }
 
@@ -120,17 +130,18 @@ struct WeeklyRecapDetail: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(WeeklyRecapFormat.range(summary)).eyebrowStyle(Design.Color.ember)
+            VStack(alignment: .leading, spacing: Design.Space.xxl) {
+                VStack(alignment: .leading, spacing: Design.Space.s) {
+                    Text(WeeklyRecapFormat.range(summary)).eyebrowStyle()
                     Text(summary.headline)
-                        .font(.title3.weight(.bold))
+                        .font(Design.Typeface.display(.title2))
                         .foregroundStyle(Design.Color.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
                 }
                 numbers
                 if !summary.narrative.isEmpty || !summary.patterns.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: Design.Space.m) {
                         if !summary.narrative.isEmpty {
                             Text(summary.narrative)
                                 .foregroundStyle(Design.Color.textSecondary)
@@ -140,25 +151,33 @@ struct WeeklyRecapDetail: View {
                         }
                     }
                     .font(.body)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 if !summary.suggestions.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: Design.Space.m) {
                         Text("Next week").eyebrowStyle()
                         ForEach(summary.suggestions, id: \.self) { item in
-                            Label {
-                                Text(item).foregroundStyle(Design.Color.textPrimary)
+                            HStack(alignment: .firstTextBaseline, spacing: Design.Space.m) {
+                                Capsule()
+                                    .fill(Design.Color.pernambuco)
+                                    .frame(width: 10, height: 1.5)
+                                    .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                                    .accessibilityHidden(true)
+                                Text(item)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Design.Color.textPrimary)
+                                    .lineSpacing(2)
                                     .fixedSize(horizontal: false, vertical: true)
-                            } icon: {
-                                Image(systemName: "arrow.right").foregroundStyle(Design.Color.ember)
                             }
-                            .font(.subheadline)
                         }
                     }
                 }
                 watchList
             }
-            .padding(20)
+            .padding(.horizontal, Design.Space.xl)
+            .padding(.top, Design.Space.xxl)
+            .padding(.bottom, Design.Space.xl)
         }
         .background(Design.Color.surface1.ignoresSafeArea())
         .preferredColorScheme(.dark)
@@ -180,13 +199,13 @@ struct WeeklyRecapDetail: View {
     }
 
     private func stat(_ value: String, unit: String, of target: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             Text(value)
-                .font(Design.Typeface.numeral(.title2, weight: .bold))
+                .font(Design.Typeface.figure(.title))
                 .foregroundStyle(Design.Color.textPrimary)
                 .monospacedDigit()
-            Text("\(unit) / day · of \(target)")
-                .font(Design.Typeface.meta)
+            Text("\(unit) a day · of \(target)")
+                .font(.caption)
                 .foregroundStyle(Design.Color.textTertiary)
                 .monospacedDigit()
         }

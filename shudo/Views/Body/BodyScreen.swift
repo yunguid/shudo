@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// The Body tab: the daily check-in (photo first, weight optional), the
-/// weight card (bulk barbell + trend), the physique strip with its privacy
-/// veil and compare wipe, the Fuel heatmap, and the weekly recaps. Owns its
-/// NavigationStack; mount it directly in a tab.
+/// The Body tab, read top to bottom like a quiet page: where the bulk is
+/// (the trend weight as the one serif figure, the barbell for how much is
+/// loaded, the trend line beneath), today's check-in as a single line, the
+/// physique log with its privacy veil and compare, the Fuel calendar, and
+/// the weekly recaps as a ledger. Regions are grouped by space, not boxes.
+/// Owns its NavigationStack; mount it directly in a tab.
 struct BodyScreen: View {
     @StateObject private var model: BodyViewModel
     private let onCheckInSaved: (WeightCheckIn) -> Void
@@ -11,6 +13,8 @@ struct BodyScreen: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .largeTitle) private var heroSize: CGFloat = 64
+    @Namespace private var zoom
     @State private var revealed: Bool
     @State private var showsCamera = false
     @State private var showsWeightEntry = false
@@ -62,12 +66,12 @@ struct BodyScreen: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: Design.Space.section) {
                         if let message = model.errorMessage {
                             errorBanner(message)
                         }
-                        checkInCard.id(BodySection.hero)
-                        weightCard.id(BodySection.weight)
+                        hero.id(BodySection.weight)
+                        checkInLine.id(BodySection.hero)
                         if !snapshot.photoCheckIns.isEmpty {
                             physiqueStrip.id(BodySection.log)
                         }
@@ -90,8 +94,9 @@ struct BodyScreen: View {
                             .id(BodySection.recaps)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 28)
+                    .padding(.horizontal, Design.Space.gutter)
+                    .padding(.top, Design.Space.s)
+                    .padding(.bottom, Design.Space.xxxl)
                     .animation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion), value: snapshot.todayCheckIn)
                 }
                 .task {
@@ -101,17 +106,18 @@ struct BodyScreen: View {
                     proxy.scrollTo(section, anchor: .top)
                 }
             }
-            .background(Design.Color.canvas.ignoresSafeArea())
+            .background(AppBackground())
             .navigationTitle("Body")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        withAnimation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion)) {
+                        withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) {
                             revealed.toggle()
                         }
                     } label: {
-                        Image(systemName: revealed ? "eye.fill" : "eye.slash.fill")
-                            .foregroundStyle(revealed ? Design.Color.ember : Design.Color.textSecondary)
+                        Image(systemName: revealed ? "eye" : "eye.slash")
+                            .foregroundStyle(revealed ? Design.Color.pernambuco : Design.Color.textSecondary)
                             .contentTransition(.symbolEffect(.replace))
                     }
                     .accessibilityLabel(revealed ? "Hide physique photos" : "Show physique photos")
@@ -125,8 +131,8 @@ struct BodyScreen: View {
         .overlay {
             if scenePhase != .active {
                 Image(systemName: "lock.fill")
-                    .font(.largeTitle)
-                    .foregroundStyle(Design.Color.textSecondary)
+                    .font(.title)
+                    .foregroundStyle(Design.Color.textTertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Design.Color.canvas.opacity(0.45))
                     .ignoresSafeArea()
@@ -137,12 +143,16 @@ struct BodyScreen: View {
         }
         .task { await model.load() }
         .task { await runPreviewAction() }
-        .fullScreenCover(isPresented: $showsCamera) { checkInFlow(start: .camera) }
+        .fullScreenCover(isPresented: $showsCamera) {
+            checkInFlow(start: .camera)
+                .navigationTransition(.zoom(sourceID: ZoomSource.checkIn, in: zoom))
+        }
         .sheet(isPresented: $showsWeightEntry) {
             checkInFlow(start: .weight)
-                .presentationDetents([.height(260)])
+                .presentationDetents([.height(272)])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(Design.Radius.sheet)
+                .presentationBackground(Design.Color.surface1)
         }
         .fullScreenCover(item: $compare) { request in
             PhysiqueCompareView(
@@ -151,6 +161,7 @@ struct BodyScreen: View {
                 loader: model.photos,
                 trendPoints: snapshot.trendPoints,
                 before: request.before)
+                .navigationTransition(.zoom(sourceID: request.source, in: zoom))
         }
         .fullScreenCover(item: $viewer) { request in
             PhysiquePhotoViewer(
@@ -159,6 +170,7 @@ struct BodyScreen: View {
                 timezone: model.profile.timezone,
                 loader: model.photos,
                 selection: request.id)
+                .navigationTransition(.zoom(sourceID: request.source, in: zoom))
         }
         .confirmationDialog(
             "Delete this photo?",
@@ -182,57 +194,180 @@ struct BodyScreen: View {
         #endif
     }
 
-    // MARK: Check-in
+    // MARK: Hero — where the bulk is
 
-    /// Before today's photo the check-in is the screen's hero; once it's in,
-    /// it shrinks to one quiet row and the weight card leads.
+    /// The trend weight as the screen's one figure, how fast it's moving,
+    /// how much of the bulk is loaded on the bar, and the line underneath.
+    /// Nothing is said twice.
     @ViewBuilder
-    private var checkInCard: some View {
-        if let checkIn = snapshot.todayCheckIn, checkIn.hasPhoto {
-            checkedInRow(checkIn)
-                .transition(.opacity)
-        } else {
-            checkInPrompt(snapshot.todayCheckIn)
-                .transition(.opacity)
-        }
-    }
-
-    private func checkInPrompt(_ checkIn: WeightCheckIn?) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            Button {
-                showsCamera = true
-            } label: {
-                CheckInPhotoPlaceholder()
-                    .frame(width: 104, height: 138)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Take today’s photo")
-
-            VStack(alignment: .leading, spacing: 6) {
-                if let day = snapshot.dayNumber {
-                    Text("Day \(day)").eyebrowStyle(Design.Color.ember)
+    private var hero: some View {
+        if let currentKG = snapshot.meterCurrentKG ?? snapshot.trajectory.currentKG {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(heroEyebrow).eyebrowStyle()
+                heroFigure(currentKG)
+                    .padding(.top, Design.Space.xs)
+                paceLine
+                if let meter = meter(currentKG) {
+                    VStack(spacing: Design.Space.s) {
+                        BarbellMeter(gainedPounds: meter.gainedPounds, goalPounds: meter.goalPounds)
+                            .frame(height: 40)
+                        meterCaption(meter)
+                    }
+                    .padding(.top, Design.Space.xl)
                 }
-                Text("Check in")
-                    .font(Design.Typeface.screenTitle)
-                    .foregroundStyle(Design.Color.textPrimary)
-                if let weight = checkIn?.weightKG {
-                    Text(weightText(weight))
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.textSecondary)
-                        .monospacedDigit()
-                }
-                streakLabel
-                Spacer(minLength: 8)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { promptButtons(checkIn) }
-                    VStack(alignment: .leading, spacing: 8) { promptButtons(checkIn) }
+                if snapshot.weighInCount > 0 {
+                    WeightTrendChart(
+                        points: snapshot.trendPoints,
+                        goal: snapshot.goal,
+                        today: snapshot.today,
+                        units: units,
+                        showsTrend: snapshot.showsTrendChart
+                    )
+                    .frame(height: 136)
+                    .padding(.top, Design.Space.xxl)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface(radius: Design.Radius.cardLarge)
+    }
+
+    private var heroEyebrow: String {
+        let phase = switch snapshot.goal?.phase {
+        case .bulk?: "Lean bulk"
+        case .cut?: "Cut"
+        default: "Weight"
+        }
+        guard let day = snapshot.dayNumber, snapshot.goal?.phase != .maintain else { return phase }
+        return "\(phase) · Day \(day)"
+    }
+
+    private func heroFigure(_ kilograms: Double) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Design.Space.s) {
+            Text(String(format: "%.1f", BodyUnits.display(kilograms, units: units)))
+                .font(.system(size: heroSize, weight: .regular, design: .serif))
+                .monospacedDigit()
+                .foregroundStyle(Design.Color.textPrimary)
+                .contentTransition(.numericText(value: kilograms))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(BodyUnits.label(units))
+                .font(Design.Typeface.display(.title3))
+                .foregroundStyle(Design.Color.textSecondary)
+            if snapshot.trend == nil {
+                Text("self-reported")
+                    .font(.footnote)
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "+0.6 lb a week · on pace": the rate quiet, the verdict in its colour.
+    @ViewBuilder
+    private var paceLine: some View {
+        if let rate = snapshot.trend?.weeklyRateKG {
+            let status = snapshot.trajectory.status
+            let rateText = "\(BodyUnits.signed(BodyUnits.display(rate, units: units))) \(BodyUnits.label(units)) a week"
+            HStack(spacing: Design.Space.s) {
+                Text(rateText)
+                    .foregroundStyle(Design.Color.textSecondary)
+                if let label = status.label {
+                    Circle()
+                        .fill(Design.Color.textTertiary)
+                        .frame(width: 3, height: 3)
+                        .accessibilityHidden(true)
+                    Text(label).foregroundStyle(status.color)
+                }
+            }
+            .font(.subheadline)
+            .monospacedDigit()
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private struct Meter {
+        let gainedPounds: Double
+        let goalPounds: Double
+        let gainedDisplay: Double
+        let goalDisplay: Double
+    }
+
+    private func meter(_ currentKG: Double) -> Meter? {
+        guard snapshot.goal?.phase != .maintain,
+            let start = snapshot.meterStartKG, let target = snapshot.meterTargetKG
+        else { return nil }
+        let direction = snapshot.goal?.phase.direction ?? 1
+        return Meter(
+            gainedPounds: BodyUnits.pounds(currentKG - start) * direction,
+            goalPounds: BodyUnits.pounds(target - start) * direction,
+            gainedDisplay: BodyUnits.display(currentKG - start, units: units) * direction,
+            goalDisplay: BodyUnits.display(abs(target - start), units: units)
+        )
+    }
+
+    /// "+2.1 of 12.5 lb", centred under the bar like the number on a plate.
+    private func meterCaption(_ meter: Meter) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
+            Text(BodyUnits.signed(meter.gainedDisplay))
+                .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
+                .foregroundStyle(Design.Color.pernambuco)
+            Text("of \(BodyUnits.format(meter.goalDisplay)) \(BodyUnits.label(units))")
+                .font(.footnote)
+                .foregroundStyle(Design.Color.textTertiary)
+        }
+        .monospacedDigit()
+        .frame(maxWidth: .infinity)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: Check-in line
+
+    /// Today's check-in as one line: the photo (or the empty slot), what's
+    /// done, and the one thing left to do.
+    @ViewBuilder
+    private var checkInLine: some View {
+        Group {
+            if let checkIn = snapshot.todayCheckIn, checkIn.hasPhoto {
+                checkedInLine(checkIn)
+            } else {
+                checkInPrompt(snapshot.todayCheckIn)
+            }
+        }
+        .transition(.ink(reduceMotion: reduceMotion))
+    }
+
+    private func checkInPrompt(_ checkIn: WeightCheckIn?) -> some View {
+        HStack(alignment: .center, spacing: Design.Space.l) {
+            Button {
+                showsCamera = true
+            } label: {
+                CheckInPhotoPlaceholder()
+                    .frame(width: 60, height: 80)
+                    .matchedTransitionSource(id: ZoomSource.checkIn, in: zoom)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Take today’s photo")
+
+            VStack(alignment: .leading, spacing: Design.Space.xs) {
+                Text("Morning check-in")
+                    .font(Design.Typeface.display(.title3))
+                    .foregroundStyle(Design.Color.textPrimary)
+                if let weight = checkIn?.weightKG {
+                    Text("\(weightText(weight)) · photo still to take")
+                        .font(.footnote)
+                        .foregroundStyle(Design.Color.textSecondary)
+                        .monospacedDigit()
+                } else {
+                    streakLabel(fallback: "Photo first, weight if you have it")
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Design.Space.s) { promptButtons(checkIn) }
+                    VStack(alignment: .leading, spacing: Design.Space.s) { promptButtons(checkIn) }
+                }
+                .padding(.top, Design.Space.s)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
@@ -240,7 +375,7 @@ struct BodyScreen: View {
         Button {
             showsCamera = true
         } label: {
-            Label("Snap", systemImage: "camera.fill")
+            Label("Check in", systemImage: "camera")
         }
         .buttonStyle(BodyPillButtonStyle(prominent: true))
         Button(checkIn?.hasWeight == true ? "Edit weight" : "Weight") {
@@ -249,18 +384,20 @@ struct BodyScreen: View {
         .buttonStyle(BodyPillButtonStyle(prominent: false))
     }
 
-    private func checkedInRow(_ checkIn: WeightCheckIn) -> some View {
-        HStack(spacing: 14) {
+    private func checkedInLine(_ checkIn: WeightCheckIn) -> some View {
+        HStack(alignment: .center, spacing: Design.Space.l) {
             Button {
-                if revealed { viewer = ViewerRequest(id: checkIn.id) } else { revealed = true }
+                if revealed {
+                    viewer = ViewerRequest(id: checkIn.id, source: ZoomSource.checkIn)
+                } else {
+                    reveal()
+                }
             } label: {
                 BodyPhotoImage(path: checkIn.progressPhotoPath, loader: model.photos, maxPixel: BodyPhotoSize.thumb)
-                    .physiqueVeil(revealed: revealed, iconSize: .caption)
-                    .frame(width: 60, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Design.Color.ember, lineWidth: 1.5))
+                    .physiqueVeil(revealed: revealed, iconSize: nil)
+                    .frame(width: 45, height: 60)
+                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous))
+                    .matchedTransitionSource(id: ZoomSource.checkIn, in: zoom)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Today’s photo")
@@ -269,18 +406,15 @@ struct BodyScreen: View {
             // Accessibility sizes stack the button under the text instead of
             // squeezing "Weight" into a column.
             let layout = dynamicTypeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
-                : AnyLayout(HStackLayout(spacing: 14))
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: Design.Space.m))
+                : AnyLayout(HStackLayout(spacing: Design.Space.m))
             layout {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Checked in")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: Design.Space.xxs) {
+                    Text(checkedInTitle(checkIn))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(Design.Color.textPrimary)
-                    Text(checkedInDetail(checkIn))
-                        .font(.subheadline)
-                        .foregroundStyle(Design.Color.textSecondary)
                         .monospacedDigit()
-                    streakLabel
+                    streakLabel(fallback: checkIn.weightKG.map(weightText))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -294,8 +428,7 @@ struct BodyScreen: View {
                 }
             }
         }
-        .padding(12)
-        .cardSurface(radius: Design.Radius.cardLarge)
+        .contentShape(Rectangle())
         .contextMenu {
             Button {
                 showsCamera = true
@@ -312,32 +445,52 @@ struct BodyScreen: View {
         .accessibilityAction(named: checkIn.hasWeight ? "Edit weight" : "Add weight") { showsWeightEntry = true }
     }
 
-    private func checkedInDetail(_ checkIn: WeightCheckIn) -> String {
-        var parts: [String] = []
+    /// "Checked in at 7:12 AM", plus the weight once it's in.
+    private func checkedInTitle(_ checkIn: WeightCheckIn) -> String {
+        var title = "Checked in"
         if let captured = checkIn.photoCapturedAt ?? (checkIn.hasPhoto ? checkIn.createdAt : nil) {
-            parts.append(BodyDayLabel.time(captured, timezone: model.profile.timezone))
+            title += " at \(BodyDayLabel.time(captured, timezone: model.profile.timezone))"
         }
-        if let weight = checkIn.weightKG { parts.append(weightText(weight)) }
-        return parts.joined(separator: " · ")
+        if let weight = checkIn.weightKG, snapshot.streak > 0 {
+            title += " · \(weightText(weight))"
+        }
+        return title
     }
 
+    /// The streak when there is one (oak, the warm secondary), else a quiet
+    /// fallback line.
     @ViewBuilder
-    private var streakLabel: some View {
+    private func streakLabel(fallback: String?) -> some View {
         if snapshot.streak > 0 {
-            Label(
-                snapshot.streakAtRisk
+            HStack(spacing: Design.Space.xs) {
+                Image(systemName: "flame")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Design.Color.oak)
+                    .accessibilityHidden(true)
+                Text(snapshot.streakAtRisk
                     ? "\(snapshot.streak)-day streak on the line"
-                    : "\(snapshot.streak)-day streak",
-                systemImage: "flame.fill"
-            )
-            .font(Design.Typeface.meta)
-            .foregroundStyle(Design.Color.ember)
-            .contentTransition(.numericText(value: Double(snapshot.streak)))
+                    : "\(snapshot.streak)-day streak")
+                    .foregroundStyle(snapshot.streakAtRisk ? Design.Color.oak : Design.Color.textSecondary)
+                    .contentTransition(.numericText(value: Double(snapshot.streak)))
+            }
+            .font(.footnote)
+            .monospacedDigit()
+        } else if let fallback {
+            Text(fallback)
+                .font(.footnote)
+                .foregroundStyle(Design.Color.textSecondary)
+                .monospacedDigit()
         }
     }
 
     private func weightText(_ kilograms: Double) -> String {
         "\(BodyUnits.format(BodyUnits.display(kilograms, units: units))) \(BodyUnits.label(units))"
+    }
+
+    private func reveal() {
+        withAnimation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion)) {
+            revealed = true
+        }
     }
 
     private func checkInFlow(start: BodyCheckInFlow.Start) -> some View {
@@ -358,163 +511,68 @@ struct BodyScreen: View {
         }
     }
 
-    // MARK: Weight
-
-    /// One card for the number: trend weight as the hero, the barbell for
-    /// how much of the bulk is loaded, and the chart underneath. Rate and
-    /// pace sit in the header; nothing is said twice.
-    @ViewBuilder
-    private var weightCard: some View {
-        if let currentKG = snapshot.meterCurrentKG ?? snapshot.trajectory.currentKG {
-            let goal = snapshot.goal
-            let showsMeter = goal?.phase != .maintain && snapshot.meterStartKG != nil && snapshot.meterTargetKG != nil
-            VStack(alignment: .leading, spacing: 14) {
-                BodyCardHeader(title: phaseTitle) { paceBadge }
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        heroWeight(currentKG)
-                        Spacer(minLength: 8)
-                        if showsMeter { meterProgress(currentKG) }
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) { heroWeight(currentKG) }
-                        if showsMeter {
-                            HStack(alignment: .firstTextBaseline, spacing: 6) { meterProgress(currentKG) }
-                        }
-                    }
-                }
-                if showsMeter, let start = snapshot.meterStartKG, let target = snapshot.meterTargetKG {
-                    let direction = goal?.phase.direction ?? 1
-                    BarbellMeter(
-                        gainedPounds: BodyUnits.pounds(currentKG - start) * direction,
-                        goalPounds: BodyUnits.pounds(target - start) * direction
-                    )
-                    .frame(height: 64)
-                }
-                if snapshot.weighInCount > 0 {
-                    WeightTrendChart(
-                        points: snapshot.trendPoints,
-                        goal: goal,
-                        today: snapshot.today,
-                        units: units,
-                        showsTrend: snapshot.showsTrendChart
-                    )
-                    .frame(height: 150)
-                    .padding(.top, 4)
-                }
-            }
-            .padding(16)
-            .cardSurface(radius: Design.Radius.cardLarge)
-        }
-    }
-
-    private var phaseTitle: String {
-        switch snapshot.goal?.phase {
-        case .bulk?: "Lean bulk"
-        case .cut?: "Cut"
-        default: "Weight"
-        }
-    }
-
-    @ViewBuilder
-    private var paceBadge: some View {
-        if let rate = snapshot.trend?.weeklyRateKG {
-            let status = snapshot.trajectory.status
-            let rateText = "\(BodyUnits.signed(BodyUnits.display(rate, units: units))) \(BodyUnits.label(units))/wk"
-            Text([rateText, status.label].compactMap { $0 }.joined(separator: " · "))
-                .font(Design.Typeface.meta)
-                .foregroundStyle(status.color)
-                .monospacedDigit()
-        }
-    }
-
-    @ViewBuilder
-    private func heroWeight(_ kilograms: Double) -> some View {
-        Text(String(format: "%.1f", BodyUnits.display(kilograms, units: units)))
-            .font(Design.Typeface.numeral(.largeTitle, weight: .bold))
-            .monospacedDigit()
-            .foregroundStyle(Design.Color.textPrimary)
-            .contentTransition(.numericText(value: kilograms))
-        Text(BodyUnits.label(units))
-            .font(.headline)
-            .foregroundStyle(Design.Color.textSecondary)
-        if snapshot.trend == nil {
-            Text("self-reported")
-                .font(Design.Typeface.meta)
-                .foregroundStyle(Design.Color.textTertiary)
-        }
-    }
-
-    @ViewBuilder
-    private func meterProgress(_ currentKG: Double) -> some View {
-        let start = snapshot.meterStartKG ?? currentKG
-        let target = snapshot.meterTargetKG ?? currentKG
-        let direction = snapshot.goal?.phase.direction ?? 1
-        Text(BodyUnits.signed(BodyUnits.display(currentKG - start, units: units) * direction))
-            .font(Design.Typeface.numeral(.title3, weight: .bold))
-            .foregroundStyle(Design.Color.ember)
-            .monospacedDigit()
-        Text("of \(BodyUnits.format(BodyUnits.display(abs(target - start), units: units)))")
-            .font(.footnote)
-            .foregroundStyle(Design.Color.textTertiary)
-            .monospacedDigit()
-    }
-
     // MARK: Physique strip
 
     /// Newest first, one scrolling row; any photo opens the pager through
     /// all of them, so there's no "show all".
     private var physiqueStrip: some View {
         let photos = snapshot.photoCheckIns
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: Design.Space.m) {
             BodyCardHeader(title: "Physique") {
                 if photos.count >= 2 {
                     Button {
-                        compare = CompareRequest(before: nil)
+                        compare = CompareRequest(before: nil, source: ZoomSource.compare)
                     } label: {
-                        Label("Compare", systemImage: "rectangle.split.2x1")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Design.Color.ember)
+                        Text("Compare")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(Design.Color.textSecondary)
+                            .padding(.vertical, Design.Space.xs)
+                            .contentShape(Rectangle())
+                            .matchedTransitionSource(id: ZoomSource.compare, in: zoom)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Wipes between two check-ins")
                 }
             }
-            .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 6) {
+                LazyHStack(alignment: .top, spacing: Design.Space.s) {
                     ForEach(photos) { checkIn in
                         thumbnail(checkIn)
                     }
                 }
             }
-            .contentMargins(.horizontal, 16, for: .scrollContent)
+            .contentMargins(.horizontal, Design.Space.gutter, for: .scrollContent)
+            .padding(.horizontal, -Design.Space.gutter)
         }
-        .padding(.vertical, 16)
-        .cardSurface(radius: Design.Radius.cardLarge)
-        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous))
     }
 
     private func thumbnail(_ checkIn: WeightCheckIn) -> some View {
-        Button {
-            if revealed { viewer = ViewerRequest(id: checkIn.id) } else { revealed = true }
+        let source = ZoomSource.photo(checkIn.id)
+        return Button {
+            if revealed {
+                viewer = ViewerRequest(id: checkIn.id, source: source)
+            } else {
+                reveal()
+            }
         } label: {
-            BodyPhotoImage(path: checkIn.progressPhotoPath, loader: model.photos, maxPixel: BodyPhotoSize.thumb)
-                .physiqueVeil(revealed: revealed, iconSize: nil)
-                .frame(width: 76, height: 101)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(alignment: .bottomLeading) {
-                    Text(thumbnailLabel(checkIn))
-                        .font(Design.Typeface.numeral(.caption2, weight: .bold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .shadow(color: .black.opacity(0.6), radius: 2)
-                        .padding(6)
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            VStack(alignment: .leading, spacing: Design.Space.xs + 2) {
+                BodyPhotoImage(path: checkIn.progressPhotoPath, loader: model.photos, maxPixel: BodyPhotoSize.thumb)
+                    .physiqueVeil(revealed: revealed, iconSize: nil)
+                    .frame(width: 66, height: 88)
+                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous))
+                    .matchedTransitionSource(id: source, in: zoom)
+                Text(thumbnailLabel(checkIn))
+                    .font(Design.Typeface.numeral(.caption2, weight: .medium))
+                    .foregroundStyle(checkIn.localDay == snapshot.today ? Design.Color.textSecondary : Design.Color.textTertiary)
+                    .monospacedDigit()
+                    .padding(.leading, Design.Space.xxs)
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
             Button {
-                compare = CompareRequest(before: checkIn)
+                compare = CompareRequest(before: checkIn, source: source)
             } label: {
                 Label("Compare with latest", systemImage: "rectangle.split.2x1")
             }
@@ -524,8 +582,10 @@ struct BodyScreen: View {
                 Label("Delete photo", systemImage: "trash")
             }
         }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Check-in photo, \(BodyDayLabel.short(checkIn.localDay))")
         .accessibilityHint(revealed ? "Opens the photo" : "Reveals photos")
+        .accessibilityAddTraits(.isButton)
     }
 
     private func thumbnailLabel(_ checkIn: WeightCheckIn) -> String {
@@ -537,11 +597,9 @@ struct BodyScreen: View {
 
     private func errorBanner(_ message: String) -> some View {
         Label(message, systemImage: "wifi.exclamationmark")
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(Design.Color.textPrimary)
-            .padding(12)
+            .font(.footnote)
+            .foregroundStyle(Design.Color.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Design.Color.danger.opacity(0.16), in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous))
     }
 
     // MARK: Preview hooks
@@ -551,10 +609,13 @@ struct BodyScreen: View {
         previewAction = nil
         try? await Task.sleep(for: .milliseconds(450))
         switch action {
-        case .compare: compare = CompareRequest(before: nil)
+        case .compare: compare = CompareRequest(before: nil, source: ZoomSource.compare)
         case .camera: showsCamera = true
         case .weight: showsWeightEntry = true
-        case .viewer: if let first = snapshot.photoCheckIns.first { viewer = ViewerRequest(id: first.id) }
+        case .viewer:
+            if let first = snapshot.photoCheckIns.first {
+                viewer = ViewerRequest(id: first.id, source: ZoomSource.photo(first.id))
+            }
         case .recap: presentsLatestRecap = true
         case .review:
             #if DEBUG
@@ -574,13 +635,22 @@ enum BodySection: String, Hashable {
     case hero, weight, log, fuel, recaps
 }
 
+/// Where a full-screen cover zooms out of (and back into).
+private enum ZoomSource {
+    static let checkIn = "body.checkin"
+    static let compare = "body.compare"
+    static func photo(_ id: UUID) -> String { "body.photo.\(id.uuidString)" }
+}
+
 private struct CompareRequest: Identifiable {
     let id = UUID()
     let before: WeightCheckIn?
+    let source: String
 }
 
 private struct ViewerRequest: Identifiable {
     let id: UUID
+    let source: String
 }
 
 #if DEBUG
