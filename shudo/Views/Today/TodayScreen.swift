@@ -402,7 +402,7 @@ struct TodayScreen: View {
             .background {
                 if highlightedRowId == row.id {
                     RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                        .fill(Design.Color.ember.opacity(0.14))
+                        .fill(Design.Color.ember.opacity(0.10))
                         .padding(-5)
                         .transition(.opacity)
                 }
@@ -730,7 +730,7 @@ struct TodayScreen: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.6))
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(.shoji(.bottom, reduceMotion: reduceMotion))
             }
             if let pendingDeletion {
                 HStack(spacing: 12) {
@@ -746,7 +746,7 @@ struct TodayScreen: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.6), interactive: true)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(.shoji(.bottom, reduceMotion: reduceMotion))
             } else if !isToday {
                 Button {
                     select(day: todayDay)
@@ -763,9 +763,9 @@ struct TodayScreen: View {
             }
         }
         .padding(.bottom, 10)
-        .animation(Design.Motion.snap, value: pendingDeletion?.id)
-        .animation(Design.Motion.snap, value: coachNotice)
-        .animation(Design.Motion.snap, value: isToday)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: pendingDeletion?.id)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: coachNotice)
+        .animation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion), value: isToday)
     }
 
     // MARK: Account

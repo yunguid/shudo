@@ -40,7 +40,7 @@ struct MealReceiptCard: View {
             if isSettled {
                 ReceiptNumber(value: Int(entry.caloriesKcal.rounded()), unit: "kcal", inline: stacked)
                     .contentTransition(.numericText(value: entry.caloriesKcal))
-                    .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
+                    .transition(.ink(reduceMotion: reduceMotion))
             }
         }
         .padding(.horizontal, 15)
@@ -68,7 +68,7 @@ struct MealReceiptCard: View {
         } else if isWorking {
             ThreadShimmerLine()
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(isRetrying ? "Retrying" : entry.displayStatusMessage)
+                .accessibilityLabel(isRetrying ? "Retrying" : "Working on it")
                 .accessibilityAddTraits(.updatesFrequently)
         } else if entry.status == .failed {
             HStack(spacing: 10) {

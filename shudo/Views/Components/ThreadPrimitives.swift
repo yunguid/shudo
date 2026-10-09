@@ -114,8 +114,8 @@ struct MessageBubble: View {
         Text(text)
             .font(Design.Typeface.bubble)
             .foregroundStyle(isMine ? Design.Color.onBubbleMe : Design.Color.textPrimary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 10)
             .background {
                 if isMine {
                     BubbleShape(isMine: true, position: position).fill(Design.Color.bubbleMe)
