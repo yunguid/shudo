@@ -416,7 +416,8 @@ enum ShellPreviewFixtures {
             recordEvent: { _ in },
             bioRevisions: { revisions },
             coachMediaURL: { _ in nil },
-            makeBodyScreen: { _, _ in AnyView(BodyScreen(previewModel: BodyFixtures.model())) },
+            // `-shudoBodyPreview` (empty, recaps, …) applies inside the shell too.
+            makeBodyScreen: { _, _ in AnyView(BodyFixtures.previewScreen()) },
             makeTrainViewModel: { _, logging in
                 TrainViewModel(
                     profile: TrainPreviewFixtures.profile,
