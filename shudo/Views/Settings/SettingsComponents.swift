@@ -228,9 +228,23 @@ private struct SettleOnAppear: ViewModifier {
     }
 }
 
+/// A placeholder breathing slowly (opacity only), calmer than a sweeping
+/// shimmer.
+private struct SlowBreath: ViewModifier {
+    func body(content: Content) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            content.opacity(0.55 + 0.45 * (1 + cos(t * 2 * .pi / 2.8)) / 2)
+        }
+    }
+}
+
 extension View {
     /// Content that settles in as its sheet or flow appears.
     func settlesOnAppear() -> some View { modifier(SettleOnAppear()) }
+
+    /// A loading placeholder that breathes slowly.
+    func breathesSlowly() -> some View { modifier(SlowBreath()) }
 }
 
 extension AnyTransition {

@@ -130,7 +130,7 @@ struct BioView: View {
                     Capsule().fill(Design.Color.surface1).frame(height: 10)
                     Capsule().fill(Design.Color.surface1).frame(width: 220, height: 10)
                 }
-                .shimmering()
+                .breathesSlowly()
             }
             .accessibilityHidden(true)
         } else if !loadFailed {

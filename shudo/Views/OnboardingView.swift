@@ -33,6 +33,7 @@ struct OnboardingView: View {
     @State private var errorMessage: String?
     @FocusState private var focusedField: Field?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var notesInked = false
 
     init(
         initialProfile: Profile? = nil,
@@ -181,13 +182,24 @@ struct OnboardingView: View {
     /// What to mention, set against a thin margin rule so it reads as a
     /// note on the page, not as fields to fill.
     private var marginNotes: some View {
-        VStack(alignment: .leading, spacing: Design.Space.m) {
-            ForEach(["Height and weight", "How active you are", "What you’re after"], id: \.self) { line in
+        let lines = ["Height and weight", "How active you are", "What you’re after"]
+        return VStack(alignment: .leading, spacing: Design.Space.m) {
+            // Each note inks in a beat after the last, the first time the
+            // page appears.
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                 Text(line)
                     .font(Design.Typeface.text(.body))
                     .foregroundStyle(Design.Color.textTertiary)
+                    .opacity(notesInked ? 1 : 0)
+                    .offset(y: notesInked || reduceMotion ? 0 : 6)
+                    .animation(
+                        Design.Motion.calm(Design.Motion.arrive, reduceMotion: reduceMotion)
+                            .delay(0.35 + 0.14 * Double(index)),
+                        value: notesInked
+                    )
             }
         }
+        .onAppear { notesInked = true }
         .padding(.leading, Design.Space.l)
         .overlay(alignment: .leading) {
             Rectangle()
