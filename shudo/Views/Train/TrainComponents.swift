@@ -663,6 +663,9 @@ struct TrainingPlanSheet: View {
     var isActivating = false
     var onRun: (() -> Void)?
     var onChange: () -> Void
+    /// The rotation's next session, marked "Next" so the page shows where
+    /// Luke is in the plan.
+    var nextSessionId: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -741,7 +744,12 @@ struct TrainingPlanSheet: View {
                     .font(Design.Typeface.display(.title3))
                     .foregroundStyle(Design.Color.textPrimary)
                     .accessibilityAddTraits(.isHeader)
-                if let focus = session.focus {
+                if session.id == nextSessionId {
+                    Text("Next")
+                        .font(Design.Typeface.text(.footnote, weight: .semibold))
+                        .foregroundStyle(Design.Color.pernambuco)
+                        .accessibilityLabel("Next up")
+                } else if let focus = session.focus {
                     Text(focus)
                         .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.textTertiary)

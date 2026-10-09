@@ -337,7 +337,9 @@ enum TrainPreviewFixtures {
         case "log-free":
             WorkoutLogSheet(initialKind: .cardio, onSubmit: { _ in })
         case "plan":
-            TrainingPlanSheet(plan: activePlan, onChange: {})
+            TrainingPlanSheet(
+                plan: activePlan, onChange: {},
+                nextSessionId: SessionRotationPolicy.nextSession(plan: planDoc, activities: activities)?.id)
         case "detail-today":
             NavigationStack {
                 ActivityDetailView(activity: completedToday, units: profile.units, onDelete: { true })

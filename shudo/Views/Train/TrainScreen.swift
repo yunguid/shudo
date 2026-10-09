@@ -196,7 +196,8 @@ struct TrainScreen: View {
                         planSheet = nil
                     }
                 } : nil,
-                onChange: { onAskCoach(plan.status == .draft ? Self.changeDraftPrompt : Self.changePlanPrompt) })
+                onChange: { onAskCoach(plan.status == .draft ? Self.changeDraftPrompt : Self.changePlanPrompt) },
+                nextSessionId: plan.status == .active ? snapshot.nextSession?.id : nil)
         }
         .navigationDestination(for: ActivityRoute.self) { route in
             ActivityDetailContainer(viewModel: viewModel, id: route.id)
