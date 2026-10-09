@@ -232,3 +232,33 @@ extension View {
     /// Content that settles in as its sheet or flow appears.
     func settlesOnAppear() -> some View { modifier(SettleOnAppear()) }
 }
+
+extension AnyTransition {
+    /// One panel giving way to another, like shoji doors: the outgoing one
+    /// slides a little toward its edge and is gone quickly; the incoming one
+    /// waits a beat, then slides home. Never a half-and-half blend of both.
+    /// Under Reduce Motion: the same hand-off as plain fades.
+    static func shojiPage(_ edge: Edge, reduceMotion: Bool) -> AnyTransition {
+        guard !reduceMotion else {
+            return .asymmetric(
+                insertion: .opacity.animation(.easeOut(duration: 0.22).delay(0.12)),
+                removal: .opacity.animation(.easeIn(duration: 0.12))
+            )
+        }
+        return .asymmetric(
+            insertion: .shoji(edge, reduceMotion: false).animation(Design.Motion.shoji.delay(0.14)),
+            removal: .shoji(edge, reduceMotion: false).animation(.easeIn(duration: 0.16))
+        )
+    }
+
+    /// One control giving way to another in the same place (a slab and a
+    /// text field): the old one is gone quickly, the new one settles in like
+    /// ink a beat later.
+    static func inkHandoff(reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: .ink(reduceMotion: reduceMotion)
+                .animation(Design.Motion.calm(Design.Motion.arrive, reduceMotion: reduceMotion).delay(0.12)),
+            removal: .opacity.animation(.easeIn(duration: 0.12))
+        )
+    }
+}

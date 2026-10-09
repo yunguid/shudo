@@ -169,7 +169,7 @@ struct BioView: View {
         HStack(alignment: .bottom, spacing: Design.Space.m) {
             if isTyping {
                 typingField
-                    .transition(.ink(reduceMotion: reduceMotion))
+                    .transition(.inkHandoff(reduceMotion: reduceMotion))
             } else {
                 Button(action: talk) {
                     Label("Talk to update", systemImage: "mic.fill")
@@ -179,7 +179,7 @@ struct BioView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("bio.talk")
-                .transition(.ink(reduceMotion: reduceMotion))
+                .transition(.inkHandoff(reduceMotion: reduceMotion))
 
                 if onTalkToUpdate != nil {
                     Button(action: startTyping) {
@@ -192,7 +192,7 @@ struct BioView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Type an update")
-                    .transition(.opacity)
+                    .transition(.inkHandoff(reduceMotion: reduceMotion))
                 }
             }
         }

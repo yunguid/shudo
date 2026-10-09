@@ -126,7 +126,8 @@ struct AuthView: View {
                                 Text(isLoading
                                      ? (isCreatingAccount ? "Creating…" : "Opening…")
                                      : (isCreatingAccount ? "Create account" : "Sign in"))
-                                    .contentTransition(.opacity)
+                                    .id(isCreatingAccount)
+                                    .transition(.inkHandoff(reduceMotion: reduceMotion))
                             }
                             .frame(maxWidth: .infinity)
                         }
@@ -137,7 +138,8 @@ struct AuthView: View {
                             Text(isCreatingAccount ? "I have an account" : "Create an account")
                                 .font(Design.Typeface.text(.subheadline, weight: .medium))
                                 .foregroundStyle(Design.Color.textSecondary)
-                                .contentTransition(.opacity)
+                                .id(isCreatingAccount)
+                                .transition(.inkHandoff(reduceMotion: reduceMotion))
                                 .frame(maxWidth: .infinity, minHeight: 44)
                                 .contentShape(Rectangle())
                         }
@@ -184,6 +186,14 @@ struct AuthView: View {
                     errorMessage = "That email and password don’t match."
                 }
             }
+            .task {
+                // Motion review: `-shudoAuthAutoToggle` flips the mode and back.
+                guard ProcessInfo.processInfo.arguments.contains("-shudoAuthAutoToggle") else { return }
+                try? await Task.sleep(for: .seconds(2))
+                toggleMode()
+                try? await Task.sleep(for: .seconds(2))
+                toggleMode()
+            }
             #endif
         }
     }
@@ -201,10 +211,10 @@ struct AuthView: View {
                 ZStack(alignment: .leading) {
                     if isCreatingAccount {
                         modeLine("Create your account.")
-                            .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+                            .transition(.shojiPage(.trailing, reduceMotion: reduceMotion))
                     } else {
                         modeLine("Sign in to continue.")
-                            .transition(.shoji(.leading, reduceMotion: reduceMotion))
+                            .transition(.shojiPage(.leading, reduceMotion: reduceMotion))
                     }
                 }
             }
@@ -226,7 +236,7 @@ struct AuthView: View {
                     .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(password.count >= 10 ? Design.Color.textSecondary : Design.Color.textTertiary)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+                    .transition(.shojiPage(.trailing, reduceMotion: reduceMotion))
             } else {
                 Button(action: requestPasswordRecovery) {
                     HStack(spacing: 7) {
@@ -246,7 +256,7 @@ struct AuthView: View {
                 .disabled(isBusy)
                 .accessibilityHint("Sends a password reset link to the email above")
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .transition(.shoji(.leading, reduceMotion: reduceMotion))
+                .transition(.shojiPage(.leading, reduceMotion: reduceMotion))
             }
         }
         .padding(.top, -Design.Space.s)

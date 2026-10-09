@@ -92,10 +92,10 @@ struct OnboardingView: View {
                     // slides in from the right (and back on Start over).
                     if let proposalResult, draft != nil {
                         reviewContent(proposalResult)
-                            .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+                            .transition(.shojiPage(.trailing, reduceMotion: reduceMotion))
                     } else {
                         captureContent
-                            .transition(.shoji(.leading, reduceMotion: reduceMotion))
+                            .transition(.shojiPage(.leading, reduceMotion: reduceMotion))
                     }
                 }
                 .frame(maxWidth: 520, alignment: .leading)
@@ -117,6 +117,18 @@ struct OnboardingView: View {
         .onDisappear {
             voice.cancel()
         }
+        #if DEBUG
+        .task {
+            // Motion review: `-shudoOnboardingAutoAdvance` slides to the
+            // review and back.
+            guard ProcessInfo.processInfo.arguments.contains("-shudoOnboardingAutoAdvance") else { return }
+            try? await Task.sleep(for: .seconds(2))
+            proposalResult = Self.previewProposal
+            draft = OnboardingDraft(proposal: Self.previewProposal.proposal, profileUnits: initialProfile?.units)
+            try? await Task.sleep(for: .seconds(2.5))
+            startOver()
+        }
+        #endif
     }
 
     private var isReviewing: Bool { proposalResult != nil && draft != nil }
@@ -422,10 +434,10 @@ struct OnboardingView: View {
     private var bottomAction: some View {
         if proposalResult != nil {
             reviewAction
-                .transition(.ink(reduceMotion: reduceMotion))
+                .transition(.inkHandoff(reduceMotion: reduceMotion))
         } else {
             captureBar
-                .transition(.ink(reduceMotion: reduceMotion))
+                .transition(.inkHandoff(reduceMotion: reduceMotion))
         }
     }
 
