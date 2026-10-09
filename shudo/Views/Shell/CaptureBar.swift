@@ -109,10 +109,12 @@ struct CaptureBar: View {
             key
                 .padding(.leading, CommandBandMetrics.margin)
                 .padding(.bottom, CommandBandMetrics.margin)
+            // A passing line rests just above the band, never on it.
+            noticeLine
+                .padding(.bottom, metrics.bandHeight + 6)
         }
         .frame(height: metrics.bandHeight)
         .frame(maxWidth: .infinity)
-        .overlay(alignment: .topLeading) { noticeLine }
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: isVoiceActive)
         .sensoryFeedback(.impact(weight: .light), trigger: sentCount)
         #if DEBUG
@@ -206,13 +208,13 @@ struct CaptureBar: View {
             Text(notice)
                 .font(Design.Typeface.text(.footnote, weight: .medium))
                 .foregroundStyle(Design.Color.honey)
-                .lineLimit(2)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.4))
-                .padding(.leading, CommandBandMetrics.trailingMargin)
-                .padding(.trailing, CommandBandMetrics.trailingMargin)
-                .alignmentGuide(.top) { $0[.bottom] + 10 }
+                .padding(.vertical, 10)
+                .chromeGlass(in: RoundedRectangle(cornerRadius: 16, style: .continuous), tint: Design.Color.canvas.opacity(0.5))
+                .padding(.horizontal, CommandBandMetrics.trailingMargin)
+                .allowsHitTesting(false)
                 .transition(.ink(reduceMotion: reduceMotion))
                 .accessibilityIdentifier("capture.notice")
         }
@@ -225,7 +227,6 @@ struct CaptureBar: View {
     private var key: some View {
         let role = leadingRole
         return CommandKey(role: role, metrics: metrics, isPressed: isPressed, hasDraft: !draft.isEmpty)
-            .opacity(fan.isOpen ? 0 : 1)
             .gesture(pressGesture)
             .onGeometryChange(for: CGPoint.self) { proxy in
                 let frame = proxy.frame(in: .global)

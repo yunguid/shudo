@@ -178,7 +178,7 @@ struct EntryDetailView: View {
             VStack(alignment: .leading, spacing: Design.Space.m) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("\(Int(calories.rounded()))")
-                        .font(.custom(Design.Typeface.faceName(.light), size: calorieFontSize))
+                        .font(.custom(Design.Typeface.faceName(.light), size: min(calorieFontSize, 92)))
                         .monospacedDigit()
                         .foregroundStyle(Design.Color.macroKcal)
                         .lineLimit(1)

@@ -645,6 +645,9 @@ private struct CaptureFanDial: View {
             // The key stays lit under the thumb: the dial grows out of it.
             CommandKey(role: .mic, metrics: metrics)
                 .shadow(color: Design.Color.hinoki.opacity(0.28), radius: 12)
+                // A tap on the key while the dial is pinned falls through to
+                // the backdrop and closes it.
+                .allowsHitTesting(false)
                 .position(fan.origin)
             ForEach(Array(fan.options.enumerated()), id: \.element.id) { index, option in
                 let offset = CaptureFanLayout.offset(index: index, count: count)
