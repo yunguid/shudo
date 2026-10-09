@@ -164,7 +164,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
         let value = numbers.isOver ? numbers.overKcal : numbers.remainingKcal
         return HStack(alignment: .firstTextBaseline, spacing: 7) {
             Text(value.formatted())
-                .font(Design.Typeface.figure(.largeTitle))
+                .font(Design.Typeface.figure(.largeTitle, weight: .light))
                 .monospacedDigit()
                 .foregroundStyle(Design.Color.textPrimary)
                 .contentTransition(.numericText(value: Double(value)))

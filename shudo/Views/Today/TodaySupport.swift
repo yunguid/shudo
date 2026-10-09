@@ -76,74 +76,44 @@ enum DayEdgeSwipePolicy {
 
 /// Shown under a meal whose estimate update failed: the previous estimate is
 /// back on the card, and the preserved correction can be retried or let go
-/// without retyping or re-recording anything.
+/// without retyping or re-recording anything. A quiet note beneath the
+/// receipt, not another box: one line of what happened, two text actions.
 struct CorrectionRetryBanner: View {
     let message: String
     let onRetry: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 10) {
-                failureText
-                actions
+        VStack(alignment: .trailing, spacing: 6) {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(EntryCorrectionPresentation.failureHeadline)
+                    .font(Design.Typeface.text(.caption, weight: .semibold))
+                    .foregroundStyle(Design.Color.danger)
+                Text(message)
+                    .font(Design.Typeface.text(.caption))
+                    .foregroundStyle(Design.Color.textSecondary)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                failureText
-                HStack(spacing: 10) {
-                    actions
-                    Spacer(minLength: 0)
-                }
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+
+            HStack(spacing: Design.Space.l) {
+                Button("Let it go", action: onDismiss)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .accessibilityLabel("Dismiss update failure")
+                    .accessibilityHint("Discards the correction")
+                Button("Retry", action: onRetry)
+                    .foregroundStyle(Design.Color.ember)
+                    .accessibilityLabel("Retry meal update")
             }
+            .font(Design.Typeface.text(.footnote, weight: .semibold))
+            .buttonStyle(.plain)
+            // ~44pt tap targets beyond the words.
+            .contentShape(Rectangle().inset(by: -12))
         }
-        .padding(12)
-        .background(
-            Design.Color.danger.opacity(0.08),
-            in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
-        )
-    }
-
-    private var failureText: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(EntryCorrectionPresentation.failureHeadline)
-                .font(Design.Typeface.text(.caption, weight: .semibold))
-                .foregroundStyle(Design.Color.danger)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(message)
-                .font(Design.Typeface.text(.caption2))
-                .foregroundStyle(Design.Color.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder
-    private var actions: some View {
-        Button(action: onRetry) {
-            Label("Retry", systemImage: "arrow.clockwise")
-                .font(Design.Typeface.text(.caption2, weight: .semibold))
-                .foregroundStyle(Design.Color.honey)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 10)
-                .background(Design.Color.ember.opacity(0.12), in: Capsule())
-                // ~44pt tap target beyond the visual pill.
-                .contentShape(Rectangle().inset(by: -6))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Retry meal update")
-
-        Button(action: onDismiss) {
-            Image(systemName: "xmark")
-                .font(Design.Typeface.text(.caption2, weight: .bold))
-                .foregroundStyle(Design.Color.textSecondary)
-                .frame(width: 30, height: 30)
-                .background(Design.Color.surface3, in: Circle())
-                .contentShape(Circle().inset(by: -7))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Dismiss update failure")
-        .accessibilityHint("Discards the correction")
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.horizontal, Design.Space.xs)
+        .padding(.top, 2)
     }
 }
 
