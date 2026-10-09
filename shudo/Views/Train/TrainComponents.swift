@@ -23,8 +23,8 @@ enum TrainStyle {
 
 // MARK: - Week: the plan in one line, the seven days as seals
 
-/// The week at a glance: seven small seals (a lacquered disc with the
-/// session's letter where Luke trained, a dot where he didn't, today ringed
+/// The week at a glance: seven small seals (a warm disc with the session's
+/// letter where Luke trained, a dot where he didn't, today ringed
 /// in Pernambuco) and under them the plan's name with "3 of 4". No box —
 /// it sits on the canvas like the date line of a journal page.
 struct TrainWeekHeader: View {
@@ -85,10 +85,11 @@ struct TrainWeekHeader: View {
     }
 }
 
-/// One day of the week strip. Trained days are lacquered heartwood seals
-/// (the same lacquer as Luke's own chat bubbles — things he did); a walk or
-/// a ride is just its glyph; rest days are a single dot. Today's letter and
-/// ring are the strip's only Pernambuco. A seal settles in with a small
+/// One day of the week strip. Trained days are soft seals — a disc of
+/// Pernambuco at a fifth strength with the session's letter in oak, so the
+/// strip stays quieter than the session below it; a walk or a ride is just
+/// its glyph; rest days are a single dot. Today's letter and ring are the
+/// strip's only full-strength Pernambuco. A seal settles in with a small
 /// press when a session lands.
 struct TrainDayPad: View {
     let day: TrainingWeekDay
@@ -106,7 +107,7 @@ struct TrainDayPad: View {
             ZStack {
                 if day.trained {
                     Circle()
-                        .fill(Design.Color.bubbleMe)
+                        .fill(Design.Color.pernambuco.opacity(0.2))
                         .transition(reduceMotion ? .opacity : .scale(scale: 1.25).combined(with: .opacity))
                 }
                 mark
@@ -126,11 +127,11 @@ struct TrainDayPad: View {
         if day.trained, let marker = day.marker {
             Text(marker)
                 .font(Design.Typeface.numeral(.footnote, weight: .semibold))
-                .foregroundStyle(Design.Color.onBubbleMe)
+                .foregroundStyle(Design.Color.oak)
         } else if let symbol = day.symbolName {
             Image(systemName: symbol)
                 .font(Design.Typeface.text(.caption, weight: .semibold))
-                .foregroundStyle(day.trained ? Design.Color.onBubbleMe : Design.Color.textTertiary)
+                .foregroundStyle(day.trained ? Design.Color.oak : Design.Color.textTertiary)
         } else {
             Circle()
                 .fill(day.isFuture ? Design.Color.surface3 : Design.Color.textDisabled)
