@@ -171,11 +171,33 @@ struct CaptureBar: View {
             .padding(.trailing, 11)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Design.Color.surface1, in: Capsule())
-            .transition(.shoji(.leading, reduceMotion: reduceMotion))
+            .transition(stripTransition)
         } else {
             ShellTabBar(tab: $tab, todayBadge: todayBadge)
-                .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+                .transition(tabsTransition)
         }
+    }
+
+    /// A shoji hand-off, never a blend: the strip unfolds out of the well a
+    /// beat after the tabs have gone, and folds back into it on send / ✕.
+    private var stripTransition: AnyTransition {
+        guard !reduceMotion else {
+            return .asymmetric(
+                insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.1)),
+                removal: .opacity.animation(.easeIn(duration: 0.12))
+            )
+        }
+        return .asymmetric(
+            insertion: .shoji(.leading, reduceMotion: false).animation(Design.Motion.settle.delay(0.1)),
+            removal: .shoji(.leading, reduceMotion: false).animation(.easeIn(duration: 0.14))
+        )
+    }
+
+    private var tabsTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.animation(.easeOut(duration: 0.24).delay(0.12)),
+            removal: .opacity.animation(.easeIn(duration: 0.1))
+        )
     }
 
     @ViewBuilder
