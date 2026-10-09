@@ -96,7 +96,7 @@ struct WeightTrendChart: View {
         .chartXAxis {
             AxisMarks(values: weeklyTicks(from: xLower)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: false)
-                    .font(.caption2)
+                    .font(Design.Typeface.text(.caption2))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
@@ -105,7 +105,7 @@ struct WeightTrendChart: View {
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
                     .foregroundStyle(Design.Color.hairline)
                 AxisValueLabel()
-                    .font(.caption2)
+                    .font(Design.Typeface.text(.caption2))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }

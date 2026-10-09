@@ -39,6 +39,8 @@ struct BodyCheckInFlow: View {
     @State private var errorMessage: String?
     @State private var savedCount = 0
     @FocusState private var weightFocused: Bool
+    @Namespace private var poseNamespace
+    private let weightFontSize: CGFloat = 48
 
     /// - Parameters:
     ///   - localDay: the `yyyy-MM-dd` day being checked in (usually today).
@@ -93,29 +95,41 @@ struct BodyCheckInFlow: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             switch step {
             case .camera:
                 PhysiqueCameraView(
                     ghost: ghost,
                     onCapture: { captured in
                         capture = captured
-                        withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
-                            step = .review
-                        }
+                        go(to: .review)
                     },
                     onCancel: {
-                        if capture != nil { step = .review } else { dismiss() }
+                        if capture != nil { go(to: .review) } else { dismiss() }
                     }
                 )
+                .transition(.opacity)
             case .review, .weight:
                 entryScreen
+                    .transition(.shoji(.trailing, reduceMotion: reduceMotion))
             }
+        }
+        .background {
+            // The weight-only sheet shows its own walnut presentation background.
+            if step != .weight { Color.black.ignoresSafeArea() }
         }
         .preferredColorScheme(.dark)
         .task { await loadGhost() }
+        // The one haptic in the ritual: the check-in landed.
         .sensoryFeedback(.success, trigger: savedCount)
         .interactiveDismissDisabled(isSaving)
+    }
+
+    /// Camera ⇄ review slide like a shoji panel; a fade under Reduce Motion.
+    private func go(to next: Step) {
+        withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) {
+            step = next
+        }
     }
 
     // MARK: Review / weight entry
@@ -123,30 +137,32 @@ struct BodyCheckInFlow: View {
     private var entryScreen: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: step == .review ? Design.Space.xl : Design.Space.s) {
                     if step == .review { photoBlock }
                     weightField
-                    if step == .weight {
-                        Text("Or just tell Shudo your weight.")
-                            .font(.footnote)
-                            .foregroundStyle(Design.Color.textTertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    Text(step == .weight ? "Or just tell Shudo your weight." : "Weight, if you have it")
+                        .font(Design.Typeface.text(.footnote))
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .padding(.top, step == .review ? -Design.Space.l : 0)
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.circle")
-                            .font(.footnote)
+                            .font(Design.Typeface.text(.footnote))
                             .foregroundStyle(Design.Color.danger)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
+                            .transition(.ink(reduceMotion: reduceMotion))
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, step == .weight ? 4 : 8)
-                .padding(.bottom, 16)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, Design.Space.gutter)
+                .padding(.top, step == .weight ? 0 : Design.Space.s)
+                .padding(.bottom, Design.Space.l)
+                .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: errorMessage)
             }
             .scrollDismissesKeyboard(.interactively)
             .scrollBounceBehavior(.basedOnSize)
-            .background(Design.Color.canvas.ignoresSafeArea())
+            .background {
+                if step == .review { Design.Color.canvas.ignoresSafeArea() }
+            }
             .navigationTitle(step == .weight ? "Weight" : "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -155,7 +171,7 @@ struct BodyCheckInFlow: View {
                 }
                 if step == .review {
                     ToolbarItem(placement: .primaryAction) {
-                        Button("Retake") { step = .camera }
+                        Button("Retake") { go(to: .camera) }
                             .disabled(isSaving)
                     }
                 }
@@ -172,7 +188,7 @@ struct BodyCheckInFlow: View {
     }
 
     private var photoBlock: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: Design.Space.l) {
             if let image = capture?.image {
                 Color.clear
                     .aspectRatio(3 / 4, contentMode: .fit)
@@ -185,57 +201,71 @@ struct BodyCheckInFlow: View {
                     .accessibilityElement()
                     .accessibilityLabel("Today's check-in photo")
             }
-            HStack(spacing: 6) {
-                ForEach([PhysiquePose.frontRelaxed, .frontFlexed, .side, .back]) { option in
-                    Button {
-                        pose = option
-                    } label: {
-                        Text(option.label)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(pose == option ? Design.Color.onEmber : Design.Color.textSecondary)
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 32)
-                            .background(
-                                pose == option ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.surface2),
-                                in: Capsule())
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(option.label) pose")
-                    .accessibilityAddTraits(pose == option ? .isSelected : [])
-                }
-            }
-            .sensoryFeedback(.selection, trigger: pose)
+            posePicker
         }
         .frame(maxWidth: .infinity)
     }
 
-    private var weightField: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: "scalemass.fill")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Design.Color.textTertiary)
-                .accessibilityHidden(true)
-            TextField("—", text: $weightText)
-                .keyboardType(.decimalPad)
-                .focused($weightFocused)
-                .font(Design.Typeface.numeral(.largeTitle, weight: .bold))
-                .foregroundStyle(weightIsInvalid ? Design.Color.danger : Design.Color.textPrimary)
-                .monospacedDigit()
-                .fixedSize()
-                .onChange(of: weightText) { _, value in
-                    let filtered = value.filter { $0.isNumber || $0 == "." || $0 == "," }
-                    if filtered != value { weightText = filtered }
+    /// Four quiet words; the chosen one sits on a walnut step.
+    private var posePicker: some View {
+        HStack(spacing: Design.Space.xxs) {
+            ForEach([PhysiquePose.frontRelaxed, .frontFlexed, .side, .back]) { option in
+                let selected = pose == option
+                Button {
+                    withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) {
+                        pose = option
+                    }
+                } label: {
+                    Text(option.label)
+                        .font(Design.Typeface.text(.footnote, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? Design.Color.textPrimary : Design.Color.textTertiary)
+                        .padding(.horizontal, Design.Space.m)
+                        .frame(minHeight: 32)
+                        .background {
+                            if selected {
+                                Capsule()
+                                    .fill(Design.Color.surface3)
+                                    .matchedGeometryEffect(id: "pose", in: poseNamespace)
+                            }
+                        }
+                        .contentShape(Capsule())
                 }
-                .accessibilityLabel("Weight in \(unitLabel == "lb" ? "pounds" : "kilograms")")
-            Text(unitLabel)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Design.Color.textSecondary)
-            Spacer(minLength: 0)
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(option.label) pose")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .cardSurface()
+    }
+
+    /// The number is the hero of this step: a serif figure, centred, with a
+    /// hairline beneath where the digits land.
+    private var weightField: some View {
+        VStack(spacing: Design.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.s) {
+                TextField("—", text: $weightText)
+                    .keyboardType(.decimalPad)
+                    .focused($weightFocused)
+                    .font(BodyType.hero(weightFontSize))
+                    .foregroundStyle(weightIsInvalid ? Design.Color.danger : Design.Color.textPrimary)
+                    .monospacedDigit()
+                    .multilineTextAlignment(.center)
+                    .fixedSize()
+                    .onChange(of: weightText) { _, value in
+                        let filtered = value.filter { $0.isNumber || $0 == "." || $0 == "," }
+                        if filtered != value { weightText = filtered }
+                    }
+                    .accessibilityLabel("Weight in \(unitLabel == "lb" ? "pounds" : "kilograms")")
+                Text(unitLabel)
+                    .font(Design.Typeface.display(.title3))
+                    .foregroundStyle(Design.Color.textSecondary)
+            }
+            Rectangle()
+                .fill(weightFocused ? Design.Color.pernambuco.opacity(0.7) : Design.Color.strokeStrong)
+                .frame(width: 140, height: 1)
+                .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: weightFocused)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Design.Space.xs)
         .contentShape(Rectangle())
         .onTapGesture { weightFocused = true }
     }
@@ -249,35 +279,24 @@ struct BodyCheckInFlow: View {
         }
     }
 
+    /// The step's one primary action: a hinoki slab with sumi ink.
     private var saveBar: some View {
         Button(action: save) {
-            HStack(spacing: 8) {
+            ZStack {
+                Text("Save").opacity(isSaving ? 0 : 1)
                 if isSaving {
-                    ProgressView().tint(Design.Color.onEmber)
-                } else {
-                    Image(systemName: "checkmark")
-                }
-                Text("Save")
-            }
-            .font(.headline)
-            .foregroundStyle(canSave || isSaving ? Design.Color.onEmber : Design.Color.textTertiary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 54)
-            .background {
-                if canSave || isSaving {
-                    Capsule().fill(Design.Color.emberFill)
-                } else {
-                    Capsule().fill(Design.Color.surface2)
+                    ProgressView().tint(Design.Color.onCream)
                 }
             }
-            .contentShape(Capsule())
+            .font(Design.Typeface.text(.headline, weight: .semibold))
+            .frame(maxWidth: .infinity, minHeight: 26)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PrimaryButtonStyle())
         .disabled(!canSave)
         .accessibilityLabel(isSaving ? "Saving" : "Save")
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(Design.Color.canvas.opacity(0.92))
+        .padding(.horizontal, Design.Space.gutter)
+        .padding(.top, Design.Space.s)
+        .padding(.bottom, Design.Space.m)
     }
 
     // MARK: Actions

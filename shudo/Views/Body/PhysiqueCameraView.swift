@@ -96,7 +96,7 @@ struct PhysiqueCameraView: View {
             timerSeconds = next.rawValue
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: "timer").font(.footnote.weight(.bold))
+                Image(systemName: "timer").font(Design.Typeface.text(.footnote, weight: .bold))
                 Text("\(timer.rawValue)s")
                     .font(Design.Typeface.numeral(.subheadline, weight: .bold))
                     .contentTransition(.numericText(value: Double(timer.rawValue)))
@@ -116,7 +116,7 @@ struct PhysiqueCameraView: View {
     private func circleButton(_ symbol: String, label: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.body.weight(.semibold))
+                .font(Design.Typeface.text(.body, weight: .semibold))
                 .foregroundStyle(active ? Design.Color.ember : Design.Color.textPrimary)
                 .frame(width: 40, height: 40)
                 .chromeGlass(in: Circle(), tint: Design.Color.canvas.opacity(0.4), interactive: true)
@@ -145,7 +145,7 @@ struct PhysiqueCameraView: View {
             .padding(12)
             if let countdown {
                 Text("\(countdown)")
-                    .font(.system(size: 120, weight: .heavy, design: .rounded))
+                    .font(BodyType.fixed(120, weight: .light))
                     .foregroundStyle(Design.Color.cream)
                     .shadow(color: .black.opacity(0.5), radius: 12)
                     .contentTransition(.numericText(countsDown: true))
@@ -188,13 +188,13 @@ struct PhysiqueCameraView: View {
         ZStack {
             Design.Color.surface1
             VStack(spacing: 10) {
-                Image(systemName: "camera.fill").font(.title).foregroundStyle(Design.Color.textTertiary)
-                Text(title).font(.headline).foregroundStyle(Design.Color.textPrimary)
-                Text(detail).font(.footnote).foregroundStyle(Design.Color.textSecondary)
+                Image(systemName: "camera.fill").font(Design.Typeface.text(.title)).foregroundStyle(Design.Color.textTertiary)
+                Text(title).font(Design.Typeface.text(.headline, weight: .semibold)).foregroundStyle(Design.Color.textPrimary)
+                Text(detail).font(Design.Typeface.text(.footnote)).foregroundStyle(Design.Color.textSecondary)
                     .multilineTextAlignment(.center)
                 if showsSettings, let url = URL(string: UIApplication.openSettingsURLString) {
                     Link("Open Settings", destination: url)
-                        .font(.subheadline.weight(.semibold))
+                        .font(Design.Typeface.text(.subheadline, weight: .semibold))
                         .foregroundStyle(Design.Color.ember)
                 }
             }
@@ -225,7 +225,7 @@ struct PhysiqueCameraView: View {
         if camera.state == .running {
             let hint = camera.poseHint
             Label(hint.text, systemImage: hint == .aligned ? "checkmark.circle.fill" : "figure.stand")
-                .font(.footnote.weight(.semibold))
+                .font(Design.Typeface.text(.footnote, weight: .semibold))
                 .foregroundStyle(hint == .aligned ? Design.Color.positive : Design.Color.textPrimary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
@@ -238,12 +238,12 @@ struct PhysiqueCameraView: View {
     private var controls: some View {
         VStack(spacing: 14) {
             if let errorMessage {
-                Text(errorMessage).font(.footnote).foregroundStyle(Design.Color.danger)
+                Text(errorMessage).font(Design.Typeface.text(.footnote)).foregroundStyle(Design.Color.danger)
             }
             HStack {
                 PhotosPicker(selection: $libraryItem, matching: .images) {
                     Image(systemName: "photo.on.rectangle")
-                        .font(.title3.weight(.semibold))
+                        .font(Design.Typeface.text(.title3, weight: .semibold))
                         .foregroundStyle(Design.Color.textPrimary)
                         .frame(width: 52, height: 52)
                         .background(Design.Color.surface2, in: Circle())

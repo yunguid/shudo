@@ -71,6 +71,23 @@ extension View {
     }
 }
 
+// MARK: - Type at sizes the text styles don't reach
+
+/// Still the app's one face (`Design.Typeface`), at the two sizes its text
+/// styles don't cover: a page's hero figure and tiny fixed labels inside
+/// dense graphics.
+enum BodyType {
+    /// The page's one hero number; scales with Dynamic Type from `.largeTitle`.
+    static func hero(_ size: CGFloat, weight: Font.Weight = .light) -> Font {
+        .custom(Design.Typeface.faceName(weight), size: size, relativeTo: .largeTitle).monospacedDigit()
+    }
+
+    /// Calendar anchors and thumbnail tags: fixed, so a dense grid never reflows.
+    static func fixed(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
+        .custom(Design.Typeface.faceName(weight), fixedSize: size)
+    }
+}
+
 // MARK: - Buttons & placeholders
 
 /// Small capsule actions on the Body page. `prominent` is the accent CTA
@@ -82,7 +99,7 @@ struct BodyPillButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(prominent ? .semibold : .medium))
+            .font(Design.Typeface.text(.subheadline, weight: prominent ? .semibold : .medium))
             .labelStyle(.titleAndIcon)
             .foregroundStyle(prominent ? Design.Color.onEmber : Design.Color.textPrimary)
             .padding(.horizontal, 14)
@@ -116,7 +133,7 @@ struct CheckInPhotoPlaceholder: View {
             }
             .overlay {
                 Image(systemName: "camera")
-                    .font(.body)
+                    .font(Design.Typeface.text(.body))
                     .foregroundStyle(Design.Color.oak)
             }
     }

@@ -101,7 +101,7 @@ struct AdherenceHeatmapView: View {
     private func summary(cells: [AdherenceHeatmapCell]) -> some View {
         if let line = summaryLine(cells: cells) {
             Text(line)
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textSecondary)
                 .monospacedDigit()
         }
@@ -134,7 +134,7 @@ struct AdherenceHeatmapView: View {
                 // Odd rows only: with a Sunday-first week that reads M/W/F —
                 // unambiguous single letters, unlike the even rows' S/T/T/S.
                 Text(row.isMultiple(of: 2) ? "" : symbols[(firstIndex + row) % 7])
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(BodyType.fixed(8.5))
                     .foregroundStyle(Design.Color.textTertiary)
                     .frame(
                         width: Self.weekdayGutterWidth,
@@ -181,7 +181,7 @@ struct AdherenceHeatmapView: View {
             Color.clear.frame(height: 10)
             ForEach(labels, id: \.column) { label in
                 Text(label.text)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(BodyType.fixed(9))
                     .foregroundStyle(Design.Color.textTertiary)
                     .fixedSize()
                     .offset(x: CGFloat(label.column) * (metrics.cellSize + Self.cellSpacing))
@@ -263,11 +263,11 @@ struct AdherenceHeatmapView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let cell {
                 Text(formatter.string(from: cell.date))
-                    .font(.caption.weight(.medium))
+                    .font(Design.Typeface.text(.caption, weight: .medium))
                     .foregroundStyle(Design.Color.textPrimary)
                 if let total = cell.total, total.entryCount > 0 {
                     Text(verdict(for: cell, isToday: cell.localDay == todayLocalDay))
-                        .font(.caption)
+                        .font(Design.Typeface.text(.caption))
                         .foregroundStyle(Design.Color.oak)
                         .monospacedDigit()
                     Spacer(minLength: 4)
@@ -279,13 +279,13 @@ struct AdherenceHeatmapView: View {
                         .minimumScaleFactor(0.72)
                 } else {
                     Text("Nothing logged")
-                        .font(.caption)
+                        .font(Design.Typeface.text(.caption))
                         .foregroundStyle(Design.Color.textSecondary)
                     Spacer(minLength: 4)
                 }
             } else {
                 Text("Tap a day to check its numbers")
-                    .font(.caption)
+                    .font(Design.Typeface.text(.caption))
                     .foregroundStyle(Design.Color.textSecondary)
                 Spacer(minLength: 4)
             }

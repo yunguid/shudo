@@ -12,7 +12,7 @@ struct WeeklyInsightsScreen: View {
     @State private var targetHistory: [DailyMacroTargetSnapshot] = []
     @State private var isLoading: Bool
     @State private var errorMessage: String?
-    @ScaledMetric(relativeTo: .largeTitle) private var heroSize: CGFloat = 64
+    private let heroSize: CGFloat = 60
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let service: SupabaseService
@@ -94,7 +94,7 @@ struct WeeklyInsightsScreen: View {
             VStack(alignment: .leading, spacing: Design.Space.s) {
                 Text("Last 7 days").eyebrowStyle()
                 Text(errorMessage)
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textSecondary)
             }
         } else if isLoading {
@@ -122,7 +122,7 @@ struct WeeklyInsightsScreen: View {
             VStack(alignment: .leading, spacing: Design.Space.s) {
                 Text("Last 7 days").eyebrowStyle()
                 Text("Nothing logged in the last seven days.")
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textSecondary)
             }
         }
@@ -135,7 +135,7 @@ struct WeeklyInsightsScreen: View {
                 .eyebrowStyle()
             HStack(alignment: .firstTextBaseline, spacing: Design.Space.s) {
                 Text(Int(average.caloriesKcal.rounded()).formatted())
-                    .font(.system(size: heroSize, weight: .regular, design: .serif))
+                    .font(BodyType.hero(heroSize))
                     .foregroundStyle(Design.Color.textPrimary)
                     .monospacedDigit()
                     .lineLimit(1)
@@ -146,7 +146,7 @@ struct WeeklyInsightsScreen: View {
             }
             .padding(.top, Design.Space.xs)
             Text("a day on average · of \(Int(target.caloriesKcal.rounded()).formatted())")
-                .font(.subheadline)
+                .font(Design.Typeface.text(.subheadline))
                 .foregroundStyle(Design.Color.textSecondary)
                 .monospacedDigit()
         }
@@ -162,7 +162,7 @@ struct WeeklyInsightsScreen: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text("\(Int(average.proteinG.rounded())) g a day · of \(Int(target.proteinG.rounded()))")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textSecondary)
                     .monospacedDigit()
             }
@@ -226,7 +226,7 @@ private struct ProteinWeekBars: View {
             HStack(spacing: 0) {
                 ForEach(days) { day in
                     Text(day.date, format: Date.FormatStyle(timeZone: TimeZone(identifier: timezone) ?? .current).weekday(.narrow))
-                        .font(.caption2.weight(day.id == days.last?.id ? .semibold : .regular))
+                        .font(Design.Typeface.text(.caption2, weight: day.id == days.last?.id ? .semibold : .regular))
                         .foregroundStyle(day.id == days.last?.id ? Design.Color.textPrimary : Design.Color.textTertiary)
                         .frame(maxWidth: .infinity)
                 }

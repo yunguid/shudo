@@ -13,7 +13,7 @@ struct BodyScreen: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @ScaledMetric(relativeTo: .largeTitle) private var heroSize: CGFloat = 64
+    private let heroSize: CGFloat = 60
     @Namespace private var zoom
     @State private var revealed: Bool
     @State private var showsCamera = false
@@ -131,7 +131,7 @@ struct BodyScreen: View {
         .overlay {
             if scenePhase != .active {
                 Image(systemName: "lock.fill")
-                    .font(.title)
+                    .font(Design.Typeface.text(.title))
                     .foregroundStyle(Design.Color.textTertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Design.Color.canvas.opacity(0.45))
@@ -244,7 +244,7 @@ struct BodyScreen: View {
     private func heroFigure(_ kilograms: Double) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Design.Space.s) {
             Text(String(format: "%.1f", BodyUnits.display(kilograms, units: units)))
-                .font(.system(size: heroSize, weight: .regular, design: .serif))
+                .font(BodyType.hero(heroSize))
                 .monospacedDigit()
                 .foregroundStyle(Design.Color.textPrimary)
                 .contentTransition(.numericText(value: kilograms))
@@ -255,7 +255,7 @@ struct BodyScreen: View {
                 .foregroundStyle(Design.Color.textSecondary)
             if snapshot.trend == nil {
                 Text("self-reported")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
@@ -279,7 +279,7 @@ struct BodyScreen: View {
                     Text(label).foregroundStyle(status.color)
                 }
             }
-            .font(.subheadline)
+            .font(Design.Typeface.text(.subheadline))
             .monospacedDigit()
             .accessibilityElement(children: .combine)
         }
@@ -312,7 +312,7 @@ struct BodyScreen: View {
                 .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
                 .foregroundStyle(Design.Color.pernambuco)
             Text("of \(BodyUnits.format(meter.goalDisplay)) \(BodyUnits.label(units))")
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textTertiary)
         }
         .monospacedDigit()
@@ -354,7 +354,7 @@ struct BodyScreen: View {
                     .foregroundStyle(Design.Color.textPrimary)
                 if let weight = checkIn?.weightKG {
                     Text("\(weightText(weight)) · photo still to take")
-                        .font(.footnote)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.textSecondary)
                         .monospacedDigit()
                 } else {
@@ -411,7 +411,7 @@ struct BodyScreen: View {
             layout {
                 VStack(alignment: .leading, spacing: Design.Space.xxs) {
                     Text(checkedInTitle(checkIn))
-                        .font(.subheadline.weight(.medium))
+                        .font(Design.Typeface.text(.subheadline, weight: .medium))
                         .foregroundStyle(Design.Color.textPrimary)
                         .monospacedDigit()
                     streakLabel(fallback: checkIn.weightKG.map(weightText))
@@ -464,7 +464,7 @@ struct BodyScreen: View {
         if snapshot.streak > 0 {
             HStack(spacing: Design.Space.xs) {
                 Image(systemName: "flame")
-                    .font(.caption.weight(.medium))
+                    .font(Design.Typeface.text(.caption, weight: .medium))
                     .foregroundStyle(Design.Color.oak)
                     .accessibilityHidden(true)
                 Text(snapshot.streakAtRisk
@@ -473,11 +473,11 @@ struct BodyScreen: View {
                     .foregroundStyle(snapshot.streakAtRisk ? Design.Color.oak : Design.Color.textSecondary)
                     .contentTransition(.numericText(value: Double(snapshot.streak)))
             }
-            .font(.footnote)
+            .font(Design.Typeface.text(.footnote))
             .monospacedDigit()
         } else if let fallback {
             Text(fallback)
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textSecondary)
                 .monospacedDigit()
         }
@@ -524,7 +524,7 @@ struct BodyScreen: View {
                         compare = CompareRequest(before: nil, source: ZoomSource.compare)
                     } label: {
                         Text("Compare")
-                            .font(.footnote.weight(.medium))
+                            .font(Design.Typeface.text(.footnote, weight: .medium))
                             .foregroundStyle(Design.Color.textSecondary)
                             .padding(.vertical, Design.Space.xs)
                             .contentShape(Rectangle())
@@ -597,7 +597,7 @@ struct BodyScreen: View {
 
     private func errorBanner(_ message: String) -> some View {
         Label(message, systemImage: "wifi.exclamationmark")
-            .font(.footnote)
+            .font(Design.Typeface.text(.footnote))
             .foregroundStyle(Design.Color.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

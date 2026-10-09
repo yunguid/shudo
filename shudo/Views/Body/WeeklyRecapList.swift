@@ -64,7 +64,7 @@ struct WeeklyRecapList: View {
                 .frame(minWidth: dateColumnWidth, alignment: .leading)
                 .fixedSize()
             Text(summary.headline)
-                .font(.subheadline)
+                .font(Design.Typeface.text(.subheadline))
                 .foregroundStyle(Design.Color.textPrimary)
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -150,7 +150,7 @@ struct WeeklyRecapDetail: View {
                             Text(pattern).foregroundStyle(Design.Color.textSecondary)
                         }
                     }
-                    .font(.body)
+                    .font(Design.Typeface.text(.body))
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                 }
@@ -165,7 +165,7 @@ struct WeeklyRecapDetail: View {
                                     .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                                     .accessibilityHidden(true)
                                 Text(item)
-                                    .font(.subheadline)
+                                    .font(Design.Typeface.text(.subheadline))
                                     .foregroundStyle(Design.Color.textPrimary)
                                     .lineSpacing(2)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -205,7 +205,7 @@ struct WeeklyRecapDetail: View {
                 .foregroundStyle(Design.Color.textPrimary)
                 .monospacedDigit()
             Text("\(unit) a day · of \(target)")
-                .font(.caption)
+                .font(Design.Typeface.text(.caption))
                 .foregroundStyle(Design.Color.textTertiary)
                 .monospacedDigit()
         }
@@ -224,7 +224,7 @@ struct WeeklyRecapDetail: View {
                 ForEach(Array(flagged)) { nutrient in
                     HStack(alignment: .firstTextBaseline) {
                         Text(nutrient.name)
-                            .font(.subheadline)
+                            .font(Design.Typeface.text(.subheadline))
                             .foregroundStyle(Design.Color.textPrimary)
                         Spacer(minLength: 8)
                         Text(nutrient.status == "high" ? "over · \(nutrient.percentReference)%" : "low · \(nutrient.percentReference)%")

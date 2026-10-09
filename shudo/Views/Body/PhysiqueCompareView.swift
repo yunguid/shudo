@@ -97,7 +97,7 @@ struct PhysiqueCompareView: View {
                     .shadow(color: .black.opacity(0.4), radius: 4)
                     .offset(x: width * wipe - 1)
                 Image(systemName: "arrow.left.and.right")
-                    .font(.footnote.weight(.bold))
+                    .font(Design.Typeface.text(.footnote, weight: .bold))
                     .foregroundStyle(Design.Color.onEmber)
                     .frame(width: 36, height: 36)
                     .background(Design.Color.emberFill, in: Circle())
@@ -224,7 +224,7 @@ struct PhysiqueCompareView: View {
                                 }
                                 .overlay(alignment: .bottom) {
                                     Text(BodyDayLabel.short(checkIn.localDay))
-                                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                                        .font(BodyType.fixed(9, weight: .semibold))
                                         .foregroundStyle(Design.Color.textPrimary)
                                         .padding(.bottom, 3)
                                         .shadow(color: .black.opacity(0.6), radius: 2)
@@ -248,7 +248,7 @@ struct PhysiqueCompareView: View {
             picking = side
         } label: {
             Text(title)
-                .font(.footnote.weight(.semibold))
+                .font(Design.Typeface.text(.footnote, weight: .semibold))
                 .foregroundStyle(picking == side ? Design.Color.onEmber : Design.Color.textPrimary)
                 .padding(.horizontal, 12)
                 .frame(height: 30)
@@ -312,11 +312,11 @@ struct PhysiquePhotoViewer: View {
                 }
             }
             if let note = checkIn.note {
-                Text(note).font(.subheadline).foregroundStyle(Design.Color.textSecondary)
+                Text(note).font(Design.Typeface.text(.subheadline)).foregroundStyle(Design.Color.textSecondary)
             }
             if let review = checkIn.coachReview, let headline = review.headline ?? review.coachNote {
                 Label {
-                    Text(headline).font(.subheadline).foregroundStyle(Design.Color.textPrimary)
+                    Text(headline).font(Design.Typeface.text(.subheadline)).foregroundStyle(Design.Color.textPrimary)
                 } icon: {
                     CoachAvatar(size: 20)
                 }
