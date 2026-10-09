@@ -182,13 +182,15 @@ struct TrainHeroHeading: View {
 }
 
 /// The plan's next session: every lift with today's number (Pernambuco
-/// where the weight goes up), "Log session" (voice, through the capture
-/// bar) and a quiet way to type it or add a screenshot instead. The one
-/// panel on the Train tab — everything else sits on the canvas.
+/// where the weight goes up). The one panel on the Train tab — everything
+/// else sits on the canvas. Logging it belongs to the command well in the
+/// corner (tap to say it); the panel only offers the quiet typed way, with
+/// the session's numbers ready to fill in. VoiceOver gets "Log by voice" as
+/// an action on the panel.
 struct NextSessionCard: View {
     let session: TrainingSession
     let targets: [LiftTarget]
-    let onLog: () -> Void
+    var onLogByVoice: (() -> Void)?
     let onType: () -> Void
 
     var body: some View {
@@ -202,24 +204,23 @@ struct NextSessionCard: View {
                     LiftTargetRow(target: target)
                 }
             }
-            HStack(spacing: 10) {
-                Button(action: onLog) {
-                    Label("Log session", systemImage: "mic.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                Button(action: onType) {
-                    Image(systemName: "keyboard")
-                        .frame(minWidth: 22)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityLabel("Type it or add a screenshot")
+            Button(action: onType) {
+                Label("Type it in", systemImage: "keyboard")
+                    .font(Design.Typeface.text(.footnote, weight: .semibold))
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .padding(.vertical, 8)
+                    .padding(.trailing, 12)
+                    .contentShape(Rectangle())
             }
-            .padding(.top, 2)
+            .buttonStyle(TrainRowButtonStyle())
+            .padding(.top, -6)
+            .padding(.bottom, -8)
+            .accessibilityHint("Opens the logger with this session's numbers")
         }
         .padding(TrainStyle.heroPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardSurface(radius: Design.Radius.cardLarge)
+        .accessibilityAction(named: "Log by voice") { onLogByVoice?() ?? onType() }
     }
 }
 

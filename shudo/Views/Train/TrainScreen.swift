@@ -26,10 +26,12 @@ struct WorkoutLogContext: Identifiable {
 ///
 /// `onAskCoach` receives a complete sentence for the coach ("Build me a
 /// training plan…") — send it, or prefill the capture bar with it.
-/// `onLogByVoice` is "Log session": the shell binds it to the capture bar's
-/// mic in the Train context. Unbound, it opens the typed logger instead.
-/// There is no "+" — logging lives in the capture bar (tap to talk, hold
-/// for "Log workout" or a photo).
+/// Logging lives in the command well in the corner (tap to say it, hold for
+/// "Log workout" or a photo), so the tab has no "+" and no big Log button —
+/// the session panel offers only the quiet typed way. `onLogByVoice` (the
+/// shell binds it to the well's recorder in the Train context) backs the
+/// panel's VoiceOver "Log by voice" action; unbound, that opens the typed
+/// logger.
 struct TrainScreen: View {
     @StateObject private var viewModel: TrainViewModel
     var onAskCoach: (String) -> Void
@@ -245,13 +247,7 @@ struct TrainScreen: View {
                 NextSessionCard(
                     session: next,
                     targets: snapshot.nextTargets,
-                    onLog: {
-                        if let onLogByVoice {
-                            onLogByVoice()
-                        } else {
-                            logContext = WorkoutLogContext(session: next, targets: snapshot.nextTargets)
-                        }
-                    },
+                    onLogByVoice: onLogByVoice,
                     onType: { logContext = WorkoutLogContext(session: next, targets: snapshot.nextTargets) })
                     .transition(.ink(reduceMotion: reduceMotion))
             } else {
