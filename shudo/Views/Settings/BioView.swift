@@ -205,16 +205,7 @@ struct BioView: View {
         .padding(.horizontal, Design.Space.l)
         .padding(.top, Design.Space.l)
         .padding(.bottom, Design.Space.s)
-        .background {
-            LinearGradient(
-                colors: [Design.Color.canvas.opacity(0), Design.Color.canvas],
-                startPoint: .top,
-                // Fully canvas by the slab's top edge, so text never shows
-                // through beside it.
-                endPoint: UnitPoint(x: 0.5, y: 0.32)
-            )
-            .ignoresSafeArea()
-        }
+        .bottomBarGround()
     }
 
     /// Left-handed layout like the capture bar: mic at the left edge, the

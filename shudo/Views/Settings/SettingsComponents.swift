@@ -245,6 +245,26 @@ extension View {
 
     /// A loading placeholder that breathes slowly.
     func breathesSlowly() -> some View { modifier(SlowBreath()) }
+
+    /// A bottom bar's ground: solid canvas behind the controls, with a short
+    /// fixed fade above so scrolling text dissolves before it reaches them
+    /// (never half-visible beside a button).
+    func bottomBarGround(fade: CGFloat = 28) -> some View {
+        background {
+            Design.Color.canvas
+                .overlay(alignment: .top) {
+                    LinearGradient(
+                        colors: [Design.Color.canvas.opacity(0), Design.Color.canvas],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: fade)
+                    .offset(y: -fade)
+                    .allowsHitTesting(false)
+                }
+                .ignoresSafeArea()
+        }
+    }
 }
 
 extension AnyTransition {

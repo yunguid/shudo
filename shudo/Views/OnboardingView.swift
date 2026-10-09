@@ -483,14 +483,7 @@ struct OnboardingView: View {
         .padding(.horizontal, Design.Space.xl)
         .padding(.top, Design.Space.l)
         .padding(.bottom, Design.Space.s)
-        .background {
-            LinearGradient(
-                colors: [Design.Color.canvas.opacity(0), Design.Color.canvas],
-                startPoint: .top,
-                endPoint: UnitPoint(x: 0.5, y: 0.32)
-            )
-            .ignoresSafeArea()
-        }
+        .bottomBarGround()
     }
 
     private var captureBar: some View {
