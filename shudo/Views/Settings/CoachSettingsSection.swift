@@ -21,9 +21,10 @@ struct CoachSettingsSection: View {
     @State private var quietSaveTask: Task<Void, Never>?
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: Design.Space.section) {
             SettingsGroup(label: "Coach") {
                 enabledRow
                 if settings.enabled {
@@ -52,26 +53,28 @@ struct CoachSettingsSection: View {
             } accessory: {
                 if isSaving {
                     ProgressView().controlSize(.mini).tint(Design.Color.textTertiary)
+                        .transition(.opacity)
                 }
             }
             .disabled(!loaded)
 
             if settings.enabled {
-                SettingsGroup(label: "Notifications") {
+                // "Allow notifications" names itself; ma is the only header.
+                SettingsGroup {
                     notificationsRow
                     quietHoursRow
                 }
-                .transition(.opacity)
+                .transition(.shoji(.top, reduceMotion: reduceMotion))
             }
 
             if let errorMessage {
                 Text(errorMessage)
                     .font(.footnote)
                     .foregroundStyle(Design.Color.danger)
-                    .padding(.horizontal, 16)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .animation(Design.Motion.snap, value: settings.enabled)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: settings.enabled)
         .task { await load() }
         .onChange(of: scenePhase) { _, phase in
             // Back from iOS Settings: reflect what changed there.
@@ -83,39 +86,21 @@ struct CoachSettingsSection: View {
     // MARK: Rows
 
     private var enabledRow: some View {
-        Toggle(isOn: Binding(get: { settings.enabled }, set: { setEnabled($0) })) {
-            HStack(spacing: 12) {
-                CoachAvatar(size: 28)
+        SettingsToggleRow(isOn: Binding(get: { settings.enabled }, set: { setEnabled($0) })) {
+            HStack(spacing: Design.Space.m) {
+                CoachAvatar(size: 26)
                 Text("Shudo texts you")
                     .font(.body)
                     .foregroundStyle(Design.Color.textPrimary)
             }
         }
-        .tint(Design.Color.ember)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(minHeight: 56)
         .accessibilityIdentifier("settings.coach.enabled")
     }
 
     private func toggleRow(_ title: String, subtitle: String?, isOn: Binding<Bool>, identifier: String) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.body)
-                    .foregroundStyle(Design.Color.textPrimary)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+        SettingsToggleRow(isOn: isOn) {
+            SettingsRowTitle(title: title, subtitle: subtitle)
         }
-        .tint(Design.Color.ember)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(minHeight: 52)
         .accessibilityIdentifier(identifier)
     }
 
@@ -173,7 +158,7 @@ struct CoachSettingsSection: View {
                     quietUntil
                 }
             }
-            .tint(Design.Color.ember)
+            .tint(Design.Color.pernambuco)
         }
     }
 

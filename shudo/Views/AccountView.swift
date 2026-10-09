@@ -119,15 +119,14 @@ struct AccountView: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: Design.Space.section) {
                 header
                 if let error {
                     Text(error)
                         .font(.footnote)
                         .foregroundStyle(Design.Color.danger)
-                        .frame(maxWidth: .infinity)
-                        .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity)
                 }
                 youGroup
                 CoachSettingsSection(
@@ -143,21 +142,29 @@ struct AccountView: View {
                 Text(BuildIdentity.current.displayText)
                     .font(.caption2.monospaced())
                     .foregroundStyle(Design.Color.textTertiary)
-                    .frame(maxWidth: .infinity)
                     .accessibilityIdentifier("Build identity")
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 32)
+            .padding(.horizontal, Design.Space.xl)
+            .padding(.top, Design.Space.s)
+            .padding(.bottom, Design.Space.xxxl)
         }
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Design.Color.canvas.ignoresSafeArea())
+        .background(AppBackground())
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Settings")
+                    .font(Self.barTitleFont)
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
+                    .tint(Design.Color.textPrimary)
             }
         }
+        .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: error)
         .task {
             guard loadsRemotely else { return }
             await load()
@@ -201,10 +208,15 @@ struct AccountView: View {
         }
     }
 
+    /// The serif title in a settings sheet's navigation bar.
+    static let barTitleFont = Design.Typeface.display(.headline, weight: .medium)
+
     // MARK: Header
 
+    /// You, quietly: a small portrait and your name, set left like a
+    /// signature rather than centred like a profile page.
     private var header: some View {
-        VStack(spacing: 12) {
+        HStack(spacing: Design.Space.l) {
             Button {
                 if profile.avatarPath == nil {
                     isShowingPhotoPicker = true
@@ -213,23 +225,14 @@ struct AccountView: View {
                 }
             } label: {
                 avatar
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Design.Color.textPrimary)
-                            .frame(width: 26, height: 26)
-                            .background(Design.Color.surface3, in: Circle())
-                            .overlay(Circle().stroke(Design.Color.canvas, lineWidth: 3))
-                            .accessibilityHidden(true)
-                    }
             }
             .buttonStyle(.plain)
             .disabled(isSavingProfilePhoto)
             .accessibilityLabel(profile.avatarPath == nil ? "Add profile photo" : "Change profile photo")
 
-            VStack(spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(displayName)
-                    .font(.title2.weight(.semibold))
+                    .font(Design.Typeface.display(.title2))
                     .foregroundStyle(Design.Color.textPrimary)
                     .lineLimit(1)
                 if let email, email != displayName {
@@ -240,9 +243,9 @@ struct AccountView: View {
                         .truncationMode(.middle)
                 }
             }
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 8)
+        .padding(.top, Design.Space.m)
     }
 
     private var displayName: String {
@@ -264,16 +267,17 @@ struct AccountView: View {
                     .allowsHitTesting(false)
             } else {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 34))
+                    .font(.system(size: 22))
                     .foregroundStyle(Design.Color.textTertiary)
             }
             if isLoadingProfilePhoto || isSavingProfilePhoto {
-                Circle().fill(.black.opacity(0.45))
-                ProgressView().tint(.white)
+                Circle().fill(Design.Color.canvas.opacity(0.55))
+                ProgressView().controlSize(.small).tint(Design.Color.textPrimary)
             }
         }
-        .frame(width: 88, height: 88)
+        .frame(width: 56, height: 56)
         .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Design.Color.hairline, lineWidth: Design.Stroke.hairline))
     }
 
     // MARK: You
@@ -313,8 +317,10 @@ struct AccountView: View {
 
     // MARK: Targets
 
+    /// A ledger: label, figure, unit. The macro colours survive only as a
+    /// small mark, so the numbers carry the page.
     private var targetsGroup: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Design.Space.l) {
             SettingsGroup(label: "Daily targets") {
                 targetRow("Calories", unit: "kcal", color: Design.Color.macroKcal, text: $targetDraft.calories, field: .calories)
                 targetRow("Protein", unit: "g", color: Design.Color.macroProtein, text: $targetDraft.protein, field: .protein)
@@ -323,38 +329,38 @@ struct AccountView: View {
             } accessory: {
                 if showsSavedTargets {
                     Label("Saved", systemImage: "checkmark")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Design.Color.positive)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Design.Color.textSecondary)
                         .transition(.opacity)
                 }
             }
 
             if targetsEdited {
-                if targetDraft.validatedTarget == nil {
-                    Text("500–10,000 kcal, and at least 1 g of each macro.")
-                        .font(.footnote)
-                        .foregroundStyle(Design.Color.warning)
-                        .padding(.horizontal, 16)
-                } else {
-                    Button(action: saveTargets) {
-                        HStack(spacing: 8) {
-                            if isSavingTargets { ProgressView().tint(Design.Color.onEmber) }
-                            Text(isSavingTargets ? "Saving…" : "Save targets")
+                Group {
+                    if targetDraft.validatedTarget == nil {
+                        Text("500–10,000 kcal, and at least 1 g of each macro.")
+                            .font(.footnote)
+                            .foregroundStyle(Design.Color.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Button(action: saveTargets) {
+                            HStack(spacing: 8) {
+                                if isSavingTargets {
+                                    ProgressView().controlSize(.small).tint(Design.Color.onCream)
+                                }
+                                Text(isSavingTargets ? "Saving…" : "Save targets")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Design.Color.onEmber)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Design.Color.ember, in: Capsule())
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(isSavingTargets)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isSavingTargets)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+                .transition(.shoji(.top, reduceMotion: reduceMotion))
             }
         }
-        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: targetsEdited)
-        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: showsSavedTargets)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: targetsEdited)
+        .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: showsSavedTargets)
         .sensoryFeedback(.success, trigger: savedTargetsTick)
     }
 
@@ -369,8 +375,11 @@ struct AccountView: View {
         text: Binding<String>,
         field: TargetField
     ) -> some View {
-        HStack(spacing: 12) {
-            Circle().fill(color).frame(width: 7, height: 7)
+        HStack(spacing: Design.Space.m) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+                .accessibilityHidden(true)
             Text(label)
                 .font(.body)
                 .foregroundStyle(Design.Color.textPrimary)
@@ -378,9 +387,10 @@ struct AccountView: View {
             TextField("0", text: text)
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.trailing)
-                .font(Design.Typeface.numeral(.body))
+                .font(Design.Typeface.numeral(.body, weight: .regular))
                 .monospacedDigit()
                 .foregroundStyle(Design.Color.textPrimary)
+                .tint(Design.Color.pernambuco)
                 .frame(maxWidth: 96)
                 .focused($focusedTarget, equals: field)
                 .accessibilityLabel("\(label) target")
@@ -392,34 +402,37 @@ struct AccountView: View {
                 .font(.footnote)
                 .foregroundStyle(Design.Color.textTertiary)
                 .fixedSize()
-                .frame(minWidth: 30, alignment: .leading)
+                .frame(minWidth: 28, alignment: .leading)
         }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 52)
+        .frame(minHeight: SettingsStyle.rowHeight)
         .contentShape(Rectangle())
         .onTapGesture { focusedTarget = field }
     }
 
     // MARK: Account
 
+    /// Leaving: crimson words, no boxes.
     private var accountGroup: some View {
         SettingsGroup {
             Button { isShowingSignOut = true } label: {
-                SettingsRow(title: "Sign out") { EmptyView() }
+                accountActionLabel("Sign out")
             }
             .buttonStyle(.plain)
 
             Button { isShowingDeleteAccount = true } label: {
-                Text("Delete account")
-                    .font(.body)
-                    .foregroundStyle(Design.Color.danger)
-                    .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .contentShape(Rectangle())
+                accountActionLabel("Delete account")
             }
             .buttonStyle(.plain)
             .accessibilityHint("Permanently deletes your meal log and account")
         }
+    }
+
+    private func accountActionLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.body)
+            .foregroundStyle(Design.Color.danger)
+            .frame(maxWidth: .infinity, minHeight: SettingsStyle.rowHeight, alignment: .leading)
+            .contentShape(Rectangle())
     }
 
     // MARK: Flows

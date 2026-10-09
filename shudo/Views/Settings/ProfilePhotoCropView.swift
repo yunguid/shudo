@@ -36,41 +36,49 @@ struct ProfilePhotoCropView: View {
         NavigationStack {
             GeometryReader { geometry in
                 let side = min(geometry.size.width - 40, geometry.size.height - 130)
-                VStack(spacing: 22) {
+                VStack(spacing: Design.Space.xl) {
                     Spacer(minLength: 8)
                     cropCanvas(side: side)
-                    HStack {
+                    HStack(spacing: Design.Space.m) {
                         Image(systemName: "minus.magnifyingglass")
                         Slider(value: $zoom, in: 1...4)
-                            .tint(Design.Color.ember)
+                            .tint(Design.Color.pernambuco)
                             .accessibilityLabel("Photo zoom")
                         Image(systemName: "plus.magnifyingglass")
                     }
+                    .font(.footnote)
                     .foregroundStyle(Design.Color.textTertiary)
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, Design.Space.xxl)
                     Spacer(minLength: 8)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .settlesOnAppear()
                 .onChange(of: zoom) { _, updated in
                     offset = clampedOffset(offset, side: side, zoom: updated)
                 }
                 .safeAreaInset(edge: .bottom) {
-                    Button("Use photo") {
+                    Button {
                         onUse(renderedCrop(side: side))
+                    } label: {
+                        Text("Use photo").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Design.Color.paper.opacity(0.94))
+                    .padding(.horizontal, Design.Space.xl)
+                    .padding(.vertical, Design.Space.s)
                 }
             }
-            .background(Design.Color.paper)
+            .background(Design.Color.canvas.ignoresSafeArea())
             .navigationTitle("Move and scale")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Move and scale")
+                        .font(AccountView.barTitleFont)
+                        .foregroundStyle(Design.Color.textPrimary)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .tint(Design.Color.textPrimary)
                 }
             }
         }
@@ -96,13 +104,13 @@ struct ProfilePhotoCropView: View {
             .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
             .overlay {
                 Circle()
-                    .stroke(.white.opacity(0.86), lineWidth: 1.5)
+                    .stroke(Design.Color.hinoki.opacity(0.8), lineWidth: 1)
                     .padding(10)
                     .allowsHitTesting(false)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
-                    .stroke(Design.Color.rule, lineWidth: 1)
+                    .strokeBorder(Design.Color.hairline, lineWidth: Design.Stroke.hairline)
             }
             .contentShape(Rectangle())
             .gesture(

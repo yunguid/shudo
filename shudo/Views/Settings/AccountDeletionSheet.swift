@@ -4,6 +4,7 @@ import UIKit
 /// Type DELETE, then the account and everything in it is erased.
 struct AccountDeletionSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var confirmation = ""
     @State private var isDeleting = false
     @State private var errorMessage: String?
@@ -13,31 +14,39 @@ struct AccountDeletionSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Design.Space.xl) {
+                VStack(alignment: .leading, spacing: Design.Space.s) {
                     Text("Delete your account?")
-                        .font(.title2.weight(.bold))
+                        .font(Design.Typeface.display(.title2))
                         .foregroundStyle(Design.Color.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
                     Text("Your meals, photos, bio and sign-in are erased for good.")
                         .font(.body)
                         .foregroundStyle(Design.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                TextField("Type DELETE to confirm", text: $confirmation)
+                // Written on a line, like signing for it.
+                VStack(alignment: .leading, spacing: Design.Space.s) {
+                    TextField(
+                        "",
+                        text: $confirmation,
+                        prompt: Text("Type DELETE to confirm").foregroundStyle(Design.Color.textTertiary)
+                    )
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
-                    .font(.body.weight(.semibold))
+                    .font(.body.weight(.medium))
+                    .tracking(1)
                     .foregroundStyle(Design.Color.textPrimary)
+                    .tint(Design.Color.danger)
                     .focused($fieldFocused)
-                    .padding(.horizontal, 16)
-                    .frame(height: 52)
-                    .background(
-                        Design.Color.surface1,
-                        in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
-                    )
                     .disabled(isDeleting)
                     .accessibilityLabel("Type DELETE to confirm")
+                    Rectangle()
+                        .fill(canDelete ? Design.Color.danger.opacity(0.7) : Design.Color.strokeStrong)
+                        .frame(height: 1)
+                }
+                .padding(.top, Design.Space.s)
 
                 if let errorMessage {
                     Text(errorMessage)
@@ -50,30 +59,38 @@ struct AccountDeletionSheet: View {
 
                 Button(role: .destructive, action: deleteAccount) {
                     HStack(spacing: 8) {
-                        if isDeleting { ProgressView().tint(Design.Color.onEmber) }
+                        if isDeleting {
+                            ProgressView().controlSize(.small).tint(Design.Color.sumi)
+                        }
                         Text(isDeleting ? "Deleting…" : "Delete account")
                     }
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(canDelete || isDeleting ? Design.Color.onEmber : Design.Color.textTertiary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isArmed ? Design.Color.sumi : Design.Color.textTertiary)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 52)
+                    .padding(.vertical, 15)
                     .background(
-                        canDelete || isDeleting ? Design.Color.danger : Design.Color.surface2,
-                        in: Capsule()
+                        isArmed ? Design.Color.danger : Design.Color.surface2,
+                        in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
                     )
+                    .contentShape(RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .disabled(!canDelete)
             }
-            .padding(20)
+            .padding(.horizontal, Design.Space.xl)
+            .padding(.top, Design.Space.s)
+            .padding(.bottom, Design.Space.l)
+            .settlesOnAppear()
             .background(Design.Color.canvas.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .tint(Design.Color.textPrimary)
                         .disabled(isDeleting)
                 }
             }
+            .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: isArmed)
             .interactiveDismissDisabled(isDeleting)
             .onAppear { fieldFocused = true }
         }
@@ -82,6 +99,8 @@ struct AccountDeletionSheet: View {
     private var canDelete: Bool {
         !isDeleting && AccountDeletionPolicy.isConfirmed(confirmation)
     }
+
+    private var isArmed: Bool { canDelete || isDeleting }
 
     private func deleteAccount() {
         guard canDelete else { return }

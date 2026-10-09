@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ProfileSettingsEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var displayName: String
     @State private var timezone: String
@@ -59,16 +60,21 @@ struct ProfileSettingsEditorView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    SettingsGroup {
-                        TextField("Name", text: $displayName)
-                            .textInputAutocapitalization(.words)
-                            .textContentType(.givenName)
-                            .font(.body)
-                            .foregroundStyle(Design.Color.textPrimary)
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 52)
-                    }
+                VStack(alignment: .leading, spacing: Design.Space.section) {
+                    // Your name, written large on the page instead of boxed
+                    // in a form row.
+                    TextField(
+                        "",
+                        text: $displayName,
+                        prompt: Text("Your name").foregroundStyle(Design.Color.textTertiary)
+                    )
+                    .textInputAutocapitalization(.words)
+                    .textContentType(.givenName)
+                    .font(Design.Typeface.display(.title))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .tint(Design.Color.pernambuco)
+                    .accessibilityLabel("Name")
+                    .padding(.top, Design.Space.m)
 
                     SettingsGroup {
                         heightFields
@@ -109,7 +115,7 @@ struct ProfileSettingsEditorView: View {
                                     timezone = TimeZone.autoupdatingCurrent.identifier
                                 }
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Design.Color.ember)
+                                .foregroundStyle(Design.Color.pernambuco)
                                 .buttonStyle(.plain)
                             }
                         }
@@ -119,21 +125,28 @@ struct ProfileSettingsEditorView: View {
                         Text(errorMessage)
                             .font(.footnote)
                             .foregroundStyle(Design.Color.danger)
-                            .padding(.horizontal, 16)
                             .fixedSize(horizontal: false, vertical: true)
+                            .transition(.opacity)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
+                .padding(.horizontal, Design.Space.xl)
+                .padding(.bottom, Design.Space.xxxl)
+                .settlesOnAppear()
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(Design.Color.canvas.ignoresSafeArea())
+            .background(AppBackground())
             .navigationTitle("Body & goal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Body & goal")
+                        .font(AccountView.barTitleFont)
+                        .foregroundStyle(Design.Color.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .tint(Design.Color.textPrimary)
                         .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -142,6 +155,7 @@ struct ProfileSettingsEditorView: View {
                         .disabled(isSaving)
                 }
             }
+            .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: errorMessage)
             .interactiveDismissDisabled(isSaving)
         }
     }
@@ -169,35 +183,37 @@ struct ProfileSettingsEditorView: View {
     ) -> some View {
         SettingsRow(title: label) {
             HStack(spacing: 6) {
-                TextField("—", text: text)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .font(Design.Typeface.numeral(.body))
-                    .foregroundStyle(Design.Color.textPrimary)
+                numberField(text: text, label: label)
                     .frame(maxWidth: 90)
-                    .accessibilityLabel(label)
-                Text(unit)
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .frame(width: 22, alignment: .leading)
+                unitLabel(unit)
             }
         }
     }
 
     private func compactNumberField(text: Binding<String>, unit: String, label: String) -> some View {
         HStack(spacing: 4) {
-            TextField("—", text: text)
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.trailing)
-                .font(Design.Typeface.numeral(.body))
-                .foregroundStyle(Design.Color.textPrimary)
+            numberField(text: text, label: label)
                 .frame(width: 40)
-                .accessibilityLabel(label)
-            Text(unit)
-                .font(.footnote)
-                .foregroundStyle(Design.Color.textTertiary)
-                .frame(width: 22, alignment: .leading)
+            unitLabel(unit)
         }
+    }
+
+    private func numberField(text: Binding<String>, label: String) -> some View {
+        TextField("—", text: text)
+            .keyboardType(.decimalPad)
+            .multilineTextAlignment(.trailing)
+            .font(Design.Typeface.numeral(.body, weight: .regular))
+            .monospacedDigit()
+            .foregroundStyle(Design.Color.textPrimary)
+            .tint(Design.Color.pernambuco)
+            .accessibilityLabel(label)
+    }
+
+    private func unitLabel(_ unit: String) -> some View {
+        Text(unit)
+            .font(.footnote)
+            .foregroundStyle(Design.Color.textTertiary)
+            .frame(width: 22, alignment: .leading)
     }
 
     private func menu<Selection: Hashable, Content: View>(
