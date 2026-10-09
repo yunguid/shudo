@@ -40,7 +40,13 @@ struct AppShell: View {
     @State private var mealTracker = MealCompletionTracker()
     @State private var bodyRefreshToken = UUID()
     @State private var didLaunch = false
+    @State private var bandMetrics = CommandBandMetrics.fallback
+    /// Pushed screens with their own bottom bar (the meal page) step the
+    /// band aside while they're up.
+    @State private var bandSuppressions = 0
+    @State private var isKeyboardUp = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(profile: Profile, dependencies: ShellDependencies? = nil) {
         self.profile = profile
@@ -64,37 +70,67 @@ struct AppShell: View {
     private var todayLocalDay: String { LocalDayMath.today(in: currentProfile.timezone, now: dependencies.now()) }
 
     var body: some View {
-        TabView(selection: $tab) {
-            Tab("Today", systemImage: "bubble.left.and.text.bubble.right.fill", value: AppTab.today) {
-                todayScreen
-            }
-            .badge(tab == .today ? 0 : coach.unreadCount)
+        presentations(chrome)
+    }
 
-            Tab("Body", systemImage: "figure.arms.open", value: AppTab.body) {
-                dependencies.makeBodyScreen(currentProfile) { saved in checkInSaved(saved) }
-                    .id(bodyRefreshToken)
-            }
-
-            Tab("Train", systemImage: "dumbbell.fill", value: AppTab.train) {
-                NavigationStack {
-                    TrainScreen(
-                        viewModel: dependencies.makeTrainViewModel(currentProfile, logging),
-                        onAskCoach: { sendToCoach($0, mode: .typed, engine: nil) },
-                        // One mic: "Log session" records in the bottom-left bar.
-                        onLogByVoice: { CaptureController.shared.startRecording(context: .train) }
-                    )
-                }
-            }
+    private var chrome: some View {
+        ZStack(alignment: .bottom) {
+            tabs
+            // The command band replaces the system tab bar and its
+            // accessory: the well owns the bottom-left corner, the tabs sit
+            // beside it. A sibling, not an overlay, so it reaches the
+            // screen's bottom edge.
+            commandBand
         }
-        .tint(Design.Color.ember)
-        .tabViewBottomAccessory {
-            CaptureBar(voice: coachVoice.value, draft: $draft, context: capture.context, actions: captureActions, fan: fanHolder.value)
-        }
-        .tabBarMinimizeBehavior(.onScrollDown)
         .overlay(alignment: .bottom) { typingOverlay }
         .overlay { CaptureFanOverlay(fan: fanHolder.value) }
         .environment(\.captureComposerInset, isTyping ? composerHeight : 0)
-        .animation(Design.Motion.snap, value: isTyping)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: isTyping)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: bandHidden)
+        .onAppear(perform: measureBand)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardUp = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardUp = false
+        }
+    }
+
+    private var tabs: some View {
+        TabView(selection: $tab) {
+            Tab("Today", systemImage: "bubble.left.and.text.bubble.right.fill", value: AppTab.today) {
+                banded(todayScreen)
+            }
+
+            Tab("Body", systemImage: "figure.arms.open", value: AppTab.body) {
+                banded(
+                    dependencies.makeBodyScreen(currentProfile) { saved in checkInSaved(saved) }
+                        .id(bodyRefreshToken)
+                )
+            }
+
+            Tab("Train", systemImage: "dumbbell.fill", value: AppTab.train) {
+                banded(
+                    NavigationStack {
+                        TrainScreen(
+                            viewModel: dependencies.makeTrainViewModel(currentProfile, logging),
+                            onAskCoach: { sendToCoach($0, mode: .typed, engine: nil) },
+                            // One mic: "Log session" records in the bottom-left well.
+                            onLogByVoice: { CaptureController.shared.startRecording(context: .train) }
+                        )
+                    }
+                )
+            }
+        }
+        .tint(Design.Color.ember)
+    }
+}
+
+extension AppShell {
+    /// The shell's sheets, covers and event wiring (split out of `body` to
+    /// keep the type checker fast).
+    fileprivate func presentations(_ content: some View) -> some View {
+        content
         .sheet(isPresented: $today.isPresentingComposer, onDismiss: composerDismissed) { composer }
         .sheet(item: $sheet) { sheet in sheetContent(sheet) }
         .fullScreenCover(item: $cover) { cover in coverContent(cover) }
@@ -133,6 +169,58 @@ struct AppShell: View {
             Task { await today.loadFor(profile: updated) }
         }
         .onDisappear { CoachPresence.shared.isThreadVisible = false }
+    }
+
+    // MARK: Command band
+
+    /// Typing, a keyboard, or a meal page with its own fix bar: the band
+    /// steps down out of the way.
+    private var bandHidden: Bool { isTyping || isKeyboardUp || bandSuppressions > 0 }
+
+    /// The one source of truth for the reserved bottom band: every tab's
+    /// safe area ends above it.
+    private var bandInset: CGFloat { bandHidden ? 0 : bandMetrics.safeAreaInset }
+
+    private func banded(_ content: some View) -> some View {
+        content
+            .toolbarVisibility(.hidden, for: .tabBar)
+            // SwiftUI safe-area modifiers stop at the tab's UIKit
+            // navigation stacks; the tab controller's own inset reaches
+            // every screen and every pushed page.
+            .background(TabSafeAreaInset(bottom: bandInset))
+            .environment(\.shellBandInset, bandInset)
+            .environment(\.setShellBandSuppressed) { suppressed in
+                bandSuppressions = max(0, bandSuppressions + (suppressed ? 1 : -1))
+            }
+    }
+
+    @ViewBuilder
+    private var commandBand: some View {
+        if !bandHidden {
+            CaptureBar(
+                voice: coachVoice.value,
+                draft: $draft,
+                context: capture.context,
+                actions: captureActions,
+                fan: fanHolder.value,
+                tab: $tab,
+                todayBadge: tab == .today ? 0 : coach.unreadCount,
+                metrics: bandMetrics
+            )
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .ignoresSafeArea(.container, edges: .bottom)
+            .ignoresSafeArea(.keyboard)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private func measureBand() {
+        let window = (UIApplication.shared.connectedScenes.first { $0 is UIWindowScene } as? UIWindowScene)?
+            .windows.first { $0.isKeyWindow }
+        bandMetrics = CommandBandMetrics(
+            displayCornerRadius: DisplayCorner.radius,
+            bottomSafeArea: window?.safeAreaInsets.bottom ?? CommandBandMetrics.fallback.bottomSafeArea
+        )
     }
 
     // MARK: Tabs
@@ -222,7 +310,7 @@ struct AppShell: View {
         if isTyping {
             ZStack(alignment: .bottom) {
                 if tab != .today {
-                    Color.black.opacity(0.28)
+                    Design.Color.canvas.opacity(0.45)
                         .ignoresSafeArea()
                         .onTapGesture { isTyping = false }
                         .accessibilityHidden(true)
@@ -243,6 +331,7 @@ struct AppShell: View {
                     onClose: { isTyping = false }
                 )
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
+                .transition(.shoji(.bottom, reduceMotion: reduceMotion))
             }
             .transition(.opacity)
         }

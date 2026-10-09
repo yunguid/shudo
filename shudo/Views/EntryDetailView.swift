@@ -24,6 +24,7 @@ struct EntryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.setShellBandSuppressed) private var setShellBandSuppressed
     @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 56
     let entryId: UUID
     /// Receives a locally accepted correction. The owner (the Today screen)
@@ -137,7 +138,12 @@ struct EntryDetailView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { Perf.mark("detail.appear") }
+        .onAppear {
+            Perf.mark("detail.appear")
+            // The fix bar is this page's bottom; the shell's band steps aside.
+            setShellBandSuppressed(true)
+        }
+        .onDisappear { setShellBandSuppressed(false) }
         .task {
             guard loadsRemotely else { return }
             await load()

@@ -55,32 +55,35 @@ struct CaptureDraft: Equatable {
     }
 }
 
-/// The one input on every tab, mounted as the TabView's bottom accessory,
-/// and the app's only voice entry point (other screens call
-/// `CaptureController`; sheets that cover it use `SheetCaptureBar`, the
-/// same shape).
+/// The command band: the app's one capture entry point and its tab bar, in
+/// one reserved strip along the bottom (other screens call
+/// `CaptureController`; sheets that cover it use `SheetCaptureBar`).
 ///
-/// Bottom-left, under Luke's left thumb: the Shudo mark. Tap it to record
-/// (the field becomes a timer and meter, no live words), tap the same spot
-/// to send (it transcribes, then goes to Shudo). Touch and hold it and three
-/// options fan out above — Talk, Log food, Photo (the tab's own kinds on
-/// Train and Body) — slide onto one and let go. A failed transcription keeps
-/// the recording and the same spot retries. The field opens the keyboard;
-/// trailing is send for a draft, or ✕ to discard while recording. The
-/// placeholder and `context_hint` follow `context`.
+/// Bottom-left, carved into the screen's corner under Luke's left thumb:
+/// Shudo's key. Tap it to record (the tab bar gives way to a timer and a
+/// meter, no live words), tap the same spot to send (it transcribes, then
+/// goes to Shudo). Touch and hold it and the cream dial fans out — Type,
+/// Log food, Photo (the tab's own kinds on Train and Body) — slide onto one
+/// and let go. A failed transcription keeps the recording and the same spot
+/// retries; ✕ on the far right discards. A draft kept from the keyboard
+/// composer shows as a Pernambuco dot on the key; Type reopens it.
 struct CaptureBar: View {
     @ObservedObject var voice: VoiceTranscriber
     @Binding var draft: CaptureDraft
     var context: CaptureContext = .today
     let actions: CaptureBarActions
     @ObservedObject var fan: CaptureFan
+    @Binding var tab: AppTab
+    var todayBadge: Int = 0
+    let metrics: CommandBandMetrics
 
-    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var holdTask: Task<Void, Never>?
     /// This press only closes a fan left open; it does nothing else.
     @State private var pressClosesFan = false
-    @State private var buttonCenter: CGPoint = .zero
+    @State private var isPressed = false
+    @State private var keyCenter: CGPoint = .zero
     /// Send was tapped: the take this stop produces goes to Shudo, not into
     /// the draft.
     @State private var isSendingVoice = false
@@ -88,40 +91,37 @@ struct CaptureBar: View {
     @State private var notice: String?
     @State private var noticeTask: Task<Void, Never>?
 
-    private var isInline: Bool { placement == .inline }
-    /// The field is a recording / transcribing / retry strip.
+    /// The tab bar's place holds the recording / transcribing / retry strip.
     private var isVoiceActive: Bool { CaptureLeadingRole.isVoiceActive(voice) }
-    private var showsDraftSend: Bool { !isVoiceActive && !draft.isEmpty }
 
     var body: some View {
-        HStack(spacing: isInline ? 6 : 8) {
+        ZStack(alignment: .bottomLeading) {
+            base
+            CommandWell(metrics: metrics)
+            trailing
+                .frame(height: CommandBandMetrics.barHeight)
+                .padding(.leading, metrics.wellSide + CommandBandMetrics.barGap)
+                .padding(.trailing, CommandBandMetrics.trailingMargin)
+                .padding(.top, CommandBandMetrics.topGap)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             // Always the same view, so its gesture survives the role change:
             // Shudo → send arrow → (spinner) → Shudo.
-            leadingButton
-            if isVoiceActive {
-                CaptureVoiceStrip(voice: voice, compact: isInline)
-                CaptureCircleButton(kind: .discard, action: discardRecording)
-                    .accessibilityLabel("Discard recording")
-                    .accessibilityIdentifier("capture.discard")
-            } else {
-                field
-                if showsDraftSend {
-                    CaptureCircleButton(kind: .send, action: send)
-                        .accessibilityLabel("Send to Shudo")
-                        .accessibilityIdentifier("capture.send")
-                }
-            }
+            key
+                .padding(.leading, metrics.keyCenterInset - metrics.keyRadius)
+                .padding(.bottom, metrics.keyCenterInset - metrics.keyRadius)
         }
-        .padding(.leading, isInline ? 4 : 6)
-        .padding(.trailing, isInline ? 4 : 8)
-        .animation(Design.Motion.snap, value: isVoiceActive)
-        .animation(Design.Motion.snap, value: showsDraftSend)
+        .frame(height: metrics.bandHeight)
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .topLeading) { noticeLine }
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: isVoiceActive)
         .sensoryFeedback(.impact(weight: .light), trigger: sentCount)
         #if DEBUG
-        .task {
-            // `-shudoPreviewFan`: open the fan with the second option lit.
+        .task(id: context) {
+            // `-shudoPreviewFan`: open the fan with the second option lit
+            // (restarts if the context settles after launch).
             guard ProcessInfo.processInfo.arguments.contains("-shudoPreviewFan") else { return }
             try? await Task.sleep(for: .milliseconds(1_500))
+            guard !Task.isCancelled else { return }
             openFan()
             fan.track(CaptureFanLayout.offset(index: 1, count: 3))
         }
@@ -140,30 +140,86 @@ struct CaptureBar: View {
         }
     }
 
-    // MARK: Leading: Shudo / send / retry (one spot)
+    // MARK: Band
+
+    /// The band is opaque: content that scrolls down into it dissolves at
+    /// its top edge instead of sliding under the well.
+    private var base: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Design.Color.canvas.opacity(0), Design.Color.canvas],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: CommandBandMetrics.topGap)
+            Design.Color.canvas
+        }
+        .contentShape(Rectangle())
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if isVoiceActive {
+            HStack(spacing: 8) {
+                CaptureVoiceStrip(voice: voice)
+                CaptureCircleButton(kind: .discard, action: discardRecording)
+                    .accessibilityLabel("Discard recording")
+                    .accessibilityIdentifier("capture.discard")
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 11)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .chromeGlass(in: Capsule(), tint: CommandBandMetrics.barTint)
+            .transition(.shoji(.leading, reduceMotion: reduceMotion))
+        } else {
+            ShellTabBar(tab: $tab, todayBadge: todayBadge)
+                .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+        }
+    }
+
+    @ViewBuilder
+    private var noticeLine: some View {
+        if let notice {
+            Text(notice)
+                .font(Design.Typeface.text(.footnote, weight: .medium))
+                .foregroundStyle(Design.Color.honey)
+                .lineLimit(2)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.4))
+                .padding(.leading, CommandBandMetrics.trailingMargin)
+                .padding(.trailing, CommandBandMetrics.trailingMargin)
+                .alignmentGuide(.top) { $0[.bottom] + 10 }
+                .transition(.ink(reduceMotion: reduceMotion))
+                .accessibilityIdentifier("capture.notice")
+        }
+    }
+
+    // MARK: Key: Shudo / send / retry (one spot)
 
     private var leadingRole: CaptureLeadingRole { .role(for: voice) }
 
-    private var leadingButton: some View {
+    private var key: some View {
         let role = leadingRole
-        return CaptureLeadingFace(role: role, size: isInline ? 30 : 36, showsMark: true)
-            .scaleEffect(fan.isOpen ? 1.12 : 1)
+        return CommandKey(role: role, isPressed: isPressed, hasDraft: !draft.isEmpty)
+            .scaleEffect(fan.isOpen ? 1.06 : 1)
             .gesture(pressGesture)
             .onGeometryChange(for: CGPoint.self) { proxy in
                 let frame = proxy.frame(in: .global)
                 return CGPoint(x: frame.midX, y: frame.midY)
-            } action: { buttonCenter = $0 }
+            } action: { keyCenter = $0 }
             .sensoryFeedback(trigger: voice.isListening) { _, listening in listening ? .start : .stop }
             .sensoryFeedback(.impact(weight: .medium), trigger: fan.isOpen) { _, open in open }
             .accessibilityElement()
             .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(leadingLabel(role))
+            .accessibilityLabel(keyLabel(role))
             .accessibilityHint(role == .mic ? "Tap to talk. Touch and hold for more." : CaptureBarCopy.leadingHint(role))
-            .accessibilityIdentifier(leadingIdentifier(role))
+            .accessibilityIdentifier(keyIdentifier(role))
             .accessibilityAction { Task { await leadingTapped() } }
             .accessibilityActions {
                 if role == .mic {
-                    ForEach(fanItems.dropFirst(), id: \.option.id) { item in
+                    ForEach(fanItems, id: \.option.id) { item in
                         Button(item.option.title, action: item.action)
                     }
                 }
@@ -171,15 +227,15 @@ struct CaptureBar: View {
             .animation(Design.Motion.snap, value: fan.isOpen)
     }
 
-    private func leadingLabel(_ role: CaptureLeadingRole) -> String {
+    private func keyLabel(_ role: CaptureLeadingRole) -> String {
         switch role {
-        case .mic: return "Shudo"
+        case .mic: return draft.isEmpty ? "Shudo" : "Shudo, draft waiting"
         case .send: return "Send to Shudo"
         case .hold, .working, .retry: return CaptureBarCopy.leadingLabel(role, send: "Send to Shudo")
         }
     }
 
-    private func leadingIdentifier(_ role: CaptureLeadingRole) -> String {
+    private func keyIdentifier(_ role: CaptureLeadingRole) -> String {
         switch role {
         case .mic, .hold: return "capture.mic"
         case .send, .working: return "capture.send"
@@ -206,6 +262,7 @@ struct CaptureBar: View {
             fan.close()
             return
         }
+        isPressed = true
         guard leadingRole == .mic else { return }
         holdTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(200))
@@ -227,6 +284,7 @@ struct CaptureBar: View {
     private func pressEnded(_ translation: CGSize) {
         holdTask?.cancel()
         holdTask = nil
+        isPressed = false
         if pressClosesFan {
             pressClosesFan = false
         } else if fan.isOpen {
@@ -239,6 +297,7 @@ struct CaptureBar: View {
     private func pressCancelled() {
         holdTask?.cancel()
         holdTask = nil
+        isPressed = false
         pressClosesFan = false
         // The system took the touch: leave the fan up for a tap.
         if fan.isOpen { fan.pin() }
@@ -251,28 +310,30 @@ struct CaptureBar: View {
         let action: () -> Void
     }
 
-    /// Talk first (straight up from the thumb), then the tab's own logging.
+    /// Tapping the key already talks, so the dial holds everything else:
+    /// Type straight up from the thumb, then the tab's own logging.
     private var fanItems: [FanItem] {
-        let talk = FanItem(option: .init(id: "talk", title: "Talk", symbol: "mic.fill")) {
-            Task { await startRecording() }
-        }
+        let type = FanItem(
+            option: .init(id: "type", title: draft.isEmpty ? "Type" : "Draft", symbol: "keyboard"),
+            action: actions.beginTyping
+        )
         let food = FanItem(option: .init(id: "food", title: "Log food", symbol: "fork.knife"), action: actions.logMeal)
         switch context {
         case .train:
             return [
-                talk,
+                type,
                 FanItem(option: .init(id: "workout", title: "Log workout", symbol: "dumbbell.fill"), action: actions.logWorkout),
                 FanItem(option: .init(id: "photo", title: "Photo", symbol: "camera.fill"), action: actions.workoutPhoto),
             ]
         case .body:
             return [
-                talk,
+                type,
                 FanItem(option: .init(id: "checkin", title: "Check-in", symbol: "figure.arms.open"), action: actions.checkIn),
                 food,
             ]
         case .today, .bio:
             return [
-                talk,
+                type,
                 food,
                 FanItem(option: .init(id: "photo", title: "Photo", symbol: "camera.fill"), action: actions.mealPhoto),
             ]
@@ -280,8 +341,9 @@ struct CaptureBar: View {
     }
 
     private func openFan() {
+        isPressed = false
         let items = fanItems
-        fan.open(options: items.map(\.option), origin: buttonCenter) { index in
+        fan.open(options: items.map(\.option), origin: keyCenter) { index in
             guard items.indices.contains(index) else { return }
             items[index].action()
         }
@@ -319,34 +381,6 @@ struct CaptureBar: View {
         if !(await voice.start()), let message = voice.errorMessage {
             show(notice: message)
         }
-    }
-
-    // MARK: Field
-
-    private var field: some View {
-        Button {
-            actions.beginTyping()
-        } label: {
-            Group {
-                if let notice {
-                    Text(notice).foregroundStyle(Design.Color.honey)
-                } else if draft.isEmpty {
-                    Text(isInline ? context.compactPlaceholder : context.placeholder)
-                        .foregroundStyle(Design.Color.textTertiary)
-                } else {
-                    Text(draft.text).foregroundStyle(Design.Color.textPrimary)
-                }
-            }
-            .font(.body)
-            .lineLimit(1)
-            .truncationMode(.head)
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(draft.isEmpty ? context.placeholder : "Draft: \(draft.text)")
-        .accessibilityHint("Opens the keyboard")
-        .accessibilityIdentifier("capture.field")
     }
 
     // MARK: Actions
@@ -395,7 +429,6 @@ struct CaptureBar: View {
 
     private func discardRecording() {
         voice.cancel()
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         actions.captureEnded()
     }
 
@@ -409,11 +442,11 @@ struct CaptureBar: View {
 
     private func show(notice message: String) {
         noticeTask?.cancel()
-        withAnimation(Design.Motion.snap) { notice = message }
+        withAnimation(Design.Motion.calm(Design.Motion.arrive, reduceMotion: reduceMotion)) { notice = message }
         noticeTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
-            withAnimation(Design.Motion.snap) { notice = nil }
+            withAnimation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion)) { notice = nil }
         }
     }
 }
@@ -454,7 +487,7 @@ struct CaptureComposer: View {
                 axis: .vertical
             )
             .lineLimit(1...6)
-            .font(.body)
+            .font(Design.Typeface.text(.body))
             .foregroundStyle(Design.Color.textPrimary)
             .tint(Design.Color.ember)
             .focused($focused)
@@ -474,7 +507,7 @@ struct CaptureComposer: View {
         .padding(.vertical, 4)
         .chromeGlass(
             in: RoundedRectangle(cornerRadius: 24, style: .continuous),
-            tint: Design.Color.canvas.opacity(0.35),
+            tint: Design.Color.hinoki.opacity(0.04),
             interactive: true
         )
         .padding(.horizontal, 12)

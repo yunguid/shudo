@@ -16,16 +16,18 @@ final class AppShellUITests: XCTestCase {
         return app
     }
 
-    /// The accessory sits under the keyboard, so typing happens in a field
-    /// docked above it; sending puts Luke's bubble in Today's thread and the
+    /// Typing opens from the key's dial (Type) into a field docked above
+    /// the keyboard; sending puts Luke's bubble in Today's thread and the
     /// scripted coach answers.
     @MainActor
     func testTypingToShudoStaysAboveTheKeyboardAndSends() throws {
         let app = launch()
-        app.buttons["capture.field"].tap()
+        let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // Hold the key and slide straight up to Type.
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -96)))
         let input = app.descendants(matching: .any).matching(identifier: "capture.input").firstMatch
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "After tapping the capture field"
+        shot.name = "After choosing Type on the dial"
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(input.waitForExistence(timeout: 3))
@@ -127,29 +129,15 @@ final class AppShellUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["log two eggs"].waitForExistence(timeout: 8))
     }
 
-    /// The bar's hint follows the tab.
-    @MainActor
-    func testTheBarHintFollowsTheTab() {
-        let app = launch()
-        let field = app.buttons["capture.field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        app.tabBars.buttons["Train"].firstMatch.tap()
-        XCTAssertTrue(app.buttons["Log a workout…"].waitForExistence(timeout: 3))
-        app.tabBars.buttons["Body"].firstMatch.tap()
-        XCTAssertTrue(app.buttons["Weight or a note…"].waitForExistence(timeout: 3))
-        app.tabBars.buttons["Today"].firstMatch.tap()
-        XCTAssertTrue(app.buttons["Tell Shudo anything…"].waitForExistence(timeout: 3))
-    }
-
+    /// The well's key and the tab bar beside it ride along on every tab.
     @MainActor
     func testCaptureBarRidesAlongOnEveryTab() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Chicken rice bowl"].firstMatch.waitForExistence(timeout: 5))
-        for tab in ["Body", "Train", "Today"] {
-            app.tabBars.buttons[tab].firstMatch.tap()
-            XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 3), "capture bar missing on \(tab)")
-            XCTAssertTrue(app.buttons["capture.mic"].exists)
-            XCTAssertTrue(app.buttons["Camera"].exists)
+        for tab in ["body", "train", "today"] {
+            app.buttons["tab.\(tab)"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 3), "capture key missing on \(tab)")
+            XCTAssertTrue(app.buttons["tab.\(tab)"].isSelected)
         }
         XCTAssertTrue(app.staticTexts["Chicken rice bowl"].firstMatch.exists)
     }

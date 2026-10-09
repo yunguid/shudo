@@ -57,7 +57,6 @@ struct CaptureLeadingFace: View {
     var body: some View {
         if showsMark, role == .mic {
             CoachAvatar(size: size + 2)
-                .shadow(color: Design.Color.ember.opacity(0.3), radius: 6)
                 .frame(width: size + 6, height: size + 6)
                 .contentShape(Circle())
         } else {
@@ -69,17 +68,17 @@ struct CaptureLeadingFace: View {
         let active = role != .mic
         return ZStack {
             Circle()
-                .fill(active ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.emberFill))
+                .fill(Design.Color.emberFill)
                 .frame(width: size, height: size)
-                .scaleEffect(role == .hold ? 1.14 : (active ? 1.06 : 1))
-                .shadow(color: Design.Color.ember.opacity(active ? 0.5 : 0.22), radius: active ? 10 : 6)
+                .shadow(color: Design.Color.heartwood.opacity(active ? 0.5 : 0.3), radius: active ? 6 : 3, y: 1)
             if role == .working {
                 ProgressView()
                     .controlSize(.small)
                     .tint(Design.Color.onEmber)
             } else {
                 Image(systemName: role.symbol)
-                    .font(.system(size: size * 0.42, weight: role == .send ? .heavy : .bold))
+                    .font(.custom(Design.Typeface.faceName(.bold), fixedSize: size * 0.4))
+                    .fontWeight(.semibold)
                     .foregroundStyle(Design.Color.onEmber)
                     .contentTransition(.symbolEffect(.replace))
                     .symbolEffect(.variableColor.iterative, isActive: role == .hold)
@@ -90,9 +89,10 @@ struct CaptureLeadingFace: View {
     }
 }
 
-/// What the field shows while voice is active: a breathing dot, the timer
-/// and a level meter while recording; the frozen meter shimmering while it
-/// transcribes; one short line when a transcription failed.
+/// What the strip shows while voice is active: the timer and a fine oak
+/// meter while recording (no live words, no red light — the meter moving is
+/// the tell); the stilled meter shimmering while it transcribes; one short
+/// line when a transcription failed.
 struct CaptureVoiceStrip: View {
     @ObservedObject var voice: VoiceTranscriber
     var isSending = false
@@ -115,7 +115,7 @@ struct CaptureVoiceStrip: View {
                     .accessibilityIdentifier("\(identifierPrefix).transcribing")
             } else if voice.canRetryTranscription {
                 Text(CaptureBarCopy.retryLine(for: voice.errorMessage))
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.honey)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -128,26 +128,25 @@ struct CaptureVoiceStrip: View {
     }
 
     private var meterLevels: [CGFloat] {
-        Array(voice.meterLevels.suffix(compact ? 10 : 16))
+        Array(voice.meterLevels.suffix(compact ? 16 : 28))
     }
 
     private var recording: some View {
-        HStack(spacing: 8) {
-            RecordingPulseDot(size: 8)
+        HStack(spacing: 12) {
             Text(VoiceCopy.clock(voice.elapsedTime))
-                .font(Design.Typeface.numeral(.body, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(Design.Color.textPrimary)
+                .font(Design.Typeface.numeral(.subheadline, weight: .medium))
+                .foregroundStyle(Design.Color.textSecondary)
                 .contentTransition(reduceMotion ? .identity : .numericText())
+                .fixedSize()
             if let holdHint {
                 Text(holdHint)
-                    .font(.footnote.weight(.semibold))
+                    .font(Design.Typeface.text(.footnote, weight: .semibold))
                     .foregroundStyle(holdCancels ? Design.Color.danger : Design.Color.textSecondary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VoiceMeterView(levels: meterLevels, isActive: voice.isListening, tint: Design.Color.ember, spacing: 2)
-                    .frame(height: 20)
+                VoiceMeterView(levels: meterLevels, isActive: voice.isListening, tint: Design.Color.oak, spacing: 2.5)
+                    .frame(height: 22)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -172,13 +171,14 @@ struct CaptureCircleButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: kind == .send ? "arrow.up" : "xmark")
-                .font(.system(size: kind == .send ? 15 : 14, weight: .bold))
+                .font(.custom(Design.Typeface.faceName(.bold), fixedSize: kind == .send ? 15 : 13))
+                .fontWeight(.semibold)
                 .foregroundStyle(kind == .send ? Design.Color.onEmber : Design.Color.textSecondary)
                 .frame(width: 32, height: 32)
                 .background(
                     kind == .send
                         ? (isEnabled ? Design.Color.ember : Design.Color.surface3)
-                        : Design.Color.surface3,
+                        : Design.Color.hinoki.opacity(0.08),
                     in: Circle()
                 )
                 .contentShape(Circle().inset(by: -6))
@@ -265,7 +265,7 @@ struct SheetCaptureBar: View {
         VStack(spacing: 8) {
             if let line = notice ?? message {
                 Text(line)
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.honey)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
@@ -331,7 +331,7 @@ struct SheetCaptureBar: View {
                     axis: .vertical
                 )
                 .lineLimit(1...5)
-                .font(.body)
+                .font(Design.Typeface.text(.body))
                 .foregroundStyle(Design.Color.textPrimary)
                 .tint(Design.Color.ember)
                 .focused($focused)
@@ -354,7 +354,7 @@ struct SheetCaptureBar: View {
         .padding(.vertical, 4)
         .chromeGlass(
             in: RoundedRectangle(cornerRadius: 24, style: .continuous),
-            tint: Design.Color.canvas.opacity(0.35),
+            tint: Design.Color.hinoki.opacity(0.04),
             interactive: true
         )
     }
@@ -407,27 +407,6 @@ struct SheetCaptureBar: View {
     }
 }
 
-/// The "recording" tell: an ember dot breathing in and out (steady under
-/// Reduce Motion).
-struct RecordingPulseDot: View {
-    var size: CGFloat = 8
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Circle()
-            .fill(Design.Color.ember)
-            .frame(width: size, height: size)
-            .phaseAnimator(reduceMotion ? [false] : [false, true]) { dot, dimmed in
-                dot
-                    .opacity(dimmed ? 0.3 : 1)
-                    .scaleEffect(dimmed ? 0.8 : 1)
-            } animation: { _ in
-                .easeInOut(duration: 0.75)
-            }
-            .accessibilityHidden(true)
-    }
-}
-
 /// Bar meter shared by every voice surface.
 struct VoiceMeterView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -439,12 +418,13 @@ struct VoiceMeterView: View {
     var body: some View {
         GeometryReader { geometry in
             let count = max(1, levels.count)
-            let barWidth = max(2, (geometry.size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
+            let barWidth = min(3, max(1.5, (geometry.size.width - spacing * CGFloat(count - 1)) / CGFloat(count)))
             HStack(alignment: .center, spacing: spacing) {
                 ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+                    // Quiet is a faint grain line; voice rises and warms.
                     Capsule()
-                        .fill(isActive ? tint : Design.Color.subtle.opacity(0.55))
-                        .frame(width: barWidth, height: max(4, geometry.size.height * level))
+                        .fill(isActive ? tint.opacity(0.4 + 0.6 * min(1, level * 1.6)) : Design.Color.subtle.opacity(0.5))
+                        .frame(width: barWidth, height: max(2.5, geometry.size.height * level))
                         .animation(reduceMotion ? nil : .linear(duration: 0.055), value: level)
                 }
             }
@@ -603,27 +583,46 @@ struct ThumbPressGesture: UIGestureRecognizerRepresentable {
     }
 }
 
-/// Draws the open fan over the whole app: a light blur, a cream glass band
-/// around the lit Shudo mark, the options on it, and the chosen one's name.
+/// Draws the open fan over the whole app: the room dims and softens, a
+/// cream glass quarter-ring grows out of the lit Shudo key, the options sit
+/// on it, and the chosen one's name rests above in the serif. Opening is a
+/// weighted glide with no bounce; closing draws it back into the key. Under
+/// Reduce Motion it simply fades.
 struct CaptureFanOverlay: View {
     @ObservedObject var fan: CaptureFan
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            if fan.isOpen {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .overlay(Color.black.opacity(0.3))
-                    .onTapGesture { fan.close() }
-                    .accessibilityHidden(true)
-                    .transition(.opacity)
-                CaptureFanDial(fan: fan)
+        GeometryReader { proxy in
+            let size = proxy.size
+            let anchor = UnitPoint(
+                x: size.width > 0 ? fan.origin.x / size.width : 0,
+                y: size.height > 0 ? fan.origin.y / size.height : 1
+            )
+            ZStack(alignment: .topLeading) {
+                if fan.isOpen {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .overlay(Design.Color.canvas.opacity(0.42))
+                        .onTapGesture { fan.close() }
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
+                    CaptureFanDial(fan: fan)
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .scale(scale: 0.55, anchor: anchor).combined(with: .opacity)
+                        )
+                }
             }
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea()
         .allowsHitTesting(fan.isPinned)
-        .animation(.easeOut(duration: 0.16), value: fan.isOpen)
+        .animation(
+            reduceMotion ? .easeInOut(duration: 0.18) : .spring(response: 0.3, dampingFraction: 0.95),
+            value: fan.isOpen
+        )
         .sensoryFeedback(.selection, trigger: fan.selection) { _, new in new != nil }
     }
 }
@@ -638,43 +637,45 @@ private struct CaptureFanDial: View {
         ZStack(alignment: .topLeading) {
             Color.clear
                 .glassEffect(
-                    Glass.regular.tint(Design.Color.cream.opacity(0.16)),
+                    Glass.regular.tint(Design.Color.hinoki.opacity(0.22)),
                     in: CaptureFanBand(center: fan.origin, progress: isOut ? 1 : 0)
                 )
-            // The mark stays lit under the thumb: the dial grows out of it.
-            CoachAvatar(size: 44)
-                .shadow(color: Design.Color.cream.opacity(0.45), radius: 14)
-                .scaleEffect(isOut ? 1.08 : 1)
+            // The key stays lit under the thumb: the dial grows out of it.
+            CommandKey(role: .mic)
+                .shadow(color: Design.Color.hinoki.opacity(0.32), radius: 12)
                 .position(fan.origin)
             ForEach(Array(fan.options.enumerated()), id: \.element.id) { index, option in
                 let offset = CaptureFanLayout.offset(index: index, count: count)
                 CaptureFanItem(option: option, isSelected: fan.selection == index) { fan.choose(index) }
-                    .scaleEffect(isOut ? 1 : 0.4)
+                    .scaleEffect(isOut ? 1 : 0.5)
                     .opacity(isOut ? 1 : 0)
                     .position(
                         x: fan.origin.x + (isOut ? offset.width : 0),
                         y: fan.origin.y + (isOut ? offset.height : 0)
                     )
+                    .animation(
+                        reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.9).delay(Double(index) * 0.025),
+                        value: isOut
+                    )
             }
             if let selection = fan.selection, fan.options.indices.contains(selection) {
                 Text(fan.options[selection].title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Design.Color.onEmber)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .glassEffect(Glass.regular.tint(Design.Color.cream.opacity(0.85)), in: Capsule())
+                    .font(Design.Typeface.display(.title3, weight: .medium))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .shadow(color: Design.Color.canvas.opacity(0.9), radius: 8)
                     .fixedSize()
                     .position(
-                        x: fan.origin.x + CaptureFanLayout.radius * 0.6,
-                        y: fan.origin.y - CaptureFanLayout.radius - 66
+                        x: fan.origin.x + CaptureFanLayout.radius * 0.62,
+                        y: fan.origin.y - CaptureFanLayout.radius - 62
                     )
                     .id(selection)
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .transition(.ink(reduceMotion: reduceMotion))
+                    .accessibilityHidden(true)
             }
         }
-        .animation(.snappy(duration: 0.16), value: fan.selection)
+        .animation(.spring(response: 0.24, dampingFraction: 0.92), value: fan.selection)
         .onAppear {
-            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.3, dampingFraction: 0.74)) {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.34, dampingFraction: 0.9)) {
                 isOut = true
             }
         }
@@ -689,20 +690,21 @@ private struct CaptureFanItem: View {
     var body: some View {
         Button(action: onTap) {
             Image(systemName: option.symbol)
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(isSelected ? Design.Color.onEmber : Design.Color.cream)
+                .font(.custom(Design.Typeface.faceName(.semibold), fixedSize: 20))
+                .fontWeight(.medium)
+                .foregroundStyle(isSelected ? Design.Color.onCream : Design.Color.cream)
                 .frame(width: 54, height: 54)
                 .background {
                     if isSelected {
                         Circle()
                             .fill(Design.Color.cream)
-                            .shadow(color: Design.Color.cream.opacity(0.55), radius: 16)
+                            .shadow(color: Design.Color.cream.opacity(0.35), radius: 12)
                     }
                 }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .scaleEffect(isSelected ? 1.2 : 1)
+        .scaleEffect(isSelected ? 1.12 : 1)
         .accessibilityLabel(option.title)
         .accessibilityIdentifier("capture.fan.\(option.id)")
     }
@@ -728,6 +730,6 @@ private struct CaptureFanBand: Shape {
             endAngle: .degrees(-90 + 90 * Double(max(progress, 0.001))),
             clockwise: false
         )
-        return arc.strokedPath(StrokeStyle(lineWidth: 70 * max(progress, 0.3), lineCap: .round))
+        return arc.strokedPath(StrokeStyle(lineWidth: 66 * max(progress, 0.3), lineCap: .round))
     }
 }
