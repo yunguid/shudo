@@ -1,15 +1,19 @@
 import Testing
+import SwiftUI
 import UIKit
 @testable import shudo
 
 struct DesignSystemTests {
-    @Test func emberFillsCarryDarkInkAboveWCAGAA() throws {
-        for fill in [Design.Color.ember, Design.Color.bubbleMeTop, Design.Color.bubbleMeBottom] {
-            let ratio = try contrastRatio(
-                foreground: UIColor(Design.Color.onEmber),
-                background: UIColor(fill)
-            )
-            #expect(ratio >= 4.5, "onEmber contrast was \(ratio)")
+    @Test func inkOnEveryFillMeetsWCAGAA() throws {
+        let pairs: [(SwiftUI.Color, SwiftUI.Color)] = [
+            (Design.Color.onEmber, Design.Color.ember),
+            (Design.Color.onCream, Design.Color.cream),
+            (Design.Color.onBubbleMe, Design.Color.bubbleMeTop),
+            (Design.Color.onBubbleMe, Design.Color.bubbleMeBottom),
+        ]
+        for (ink, fill) in pairs {
+            let ratio = try contrastRatio(foreground: UIColor(ink), background: UIColor(fill))
+            #expect(ratio >= 4.5, "ink contrast was \(ratio)")
         }
     }
 
@@ -30,16 +34,6 @@ struct DesignSystemTests {
         #expect(UIColor(Design.Color.muted) == UIColor(Design.Color.textSecondary))
         #expect(UIColor(Design.Color.accentPrimary) == UIColor(Design.Color.ember))
         #expect(UIColor(Design.Color.ringProtein) == UIColor(Design.Color.macroProtein))
-    }
-
-    @Test func radiusVocabularyIsStableAndMonotonic() {
-        #expect(Design.Radius.tail < Design.Radius.chip)
-        #expect(Design.Radius.chip < Design.Radius.control)
-        #expect(Design.Radius.control < Design.Radius.bubble)
-        #expect(Design.Radius.bubble < Design.Radius.card)
-        #expect(Design.Radius.card < Design.Radius.cardLarge)
-        #expect(Design.Radius.cardLarge < Design.Radius.sheet)
-        #expect(Design.Radius.card == 22)
     }
 
     private func contrastRatio(

@@ -101,7 +101,7 @@ struct MessageBubble: View {
     var body: some View {
         Text(text)
             .font(Design.Typeface.bubble)
-            .foregroundStyle(isMine ? Design.Color.onEmber : Design.Color.textPrimary)
+            .foregroundStyle(isMine ? Design.Color.onBubbleMe : Design.Color.textPrimary)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .background {

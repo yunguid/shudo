@@ -1,9 +1,21 @@
 import SwiftUI
 
-// MARK: - Shudo 2.0 design system: "Chalk · Iron · Ember"
+// MARK: - Shudo design system: "Sumi · Hinoki · Pernambuco"
 //
-// The palette is sampled from the app icon (amber → honey → cream pads on
-// warm black) so the inside of the app matches the outside. Dark only.
+// A dark wood room. The canvas is sumi ink warmed toward walnut; text and
+// quiet fills are hinoki and oak; the one accent is Pernambuco — the
+// orange-red heartwood violin bows are cut from (and 朱, shu, the vermilion
+// in Shudo's name). Material and colour temperature, never fake grain.
+//
+// Restraint rules:
+// - One accent. Pernambuco marks what matters (protein, the live state, your
+//   own words); everything else is cream, oak or ink.
+// - Space before lines. Group with spacing first, a surface second, a rule
+//   last. Cards carry no border, only a faint top-lit edge.
+// - Calm type. Serif (New York) for display and hero figures, SF for
+//   reading, small quiet eyebrows — and fewer of them.
+// - Motion slides home like a shoji door: weighted springs, no bounce,
+//   opacity-only under Reduce Motion.
 
 extension Color {
     init(hex: UInt32, alpha: Double = 1) {
@@ -19,54 +31,74 @@ extension Color {
 
 enum Design {
     enum Color {
-        // Iron: surfaces, warm-neutral blacks (icon background is #181512).
-        static let canvas = SwiftUI.Color(hex: 0x0C0B0A)
-        static let surface1 = SwiftUI.Color(hex: 0x161412)
-        static let surface2 = SwiftUI.Color(hex: 0x201D1A)
-        static let surface3 = SwiftUI.Color(hex: 0x2B2723)
-        static let hairline = SwiftUI.Color(hex: 0xF3ECE0, alpha: 0.10)
-        static let strokeStrong = SwiftUI.Color(hex: 0xF3ECE0, alpha: 0.18)
+        // Sumi / walnut: surfaces, each step a little more lamp-lit.
+        static let canvas = SwiftUI.Color(hex: 0x0E0B09)
+        static let surface1 = SwiftUI.Color(hex: 0x17120F)
+        static let surface2 = SwiftUI.Color(hex: 0x211A16)
+        static let surface3 = SwiftUI.Color(hex: 0x2C231E)
+        static let hairline = SwiftUI.Color(hex: 0xF1E7D8, alpha: 0.08)
+        static let strokeStrong = SwiftUI.Color(hex: 0xF1E7D8, alpha: 0.16)
 
-        // Chalk: text.
-        static let textPrimary = SwiftUI.Color(hex: 0xF3ECE0)
-        static let textSecondary = SwiftUI.Color(hex: 0xADA597)
-        /// ≥4.7:1 on every surface — the faintest tone allowed for readable text.
-        static let textTertiary = SwiftUI.Color(hex: 0x908878)
-        static let textDisabled = SwiftUI.Color(hex: 0x4B463F)
+        // Hinoki / oak: text.
+        static let textPrimary = SwiftUI.Color(hex: 0xF1E7D8)
+        static let textSecondary = SwiftUI.Color(hex: 0xB8A891)
+        /// ≥4.9:1 on canvas, surface1 and surface2 — the faintest tone allowed
+        /// for readable text.
+        static let textTertiary = SwiftUI.Color(hex: 0x978770)
+        static let textDisabled = SwiftUI.Color(hex: 0x4D433A)
 
-        // Ember: brand. Icon pads: #DE9D43 / #FAD597 / #F9E4CA.
-        static let ember = SwiftUI.Color(hex: 0xEFA04A)
-        static let emberDeep = SwiftUI.Color(hex: 0xC9782A)
-        static let honey = SwiftUI.Color(hex: 0xF7D39A)
-        static let cream = SwiftUI.Color(hex: 0xFAE7CE)
-        /// Ink on ember fills (8.7:1).
-        static let onEmber = SwiftUI.Color(hex: 0x1B1108)
+        // Pernambuco: the single accent, and its heartwood.
+        static let pernambuco = SwiftUI.Color(hex: 0xD26842)
+        static let heartwood = SwiftUI.Color(hex: 0x9A3D22)
+        /// Aged oak — the warm secondary (warnings, streaks, soft highlights).
+        static let oak = SwiftUI.Color(hex: 0xE3BF8C)
+        /// Hinoki cream — primary fills, the capture dial's glass, kcal.
+        static let hinoki = SwiftUI.Color(hex: 0xF4E6D0)
+        /// Sumi ink for text on Pernambuco or hinoki fills (≥5.6:1).
+        static let sumi = SwiftUI.Color(hex: 0x1A0E08)
 
-        // Macros: calories + protein are the hero pair, carbs/fat secondary.
-        static let macroKcal = cream
-        static let macroProtein = ember
-        static let macroCarbs = SwiftUI.Color(hex: 0x86B8D8)
-        static let macroFat = SwiftUI.Color(hex: 0xB7C77F)
+        // Long-standing names for the same woods; most views use these.
+        static var ember: SwiftUI.Color { pernambuco }
+        static var emberDeep: SwiftUI.Color { heartwood }
+        static var honey: SwiftUI.Color { oak }
+        static var cream: SwiftUI.Color { hinoki }
+        static var onEmber: SwiftUI.Color { sumi }
+        static var onCream: SwiftUI.Color { sumi }
 
-        // Signals. Gaining toward a bulk goal is progress (ember), never a warning.
-        static let positive = SwiftUI.Color(hex: 0x7FD1A8)
-        static let warning = honey
-        static let danger = SwiftUI.Color(hex: 0xF2665A)
+        // Macros: calories + protein are the hero pair, carbs/fat recede into
+        // natural pigments (aizome slate, matcha).
+        static let macroKcal = hinoki
+        static let macroProtein = pernambuco
+        static let macroCarbs = SwiftUI.Color(hex: 0x8FA9BA)
+        static let macroFat = SwiftUI.Color(hex: 0xAEB781)
 
-        // Thread.
+        // Signals. Gaining toward a bulk goal is progress (accent), never a
+        // warning. Danger leans crimson so it never reads as the accent.
+        static let positive = SwiftUI.Color(hex: 0x93C29C)
+        static var warning: SwiftUI.Color { oak }
+        static let danger = SwiftUI.Color(hex: 0xE8505F)
+
+        // Thread: Shudo speaks from walnut, you speak in lacquered heartwood.
         static let bubbleCoach = surface2
-        static let bubbleMeTop = SwiftUI.Color(hex: 0xF3AE5E)
-        static let bubbleMeBottom = SwiftUI.Color(hex: 0xE38F38)
+        static let bubbleMeTop = SwiftUI.Color(hex: 0x9E4329)
+        static let bubbleMeBottom = SwiftUI.Color(hex: 0x8A3720)
+        static var onBubbleMe: SwiftUI.Color { textPrimary }
         static var bubbleMe: LinearGradient {
             LinearGradient(colors: [bubbleMeTop, bubbleMeBottom], startPoint: .top, endPoint: .bottom)
         }
+        /// A Pernambuco fill with the faintest lacquer sheen (accent CTAs, the
+        /// record button). Ink on it is `onEmber`.
         static var emberFill: LinearGradient {
-            LinearGradient(colors: [honey, ember, emberDeep], startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(
+                colors: [SwiftUI.Color(hex: 0xDB7550), pernambuco],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
 
-        // Heatmap ramp: the icon's pads, dark to bright.
+        // Heatmap ramp: bare wood to heartwood to Pernambuco to oak.
         static let heatmapRamp: [SwiftUI.Color] = [
-            surface3, SwiftUI.Color(hex: 0x6B4520), emberDeep, SwiftUI.Color(hex: 0xDE9D43), honey,
+            surface3, SwiftUI.Color(hex: 0x5A2818), heartwood, pernambuco, oak,
         ]
 
         // MARK: Legacy names (1.x views). New code uses the tokens above.
@@ -90,14 +122,24 @@ enum Design {
     }
 
     enum Typeface {
-        /// Every number in the app: SF Pro Rounded; add `.monospacedDigit()` at the call site.
-        static func numeral(_ style: SwiftUI.Font.TextStyle, weight: SwiftUI.Font.Weight = .semibold) -> SwiftUI.Font {
-            .system(style, design: .rounded, weight: weight)
+        /// Screen and hero headlines: New York, quiet weight.
+        static func display(_ style: SwiftUI.Font.TextStyle = .largeTitle, weight: SwiftUI.Font.Weight = .regular) -> SwiftUI.Font {
+            .system(style, design: .serif, weight: weight)
         }
-        /// Plate-stamp labels (GAME PLAN, NEARBY, KCAL LEFT). Use `eyebrowStyle()`.
-        static let eyebrow = SwiftUI.Font.system(.caption2, weight: .heavy).width(.expanded)
-        static let stamp = SwiftUI.Font.system(.subheadline, weight: .heavy).width(.expanded)
-        static let screenTitle = SwiftUI.Font.system(.title2, weight: .heavy).width(.expanded)
+        /// The one big number on a screen (kcal left, body weight): serif
+        /// figures read crafted rather than dashboard. Add `.monospacedDigit()`.
+        static func figure(_ style: SwiftUI.Font.TextStyle = .largeTitle, weight: SwiftUI.Font.Weight = .regular) -> SwiftUI.Font {
+            .system(style, design: .serif, weight: weight)
+        }
+        /// Every other number: SF Pro; add `.monospacedDigit()` at the call site.
+        static func numeral(_ style: SwiftUI.Font.TextStyle, weight: SwiftUI.Font.Weight = .medium) -> SwiftUI.Font {
+            .system(style, weight: weight)
+        }
+        /// Small section labels. Use `eyebrowStyle()`, and only when spacing
+        /// alone can't say where a section starts.
+        static let eyebrow = SwiftUI.Font.system(.caption2, weight: .semibold)
+        static let stamp = SwiftUI.Font.system(.subheadline, weight: .semibold)
+        static let screenTitle = SwiftUI.Font.system(.title2, design: .serif, weight: .medium)
         static let bubble = SwiftUI.Font.body
         static let cardTitle = SwiftUI.Font.headline
         static let meta = SwiftUI.Font.caption2.weight(.medium)
@@ -112,18 +154,22 @@ enum Design {
         static let gutter: CGFloat = 20
         static let xl: CGFloat = 24
         static let xxl: CGFloat = 32
+        /// Between a screen's regions — ma: the pause that groups things
+        /// without a line.
+        static let section: CGFloat = 40
+        static let xxxl: CGFloat = 56
     }
 
     enum Radius {
         static let tail: CGFloat = 6
         static let chip: CGFloat = 10
-        static let control: CGFloat = 16
-        static let bubble: CGFloat = 20
+        static let control: CGFloat = 14
+        static let bubble: CGFloat = 19
         /// Thread cards and content cards.
-        static let card: CGFloat = 22
+        static let card: CGFloat = 20
         /// Large hero cards (day header, body hero).
-        static let cardLarge: CGFloat = 26
-        static let sheet: CGFloat = 28
+        static let cardLarge: CGFloat = 24
+        static let sheet: CGFloat = 30
 
         // Legacy names (1.x views).
         static let s: CGFloat = 8
@@ -144,14 +190,66 @@ enum Design {
         static let threadCardWidth: CGFloat = 300
     }
 
+    /// Weighted springs with no bounce: things glide and settle once, like a
+    /// shoji door sliding home. Gate everything through `gated` (or the
+    /// `.calm` transitions) so Reduce Motion gets fades only.
     enum Motion {
-        static let snap = Animation.snappy(duration: 0.25)
-        static let settle = Animation.smooth(duration: 0.4)
-        static let arrive = Animation.bouncy(duration: 0.45, extraBounce: 0.08)
-        static let ring = Animation.spring(response: 0.9, dampingFraction: 0.8)
+        /// Small state changes: toggles, chips, selection, press feedback.
+        static let snap = Animation.spring(response: 0.32, dampingFraction: 0.9)
+        /// Default layout motion — a panel or region moving to its new place.
+        static let settle = Animation.spring(response: 0.55, dampingFraction: 0.92)
+        /// New things entering (a message, a card, a sheet's content).
+        static let arrive = Animation.spring(response: 0.62, dampingFraction: 0.88)
+        /// Slower slides between whole states (day switching, mode changes).
+        static let shoji = Animation.spring(response: 0.72, dampingFraction: 0.94)
+        /// Fades: ink appearing on paper.
+        static let breath = Animation.easeInOut(duration: 0.45)
+        /// Rings and meters filling.
+        static let ring = Animation.spring(response: 1.0, dampingFraction: 0.9)
         static func gated(_ animation: Animation, reduceMotion: Bool) -> Animation? {
             reduceMotion ? nil : animation
         }
+        /// Like `gated`, but keeps a plain fade under Reduce Motion — for state
+        /// changes that would otherwise pop.
+        static func calm(_ animation: Animation, reduceMotion: Bool) -> Animation {
+            reduceMotion ? .easeInOut(duration: 0.2) : animation
+        }
+    }
+}
+
+// MARK: - Transitions
+
+/// Ink settling on paper: a soft blur clearing, a small rise, a fade.
+private struct InkSettle: ViewModifier {
+    let progress: Double
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(progress)
+            .blur(radius: (1 - progress) * 6)
+            .offset(y: (1 - progress) * 10)
+    }
+}
+
+extension AnyTransition {
+    /// New content arriving (messages, cards, results). Fade only under Reduce Motion.
+    static func ink(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .modifier(active: InkSettle(progress: 0), identity: InkSettle(progress: 1))
+    }
+
+    /// A panel sliding in from an edge, shoji-style, a short distance.
+    static func shoji(_ edge: Edge, reduceMotion: Bool) -> AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        let distance: CGFloat = 24
+        let offset: CGSize = switch edge {
+        case .top: CGSize(width: 0, height: -distance)
+        case .bottom: CGSize(width: 0, height: distance)
+        case .leading: CGSize(width: -distance, height: 0)
+        case .trailing: CGSize(width: distance, height: 0)
+        }
+        return .offset(offset).combined(with: .opacity)
     }
 }
 
@@ -164,6 +262,8 @@ extension View {
         glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape)
     }
 
+    /// An opaque walnut panel. No border — just a faint top-lit edge, the way
+    /// lamplight catches the lip of a lacquer tray.
     func cardSurface(radius: CGFloat = Design.Radius.card) -> some View {
         background(
             Design.Color.surface1,
@@ -171,13 +271,21 @@ extension View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .stroke(Design.Color.hairline, lineWidth: Design.Stroke.hairline)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Design.Color.hinoki.opacity(0.10), Design.Color.hinoki.opacity(0.015)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: Design.Stroke.hairline
+                )
+                .allowsHitTesting(false)
         )
     }
 
     func eyebrowStyle(_ color: Color = Design.Color.textTertiary) -> some View {
         font(Design.Typeface.eyebrow)
-            .tracking(1.1)
+            .tracking(1.4)
             .textCase(.uppercase)
             .foregroundStyle(color)
     }
@@ -206,7 +314,7 @@ private struct ShimmerModifier: ViewModifier {
                 .overlay {
                     GeometryReader { geometry in
                         LinearGradient(
-                            colors: [.clear, .white.opacity(0.38), .clear],
+                            colors: [.clear, Design.Color.hinoki.opacity(0.22), .clear],
                             startPoint: .top,
                             endPoint: .bottom
                         )
@@ -217,7 +325,7 @@ private struct ShimmerModifier: ViewModifier {
                     .allowsHitTesting(false)
                 }
                 .onAppear {
-                    withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
+                    withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
                         phase = 1
                     }
                 }
@@ -231,21 +339,24 @@ extension View {
 
 // MARK: - Button Styles
 
+/// The one primary action on a screen: a hinoki-cream slab with sumi ink.
 struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Design.Color.onEmber)
+            .foregroundStyle(Design.Color.onCream)
             .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.vertical, 13)
             .background(
-                Design.Color.emberFill,
+                Design.Color.hinoki.opacity(isEnabled ? 1 : 0.35),
                 in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
             )
-            .opacity(configuration.isPressed ? 0.82 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .animation(Design.Motion.snap, value: configuration.isPressed)
     }
 }
 
@@ -257,12 +368,13 @@ struct SecondaryButtonStyle: ButtonStyle {
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Design.Color.textPrimary)
             .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            .padding(.vertical, 13)
             .background(
-                Design.Color.surface3,
+                Design.Color.surface2,
                 in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
             )
-            .opacity(configuration.isPressed ? 0.82 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .animation(Design.Motion.snap, value: configuration.isPressed)
     }
 }

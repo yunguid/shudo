@@ -1,32 +1,21 @@
 import SwiftUI
 
+/// The room every screen sits in: sumi-walnut, with lamplight from above —
+/// a faint warm wash at the top that fades out well before the content.
 struct AppBackground: View {
     var body: some View {
-        ZStack {
-            Design.Color.paper
-                .ignoresSafeArea()
-
-            LinearGradient(
-                colors: [
-                    Design.Color.ink.opacity(0.018),
-                    .clear,
-                    Design.Color.accentPrimary.opacity(0.018)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+        Design.Color.canvas
+            .overlay(alignment: .top) {
+                RadialGradient(
+                    colors: [Design.Color.pernambuco.opacity(0.07), .clear],
+                    center: UnitPoint(x: 0.3, y: 0),
+                    startRadius: 0,
+                    endRadius: 460
+                )
+                .frame(height: 520)
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
             .ignoresSafeArea()
-
-            RadialGradient(
-                colors: [
-                    .clear,
-                    Design.Color.paper.opacity(0.32)
-                ],
-                center: .center,
-                startRadius: 200,
-                endRadius: 600
-            )
-            .ignoresSafeArea()
-        }
+            .accessibilityHidden(true)
     }
 }
