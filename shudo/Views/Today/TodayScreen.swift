@@ -985,12 +985,17 @@ struct TodayScreen: View {
                 isShowingDatePicker = true
             }
         }
-        // `-shudoTodayMotion header|day`: play the unfold or a day switch
+        // `-shudoTodayMotion header|day|reply`: play the unfold, a day switch
         // (and back) on a timer, for frame-by-frame motion review.
         if let flag = arguments.firstIndex(of: "-shudoTodayMotion"), arguments.indices.contains(flag + 1) {
             let kind = arguments[flag + 1]
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(2.5))
+                if kind == "reply" {
+                    // A send and Shudo's streamed answer: watch rows arrive.
+                    actions.sendToCoach("what should dinner be?")
+                    return
+                }
                 if kind == "header" {
                     withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) { headerExpanded = true }
                 } else {
