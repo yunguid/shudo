@@ -165,6 +165,9 @@ struct BodyScreen: View {
                 trendPoints: snapshot.trendPoints,
                 before: request.before)
                 .navigationTransition(.zoom(sourceID: request.source, in: zoom))
+                // The wipe is a drag; keep the zoom's pull-to-dismiss from
+                // stealing it. Done closes.
+                .interactiveDismissDisabled()
         }
         .fullScreenCover(item: $viewer) { request in
             PhysiquePhotoViewer(
@@ -359,7 +362,7 @@ struct BodyScreen: View {
             .accessibilityLabel("Take today’s photo")
 
             VStack(alignment: .leading, spacing: Design.Space.xs) {
-                Text("Morning check-in")
+                Text("Today’s check-in")
                     .font(Design.Typeface.display(.title3))
                     .foregroundStyle(Design.Color.textPrimary)
                 if let weight = checkIn?.weightKG {
