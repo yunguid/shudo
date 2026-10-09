@@ -57,15 +57,6 @@ enum CaptureContext: String, CaseIterable, Equatable, Sendable {
         }
     }
 
-    /// The hint when the bar is minimized inline with the tab bar.
-    var compactPlaceholder: String {
-        switch self {
-        case .today: return "Tell Shudo…"
-        case .train: return "Log a workout…"
-        case .body: return "Weight…"
-        case .bio: return "About you…"
-        }
-    }
 }
 
 /// The one way into voice and text capture. Every screen that wants Luke to

@@ -45,24 +45,15 @@ enum CaptureLeadingRole: Equatable {
     }
 }
 
-/// The bottom-left circle: ember mic at rest, the brighter ember send arrow
-/// while recording, a spinner while transcribing, retry after a failure.
-/// Purely visual; the owner decides what a tap or a hold does.
+/// The bottom-left circle of the sheet bars and the keyboard composer: a
+/// Pernambuco mic at rest, the send arrow while recording, a spinner while
+/// transcribing, retry after a failure. (The command band's own button is
+/// `CommandKey`.) Purely visual; the owner decides what a tap does.
 struct CaptureLeadingFace: View {
     let role: CaptureLeadingRole
     var size: CGFloat = 36
-    /// The tab bar's bar: Shudo's mark at rest instead of the mic.
-    var showsMark = false
 
-    var body: some View {
-        if showsMark, role == .mic {
-            CoachAvatar(size: size + 2)
-                .frame(width: size + 6, height: size + 6)
-                .contentShape(Circle())
-        } else {
-            face
-        }
-    }
+    var body: some View { face }
 
     private var face: some View {
         let active = role != .mic

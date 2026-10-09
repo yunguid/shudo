@@ -2,11 +2,12 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// The signed-in app: three tabs (Today · Body · Train) with one capture bar
-/// on every tab as the TabView's bottom accessory. The shell owns the
-/// long-lived state the tabs share — the day's meals, the coach thread, the
-/// workout logger — and every capture flow, so "Tell Shudo anything…",
-/// the meal composer, the camera menu and check-ins work from any tab.
+/// The signed-in app: three tabs (Today · Body · Train) above one command
+/// band — Shudo's key carved into the bottom-left corner, the tab bar beside
+/// it (the system tab bar is hidden). The shell owns the long-lived state the
+/// tabs share — the day's meals, the coach thread, the workout logger — and
+/// every capture flow, so talking to Shudo, the meal composer, the camera and
+/// check-ins work from any tab.
 struct AppShell: View {
     let profile: Profile
     private let dependencies: ShellDependencies
