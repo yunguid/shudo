@@ -109,6 +109,7 @@ struct BioView: View {
         if let memory, !memory.bio.isEmpty {
             ForEach(memory.bio) { section in
                 BioSectionView(title: section.title, markdown: section.markdown)
+                    .transition(.ink(reduceMotion: reduceMotion))
             }
             if !memory.notes.isEmpty {
                 BioSectionView(
@@ -116,8 +117,12 @@ struct BioView: View {
                     markdown: memory.notes.keys.sorted().compactMap { memory.notes[$0] }
                         .map { "- \($0)" }.joined(separator: "\n")
                 )
+                .transition(.ink(reduceMotion: reduceMotion))
             }
-            if !recentChanges.isEmpty { recentChangesView }
+            if !recentChanges.isEmpty {
+                recentChangesView
+                    .transition(.ink(reduceMotion: reduceMotion))
+            }
         } else if isLoading {
             ForEach(0..<3, id: \.self) { _ in
                 VStack(alignment: .leading, spacing: Design.Space.m) {

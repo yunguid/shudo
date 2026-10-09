@@ -106,6 +106,14 @@ struct OnboardingView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
+        .toolbar {
+            // Decimal pads have no return key.
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { focusedField = nil }
+                    .tint(Design.Color.textPrimary)
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             bottomAction
         }
@@ -525,7 +533,6 @@ struct OnboardingView: View {
                 updated.applyGoal(goal)
                 draft = updated
                 errorMessage = nil
-                UISelectionFeedbackGenerator().selectionChanged()
             }
         )
     }

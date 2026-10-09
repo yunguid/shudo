@@ -165,6 +165,12 @@ struct AccountView: View {
                 Button("Done") { dismiss() }
                     .tint(Design.Color.textPrimary)
             }
+            // Number pads have no return key.
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { focusedTarget = nil }
+                    .tint(Design.Color.textPrimary)
+            }
         }
         .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: error)
         .task {
