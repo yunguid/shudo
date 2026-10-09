@@ -24,9 +24,10 @@ enum TrainStyle {
 // MARK: - Week: the plan in one line, the seven days as seals
 
 /// The week at a glance: seven small seals (a warm disc with the session's
-/// letter where Luke trained, a dot where he didn't, today ringed
-/// in Pernambuco) and under them the plan's name with "3 of 4". No box —
-/// it sits on the canvas like the date line of a journal page.
+/// letter where Luke trained, a dot where he didn't, today ringed in
+/// Pernambuco) and under them the plan's name, the quiet way into the plan.
+/// The tally ("3 of 4 this week") lives in the tab header, so it isn't said
+/// twice. No box — it sits on the canvas like the date line of a journal page.
 struct TrainWeekHeader: View {
     let planName: String?
     let week: TrainingWeekProgress
@@ -42,7 +43,9 @@ struct TrainWeekHeader: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            caption
+            if let planName, onOpenPlan != nil {
+                planLink(planName)
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture { onOpenPlan?() }
@@ -52,29 +55,15 @@ struct TrainWeekHeader: View {
         .accessibilityHint(onOpenPlan == nil ? "" : "Opens your training plan")
     }
 
-    private var caption: some View {
+    private func planLink(_ name: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(planName ?? "This week")
+            Text(name)
                 .font(Design.Typeface.text(.footnote, weight: .medium))
                 .foregroundStyle(Design.Color.textSecondary)
                 .lineLimit(1)
-            // "3 of 4" against a plan; without one, just the tally.
-            if let count = week.countLabel
-                ?? (week.completed > 0 ? "\(week.completed) session\(week.completed == 1 ? "" : "s")" : nil) {
-                Text("·")
-                    .font(Design.Typeface.text(.footnote))
-                    .foregroundStyle(Design.Color.textTertiary)
-                Text(count)
-                    .font(Design.Typeface.numeral(.footnote, weight: .medium))
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .monospacedDigit()
-                    .contentTransition(.numericText(value: Double(week.completed)))
-            }
-            if onOpenPlan != nil {
-                Image(systemName: "chevron.right")
-                    .font(Design.Typeface.text(.caption2, weight: .semibold))
-                    .foregroundStyle(Design.Color.textTertiary)
-            }
+            Image(systemName: "chevron.right")
+                .font(Design.Typeface.text(.caption2, weight: .semibold))
+                .foregroundStyle(Design.Color.textTertiary)
         }
     }
 
@@ -186,13 +175,15 @@ struct TrainHeroHeading: View {
 /// The plan's next session: every lift with today's number (Pernambuco
 /// where the weight goes up). The one panel on the Train tab — everything
 /// else sits on the canvas. Logging it belongs to the command well in the
-/// corner (tap to say it); the panel only offers the quiet typed way, with
-/// the session's numbers ready to fill in. VoiceOver gets "Log by voice" as
-/// an action on the panel.
+/// corner (tap to say it); the panel only offers the quiet typed way,
+/// "Log as planned", which opens the logger already written out from the
+/// plan, so a session that went to plan is one tap on Log. VoiceOver gets
+/// "Log by voice" as an action on the panel.
 struct NextSessionCard: View {
     let session: TrainingSession
     let targets: [LiftTarget]
     var onLogByVoice: (() -> Void)?
+    /// Opens the logger written out as planned.
     let onType: () -> Void
 
     var body: some View {
@@ -207,7 +198,7 @@ struct NextSessionCard: View {
                 }
             }
             Button(action: onType) {
-                Label("Type it in", systemImage: "keyboard")
+                Label("Log as planned", systemImage: "pencil.line")
                     .font(Design.Typeface.text(.footnote, weight: .semibold))
                     .foregroundStyle(Design.Color.textSecondary)
                     .padding(.vertical, 8)
@@ -217,7 +208,7 @@ struct NextSessionCard: View {
             .buttonStyle(TrainRowButtonStyle())
             .padding(.top, -6)
             .padding(.bottom, -8)
-            .accessibilityHint("Opens the logger with this session's numbers")
+            .accessibilityHint("Opens the logger written out from the plan; change what went differently")
         }
         .padding(TrainStyle.heroPadding)
         .frame(maxWidth: .infinity, alignment: .leading)

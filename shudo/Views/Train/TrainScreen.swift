@@ -12,6 +12,8 @@ struct WorkoutLogContext: Identifiable {
     var targets: [LiftTarget] = []
     var initialKind: ActivityKind?
     var initialImage: UIImage?
+    /// Open already written as planned (the session panel's "Log as planned").
+    var startsFromPlan = false
 }
 
 /// The Train tab, one idea per region and space between them: the week as
@@ -96,6 +98,34 @@ struct TrainScreen: View {
         Design.Motion.calm(animation, reduceMotion: reduceMotion)
     }
 
+    /// The canvas behind the header, as Today does it: solid under the title
+    /// so the page scrolls away beneath it, dissolving over a short edge that
+    /// ends in the empty space above the week strip (so at rest nothing is
+    /// veiled).
+    private var headerBackdrop: some View {
+        let fade: CGFloat = 14
+        return AppBackground()
+            .mask {
+                VStack(spacing: 0) {
+                    Color.black
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: fade)
+                }
+                .ignoresSafeArea(edges: .top)
+            }
+            .padding(.bottom, -Design.Space.s)
+            .allowsHitTesting(false)
+    }
+
+    /// The header's one line: where the week stands. "3 of 4 this week"
+    /// against a plan; without one, the tally (or nothing yet).
+    private var headerSubtitle: String? {
+        let week = snapshot.week
+        if let target = week.target { return "\(week.completed) of \(target) this week" }
+        guard week.completed > 0 else { return nil }
+        return "\(week.completed) session\(week.completed == 1 ? "" : "s") this week"
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -138,7 +168,9 @@ struct TrainScreen: View {
                     #endif
                 }
                 .padding(.horizontal, TrainStyle.gutter)
-                .padding(.top, Design.Space.m)
+                // With the header's own 8 pt foot, the strip sits 16 pt under
+                // the title row — the same gap as Today's title to its figure.
+                .padding(.top, Design.Space.s)
                 .padding(.bottom, Design.Space.xxl)
                 .animation(motion(Design.Motion.arrive), value: snapshot.recent.map(\.id))
                 .animation(motion(Design.Motion.settle), value: heroKey)
@@ -146,6 +178,13 @@ struct TrainScreen: View {
                 .animation(motion(Design.Motion.settle), value: snapshot.draftPlan?.id)
             }
             .scrollIndicators(.hidden)
+            // The tabs open the same way: Today's title row, set left, with
+            // the week's state as the one line under it.
+            .safeAreaBar(edge: .top, spacing: 0) {
+                TabPageHeader(title: "Train", subtitle: headerSubtitle)
+                    .animation(motion(Design.Motion.breath), value: headerSubtitle)
+                    .background(alignment: .top) { headerBackdrop }
+            }
             #if DEBUG
             .task(id: viewModel.hasLoaded) {
                 guard let anchor = previewScrollAnchor, viewModel.hasLoaded else { return }
@@ -156,6 +195,9 @@ struct TrainScreen: View {
         }
         .background(AppBackground())
         .navigationTitle("Train")
+        // The header above replaces the bar on the root only; pushed pages
+        // keep their own.
+        .toolbar(.hidden, for: .navigationBar)
         .refreshable { await viewModel.refresh() }
         .task {
             if viewModel.hasLoaded {
@@ -180,7 +222,8 @@ struct TrainScreen: View {
                 session: context.session,
                 targets: context.targets,
                 initialKind: context.initialKind,
-                initialImage: context.initialImage
+                initialImage: context.initialImage,
+                startsFromPlan: context.startsFromPlan
             ) { draft in
                 _ = viewModel.log(draft, sessionName: context.session?.name)
                 submittedLogs += 1
@@ -251,7 +294,10 @@ struct TrainScreen: View {
                     session: next,
                     targets: snapshot.nextTargets,
                     onLogByVoice: onLogByVoice,
-                    onType: { logContext = WorkoutLogContext(session: next, targets: snapshot.nextTargets) })
+                    onType: {
+                        logContext = WorkoutLogContext(
+                            session: next, targets: snapshot.nextTargets, startsFromPlan: true)
+                    })
                     .transition(.ink(reduceMotion: reduceMotion))
             } else {
                 Text("\(plan.plan.name) has no sessions to run.")

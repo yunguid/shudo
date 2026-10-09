@@ -334,6 +334,13 @@ enum TrainPreviewFixtures {
                 session: next,
                 targets: DoubleProgressionPolicy.targets(for: next, history: activities),
                 onSubmit: { _ in })
+        case "log-planned":
+            let next = planDoc.session(id: "upper_a")!
+            WorkoutLogSheet(
+                session: next,
+                targets: DoubleProgressionPolicy.targets(for: next, history: activities),
+                startsFromPlan: true,
+                onSubmit: { _ in })
         case "log-free":
             WorkoutLogSheet(initialKind: .cardio, onSubmit: { _ in })
         case "plan":

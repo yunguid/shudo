@@ -45,9 +45,18 @@ struct ActivityDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Design.Space.xxl) {
                 VStack(alignment: .leading, spacing: Design.Space.l) {
-                    Text(dateText)
-                        .font(Design.Typeface.text(.subheadline))
-                        .foregroundStyle(Design.Color.textTertiary)
+                    // Titled like the meal page: the name, then when.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(activity.title)
+                            .font(Design.Typeface.display(.title, weight: .regular))
+                            .foregroundStyle(Design.Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(dateText)
+                            .font(Design.Typeface.numeral(.subheadline, weight: .regular))
+                            .foregroundStyle(Design.Color.textTertiary)
+                    }
+                    .padding(.bottom, Design.Space.s)
                     statusView
                     if isSettled { statsRow }
                 }
@@ -62,15 +71,14 @@ struct ActivityDetailView: View {
                 .transition(.ink(reduceMotion: reduceMotion))
             }
             .padding(.horizontal, TrainStyle.gutter)
-            .padding(.top, Design.Space.xs)
+            .padding(.top, Design.Space.m)
             .padding(.bottom, Design.Space.xxl)
             .frame(maxWidth: .infinity, alignment: .leading)
             .animation(Design.Motion.calm(Design.Motion.arrive, reduceMotion: reduceMotion), value: isSettled)
         }
         .scrollIndicators(.hidden)
         .background(AppBackground())
-        .navigationTitle(activity.title)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if canDelete {
                 ToolbarItem(placement: .topBarTrailing) {

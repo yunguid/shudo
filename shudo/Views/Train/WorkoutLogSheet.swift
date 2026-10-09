@@ -5,12 +5,15 @@ import UIKit
 /// The typed / screenshot way to log a workout (voice lives in the capture
 /// bar's mic): words, an optional Watch or treadmill screenshot, and a
 /// Lift/Cardio/Walk hint. Opened from a plan session it shows that
-/// session's numbers and can fill them in. Submitting hands a
+/// session's numbers and can fill them in — or, with `startsFromPlan`,
+/// opens already written as planned, so logging the session as planned is
+/// one tap on Log (edit only what went differently). Submitting hands a
 /// `WorkoutLogDraft` to the owner and dismisses immediately — the upload
 /// belongs to `ActivityLoggingController`.
 struct WorkoutLogSheet: View {
     let session: TrainingSession?
     let targets: [LiftTarget]
+    let startsFromPlan: Bool
     let onSubmit: (WorkoutLogDraft) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -31,12 +34,15 @@ struct WorkoutLogSheet: View {
         initialKind: ActivityKind? = nil,
         initialText: String = "",
         initialImage: UIImage? = nil,
+        startsFromPlan: Bool = false,
         onSubmit: @escaping (WorkoutLogDraft) -> Void
     ) {
         self.session = session
         self.targets = targets
+        let fromPlan = startsFromPlan && session != nil && !targets.isEmpty && initialText.isEmpty
+        self.startsFromPlan = fromPlan
         self.onSubmit = onSubmit
-        _text = State(initialValue: initialText)
+        _text = State(initialValue: fromPlan ? Self.planText(targets) : initialText)
         _kind = State(initialValue: initialKind ?? (session != nil ? .strength : nil))
         _previewImage = State(initialValue: initialImage)
         _imageJPEG = State(initialValue: initialImage.flatMap { Self.uploadJPEG(from: $0) })
@@ -55,7 +61,9 @@ struct WorkoutLogSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Design.Space.xl) {
-                    if session != nil, !targets.isEmpty {
+                    // Opened as planned, the words already are the plan —
+                    // the list above them would only say it twice.
+                    if session != nil, !targets.isEmpty, !startsFromPlan {
                         targetsList
                     }
                     if session == nil {
@@ -253,14 +261,18 @@ struct WorkoutLogSheet: View {
     /// Writes the targets as plain text so logging "as planned" is one tap
     /// plus edits for whatever went differently.
     private func fillFromPlan() {
-        let lines = targets.map { target -> String in
-            let name = ActivitySummaryFormatter.shortLiftName(target.exercise.name)
-            return "\(name) \(target.prescription)"
-        }
-        let planText = lines.joined(separator: "\n")
+        let planText = Self.planText(targets)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? planText : text + "\n" + planText
         textFocused = true
+    }
+
+    /// The session as planned, one lift per line: "Bench press 4×6 @ 185".
+    nonisolated static func planText(_ targets: [LiftTarget]) -> String {
+        targets.map { target in
+            "\(ActivitySummaryFormatter.shortLiftName(target.exercise.name)) \(target.prescription)"
+        }
+        .joined(separator: "\n")
     }
 
     private func loadPhoto(_ item: PhotosPickerItem) async {
