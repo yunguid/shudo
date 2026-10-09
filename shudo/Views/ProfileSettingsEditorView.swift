@@ -3,6 +3,7 @@ import SwiftUI
 struct ProfileSettingsEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var displayName: String
     @State private var timezone: String
@@ -204,7 +205,9 @@ struct ProfileSettingsEditorView: View {
     private func numberField(text: Binding<String>, label: String) -> some View {
         TextField("—", text: text)
             .keyboardType(.decimalPad)
-            .multilineTextAlignment(.trailing)
+            // Accessibility sizes stack the field under its title: read it
+            // from the left edge there.
+            .multilineTextAlignment(dynamicTypeSize.isAccessibilitySize ? .leading : .trailing)
             .font(Design.Typeface.numeral(.body, weight: .regular))
             .monospacedDigit()
             .foregroundStyle(Design.Color.textPrimary)
@@ -216,7 +219,8 @@ struct ProfileSettingsEditorView: View {
         Text(unit)
             .font(Design.Typeface.text(.footnote))
             .foregroundStyle(Design.Color.textTertiary)
-            .frame(width: 22, alignment: .leading)
+            .fixedSize()
+            .frame(minWidth: 22, alignment: .leading)
     }
 
     /// "America/New_York" → "New York".

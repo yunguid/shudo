@@ -332,6 +332,7 @@ struct OnboardingView: View {
             Text("g")
                 .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textTertiary)
+                .fixedSize()
                 .frame(minWidth: 28, alignment: .leading)
         }
         .frame(minHeight: SettingsStyle.rowHeight)
@@ -356,6 +357,7 @@ struct OnboardingView: View {
                 Text(unit)
                     .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
+                    .fixedSize()
                     .frame(minWidth: 28, alignment: .leading)
             }
         }
@@ -425,6 +427,7 @@ struct OnboardingView: View {
             Text(unit)
                 .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textTertiary)
+                .fixedSize()
         }
     }
 
