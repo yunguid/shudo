@@ -97,9 +97,12 @@ enum Design {
             )
         }
 
-        // Heatmap ramp: bare wood to heartwood to Pernambuco to oak.
+        // Heatmap ramp: one wood, deepening — bare walnut, then heartwood
+        // brightening to Pernambuco on the best days. A single hue keeps the
+        // grid calm (a jump to oak read as a checkerboard).
         static let heatmapRamp: [SwiftUI.Color] = [
-            surface3, SwiftUI.Color(hex: 0x5A2818), heartwood, pernambuco, oak,
+            surface3, SwiftUI.Color(hex: 0x4A2317), SwiftUI.Color(hex: 0x7A321D),
+            SwiftUI.Color(hex: 0xA94A2C), pernambuco,
         ]
 
         // MARK: Legacy names (1.x views). New code uses the tokens above.

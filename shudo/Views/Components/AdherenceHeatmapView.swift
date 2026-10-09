@@ -357,8 +357,8 @@ struct AdherenceHeatmapView: View {
         return (max(10, min(30, fitted)), Self.cellSpacing)
     }
 
-    /// Five discrete pads from the icon's ramp: one for "nothing logged",
-    /// four adherence buckets from deep amber up to honey.
+    /// Five discrete pads: one for "nothing logged", four adherence buckets
+    /// from deep heartwood up to Pernambuco.
     static func fillColor(level: Int) -> Color {
         let ramp = Design.Color.heatmapRamp
         return ramp[min(max(level, 0), ramp.count - 1)]
