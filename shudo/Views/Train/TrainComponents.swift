@@ -456,7 +456,8 @@ struct PRBoardCard: View {
             HStack(alignment: .firstTextBaseline) {
                 TrainStyle.sectionLabel("Records")
                 Spacer()
-                Text("est. 1RM")
+                // The unit once, here, rather than after every number.
+                Text("est. 1RM · \(WeightUnit(preference: units).rawValue)")
                     .font(Design.Typeface.text(.caption))
                     .foregroundStyle(Design.Color.textTertiary)
                     .accessibilityLabel("Estimated one-rep max")
@@ -539,13 +540,12 @@ struct PRBoardRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 3) {
             if let pounds = best.e1rmPounds {
                 let unit = WeightUnit(preference: units)
-                Text(Int(StrengthMath.convert(pounds: pounds, to: unit).rounded()).formatted())
+                let value = Int(StrengthMath.convert(pounds: pounds, to: unit).rounded())
+                Text(value.formatted())
                     .font(Design.Typeface.numeral(.body, weight: .medium))
                     .foregroundStyle(best.isFresh ? Design.Color.pernambuco : Design.Color.textPrimary)
                     .monospacedDigit()
-                Text(unit.rawValue)
-                    .font(Design.Typeface.text(.caption))
-                    .foregroundStyle(Design.Color.textTertiary)
+                    .accessibilityLabel("\(value) \(unit == .kg ? "kilograms" : "pounds")")
             } else {
                 Text("\(best.bestSet.reps)")
                     .font(Design.Typeface.numeral(.body, weight: .medium))
