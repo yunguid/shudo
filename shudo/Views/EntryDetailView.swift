@@ -25,7 +25,7 @@ struct EntryDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.setShellBandSuppressed) private var setShellBandSuppressed
-    @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 56
+    @ScaledMetric(relativeTo: .largeTitle) private var calorieFontSize: CGFloat = 60
     let entryId: UUID
     /// Receives a locally accepted correction. The owner (the Today screen)
     /// runs the update and shows its progress on the meal card; this screen
@@ -75,7 +75,7 @@ struct EntryDetailView: View {
             GeometryReader { viewport in
                 ScrollView {
                     if let detail {
-                        VStack(alignment: .leading, spacing: 28) {
+                        VStack(alignment: .leading, spacing: Design.Space.section) {
                             photoGallery(detail.imageURLs)
                             summary(
                                 title: detail.title,
@@ -96,11 +96,12 @@ struct EntryDetailView: View {
                             alignment: .leading
                         )
                         .padding(.horizontal, EntryDetailLayoutPolicy.horizontalPadding)
-                        .padding(.vertical, 14)
+                        .padding(.top, 12)
+                        .padding(.bottom, 28)
                     } else if let seed {
                         // The timeline's card data renders in the first frame;
                         // only the breakdown below it waits for the fetch.
-                        VStack(alignment: .leading, spacing: 28) {
+                        VStack(alignment: .leading, spacing: Design.Space.section) {
                             photo(seed.imageURL)
                             summary(
                                 title: seed.summary,
@@ -121,7 +122,8 @@ struct EntryDetailView: View {
                             alignment: .leading
                         )
                         .padding(.horizontal, EntryDetailLayoutPolicy.horizontalPadding)
-                        .padding(.vertical, 14)
+                        .padding(.top, 12)
+                        .padding(.bottom, 28)
                     } else if isLoading {
                         loadingView
                     } else {
@@ -152,7 +154,7 @@ struct EntryDetailView: View {
 
     // MARK: Summary
 
-    /// Title and time, then one hero number and the three macros under it.
+    /// Title and time, then one hero number and a quiet line of macros.
     private func summary(
         title: String,
         createdAt: Date,
@@ -161,82 +163,81 @@ struct EntryDetailView: View {
         carbs: Double,
         fat: Double
     ) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Design.Space.xl) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.title2.weight(.bold))
+                    .font(Design.Typeface.display(.title, weight: .regular))
                     .foregroundStyle(Design.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
                 Text(createdAt, style: .time)
-                    .font(.subheadline)
+                    .font(Design.Typeface.numeral(.subheadline, weight: .regular))
                     .foregroundStyle(Design.Color.textTertiary)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("\(Int(calories.rounded()))")
-                    .font(.system(size: calorieFontSize, weight: .bold, design: .rounded))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text("kcal")
-                    .font(.title3)
-                    .foregroundStyle(Design.Color.textTertiary)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(Int(calories.rounded())) kilocalories")
+            VStack(alignment: .leading, spacing: Design.Space.m) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(Int(calories.rounded()))")
+                        .font(.custom(Design.Typeface.faceName(.light), size: calorieFontSize))
+                        .monospacedDigit()
+                        .foregroundStyle(Design.Color.macroKcal)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Text("kcal")
+                        .font(Design.Typeface.text(.title3))
+                        .foregroundStyle(Design.Color.textTertiary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(Int(calories.rounded())) kilocalories")
 
-            macroRow(protein: protein, carbs: carbs, fat: fat)
+                macroRow(protein: protein, carbs: carbs, fat: fat)
+            }
         }
     }
 
     @ViewBuilder
     private func macroRow(protein: Double, carbs: Double, fat: Double) -> some View {
         if EntryDetailLayoutPolicy.stacksMacroCards(for: dynamicTypeSize) {
-            VStack(alignment: .leading, spacing: 10) {
-                macroValue("Protein", protein, Design.Color.ringProtein)
-                macroValue("Carbs", carbs, Design.Color.ringCarb)
-                macroValue("Fat", fat, Design.Color.ringFat)
+            VStack(alignment: .leading, spacing: 8) {
+                macroValue("protein", protein, Design.Color.macroProtein)
+                macroValue("carbs", carbs, Design.Color.macroCarbs)
+                macroValue("fat", fat, Design.Color.macroFat)
             }
         } else {
-            HStack(spacing: 0) {
-                macroValue("Protein", protein, Design.Color.ringProtein)
-                macroValue("Carbs", carbs, Design.Color.ringCarb)
-                macroValue("Fat", fat, Design.Color.ringFat)
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.xl) {
+                macroValue("protein", protein, Design.Color.macroProtein)
+                macroValue("carbs", carbs, Design.Color.macroCarbs)
+                macroValue("fat", fat, Design.Color.macroFat)
             }
         }
     }
 
+    /// "54 g protein": the number in hinoki, the word in its macro's pigment.
     private func macroValue(_ label: String, _ value: Double, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("\(Int(value.rounded()))g")
-                .font(Design.Typeface.numeral(.title3))
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text("\(Int(value.rounded())) g")
+                .font(Design.Typeface.numeral(.body, weight: .medium))
                 .foregroundStyle(Design.Color.textPrimary)
-                .monospacedDigit()
-                .lineLimit(1)
-            HStack(spacing: 5) {
-                Circle().fill(color).frame(width: 6, height: 6)
-                Text(label)
-                    .font(.footnote)
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .lineLimit(1)
-            }
+            Text(label)
+                .font(Design.Typeface.text(.subheadline))
+                .foregroundStyle(color)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .lineLimit(1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label), \(Int(value.rounded())) grams")
+        .accessibilityLabel("\(label.capitalized), \(Int(value.rounded())) grams")
     }
 
     // MARK: Breakdown
 
-    /// What's in it: one quiet row per item, no header — the rows say it.
+    /// What's in it: one quiet row per item, no header and no rules — the
+    /// spacing groups them.
     private func breakdown(_ items: [SupabaseService.EntryDetailItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                if index > 0 { HairlineRule() }
+        VStack(alignment: .leading, spacing: Design.Space.l) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 itemRow(item)
             }
         }
+        .transition(.ink(reduceMotion: reduceMotion))
     }
 
     private func itemRow(_ item: SupabaseService.EntryDetailItem) -> some View {
@@ -244,22 +245,19 @@ struct EntryDetailView: View {
         return HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.name)
-                    .font(.body.weight(.medium))
+                    .font(Design.Typeface.text(.body))
                     .foregroundStyle(Design.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(itemDetail(amount: amount, item: item))
-                    .font(.footnote)
+                    .font(Design.Typeface.numeral(.footnote, weight: .regular))
                     .foregroundStyle(Design.Color.textTertiary)
-                    .monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text("\(Int(item.caloriesKcal.rounded()))")
-                .font(Design.Typeface.numeral(.body, weight: .medium))
+                .font(Design.Typeface.numeral(.body, weight: .regular))
                 .foregroundStyle(Design.Color.textSecondary)
-                .monospacedDigit()
         }
-        .padding(.vertical, 12)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "\(item.name)\(amount.isEmpty ? "" : ", \(amount)"), \(Int(item.caloriesKcal.rounded())) kilocalories, "
@@ -291,12 +289,12 @@ struct EntryDetailView: View {
     private var inlineLoadFailure: some View {
         HStack(spacing: 10) {
             Text("Couldn’t load what’s in it.")
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Button("Try again") { Task { await load() } }
-                .font(.footnote.weight(.semibold))
+                .font(Design.Typeface.text(.footnote, weight: .semibold))
                 .foregroundStyle(Design.Color.honey)
                 .buttonStyle(.plain)
         }
@@ -332,7 +330,7 @@ struct EntryDetailView: View {
             }
             .frame(maxWidth: .infinity)
             .background(Design.Color.surface1)
-            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous))
         }
     }
 
@@ -368,7 +366,7 @@ struct EntryDetailView: View {
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: urls)
             .frame(height: 320)
             .background(Design.Color.surface1)
-            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous))
             .accessibilityHint("Swipe left or right to browse meal photos")
         }
     }
@@ -387,7 +385,7 @@ struct EntryDetailView: View {
 
     private var loadingView: some View {
         VStack(alignment: .leading, spacing: 18) {
-            RoundedRectangle(cornerRadius: Design.Radius.hero).fill(Design.Color.surface1).frame(height: 260)
+            RoundedRectangle(cornerRadius: Design.Radius.cardLarge).fill(Design.Color.surface1).frame(height: 260)
             Capsule().fill(Design.Color.surface1).frame(width: 190, height: 16)
             Capsule().fill(Design.Color.surface1).frame(width: 120, height: 40)
         }
@@ -398,11 +396,11 @@ struct EntryDetailView: View {
     private var errorView: some View {
         VStack(spacing: 12) {
             Text(errorMessage ?? "This meal couldn’t be loaded.")
-                .font(.subheadline)
+                .font(Design.Typeface.text(.subheadline))
                 .foregroundStyle(Design.Color.textSecondary)
                 .multilineTextAlignment(.center)
             Button("Try again") { Task { await load() } }
-                .font(.subheadline.weight(.semibold))
+                .font(Design.Typeface.text(.subheadline, weight: .semibold))
                 .foregroundStyle(Design.Color.honey)
         }
         .frame(maxWidth: .infinity)

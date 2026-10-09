@@ -15,6 +15,7 @@ struct BarcodeScannerSheet: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var lookupState: LookupState = .idle
     @State private var manualCode = ""
     @State private var isShowingManualEntry = false
@@ -39,99 +40,107 @@ struct BarcodeScannerSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AppBackground()
-                VStack(spacing: 0) {
-                    if liveScanningAvailable && !isShowingManualEntry {
-                        LiveBarcodeScanner { payload in
-                            handleScannedPayload(payload)
-                        }
-                        .clipShape(RoundedRectangle(
-                            cornerRadius: Design.Radius.hero,
-                            style: .continuous
-                        ))
-                        .overlay(
-                            RoundedRectangle(
-                                cornerRadius: Design.Radius.hero,
-                                style: .continuous
-                            )
-                            .stroke(Design.Color.rule, lineWidth: Design.Stroke.hairline)
-                        )
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                    } else {
-                        manualEntry
+        ZStack {
+            AppBackground()
+            VStack(spacing: 0) {
+                header
+                if showsCamera {
+                    LiveBarcodeScanner { payload in
+                        handleScannedPayload(payload)
                     }
-
-                    statusPanel
-
-                    if !(liveScanningAvailable && !isShowingManualEntry) {
-                        Spacer(minLength: 0)
-                    }
+                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                    .transition(.opacity)
+                } else {
+                    manualEntry
+                        .transition(.opacity)
                 }
-            }
-            .navigationTitle("Scan barcode")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                        .foregroundStyle(Design.Color.textSecondary)
-                }
-                if liveScanningAvailable {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(isShowingManualEntry ? "Camera" : "Type it") {
-                            withAnimation(.snappy) { isShowingManualEntry.toggle() }
-                        }
-                        .foregroundStyle(Design.Color.textSecondary)
-                    }
+                statusPanel
+                if !showsCamera {
+                    Spacer(minLength: 0)
                 }
             }
         }
         .preferredColorScheme(.dark)
         // Camera scanning wants the room; typing a code doesn't.
-        .presentationDetents(
-            liveScanningAvailable && !isShowingManualEntry ? [.large] : [.medium]
-        )
+        .presentationDetents(showsCamera ? [.large] : [.medium])
         .onDisappear { lookupTask?.cancel() }
     }
 
+    private var showsCamera: Bool { liveScanningAvailable && !isShowingManualEntry }
+
+    /// The serif title on the left; on the right the camera ↔ typing switch
+    /// (when there's a camera) and close.
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(showsCamera ? "Scan a barcode" : "Barcode")
+                .font(Design.Typeface.display(.title2, weight: .regular))
+                .foregroundStyle(Design.Color.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if liveScanningAvailable {
+                Button(isShowingManualEntry ? "Camera" : "Type it") {
+                    withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                        isShowingManualEntry.toggle()
+                    }
+                }
+                .font(Design.Typeface.text(.subheadline, weight: .medium))
+                .foregroundStyle(Design.Color.textSecondary)
+                .buttonStyle(.plain)
+            }
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 13))
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .frame(width: 32, height: 32)
+                    .background(Design.Color.hinoki.opacity(0.08), in: Circle())
+                    .contentShape(Circle().inset(by: -8))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+        }
+        .padding(.leading, 24)
+        .padding(.trailing, 18)
+        .padding(.top, 30)
+    }
+
+    /// The number written on a ruled line, centred with room around it, and
+    /// the one primary action under it.
     private var manualEntry: some View {
-        VStack(spacing: 14) {
-            TextField(
-                "",
-                text: $manualCode,
-                prompt: Text("Barcode number").foregroundStyle(Design.Color.textTertiary)
-            )
-            .keyboardType(.numberPad)
-            .font(Design.Typeface.numeral(.title2))
-            .monospacedDigit()
-            .multilineTextAlignment(.center)
-            .foregroundStyle(Design.Color.textPrimary)
-            .padding(.vertical, 16)
-            .background(
-                Design.Color.surface1,
-                in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-            )
-            .accessibilityLabel("Barcode number")
+        VStack(spacing: Design.Space.xl) {
+            VStack(spacing: 10) {
+                TextField(
+                    "",
+                    text: $manualCode,
+                    prompt: Text("0 00000 00000 0").foregroundStyle(Design.Color.textDisabled)
+                )
+                .keyboardType(.numberPad)
+                .font(Design.Typeface.numeral(.title, weight: .regular))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Design.Color.textPrimary)
+                .tint(Design.Color.ember)
+                .accessibilityLabel("Barcode number")
+                HairlineRule()
+                Text("The number under the bars")
+                    .font(Design.Typeface.text(.footnote))
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
 
             Button {
                 handleScannedPayload(manualCode)
             } label: {
                 Text("Look up")
-                    .font(.headline)
-                    .foregroundStyle(manualCodeIsValid ? Design.Color.onEmber : Design.Color.textTertiary)
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(
-                        manualCodeIsValid ? AnyShapeStyle(Design.Color.emberFill) : AnyShapeStyle(Design.Color.surface2),
-                        in: Capsule()
-                    )
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PrimaryButtonStyle())
             .disabled(!manualCodeIsValid)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 28)
+        .padding(.horizontal, 32)
+        .padding(.top, Design.Space.section)
     }
 
     private var manualCodeIsValid: Bool {
@@ -163,7 +172,7 @@ struct BarcodeScannerSheet: View {
 
     private func statusLine(_ text: String) -> some View {
         Text(text)
-            .font(.footnote)
+            .font(Design.Typeface.text(.footnote))
             .foregroundStyle(Design.Color.honey)
             .multilineTextAlignment(.center)
     }

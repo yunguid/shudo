@@ -81,18 +81,25 @@ private final class PolishPreviewCorrectionService: EntryReanalysisServing {
     }
 }
 
-/// Holds the composer's transcriber the way the shell does.
+/// Holds the composer's transcriber the way the shell does, and presents it
+/// as the shell does — a sheet — so its detents show.
 private struct PreviewComposerHost: View {
     @StateObject private var voice = UnobservedHolder(VoiceTranscriber(profile: .meal))
+    @State private var isPresented = true
 
     var body: some View {
-        EntryComposerView(
-            selectedDay: Date(),
-            timezone: ShellPreviewFixtures.timezone,
-            autoStartRecording: PolishPreviewScreen.startsRecording,
-            voice: voice.value,
-            initialImages: ProcessInfo.processInfo.arguments.contains("-shudoPreviewMealPhoto") ? [Self.plate] : []
-        ) { _ in }
+        AppBackground()
+            .sheet(isPresented: $isPresented) {
+                EntryComposerView(
+                    selectedDay: Date(),
+                    timezone: ShellPreviewFixtures.timezone,
+                    autoStartRecording: PolishPreviewScreen.startsRecording,
+                    voice: voice.value,
+                    initialImages: ProcessInfo.processInfo.arguments.contains("-shudoPreviewMealPhoto") ? [Self.plate] : []
+                ) { _ in }
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(Design.Radius.sheet)
+            }
     }
 
     /// `-shudoPreviewMealPhoto`: a stand-in plate (steak, rice, greens).
@@ -213,7 +220,13 @@ struct PolishPreviewView: View {
                 EntryDetailView(entryId: Self.completedEntryID, previewDetail: Self.entryDetail)
             }
         case .scanner:
-            BarcodeScannerSheet { _ in }
+            // Presented as the composer presents it, so its detent shows.
+            AppBackground()
+                .sheet(isPresented: .constant(true)) {
+                    BarcodeScannerSheet { _ in }
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(Design.Radius.sheet)
+                }
         }
     }
 

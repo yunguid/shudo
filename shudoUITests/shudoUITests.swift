@@ -49,7 +49,7 @@ final class shudoUITests: XCTestCase {
 
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["meal.heading"].waitForExistence(timeout: 5))
         XCTAssertTrue(firstPhoto.exists)
         XCTAssertTrue(secondPhoto.exists)
         XCTAssertEqual(note.value as? String, "Synthetic regression meal")
@@ -61,7 +61,7 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["meal.discard"].exists)
 
         send.tap()
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["meal.heading"].waitForNonExistence(timeout: 10))
         let card = app.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS %@", "Synthetic regression meal")
         ).firstMatch
@@ -107,7 +107,7 @@ final class shudoUITests: XCTestCase {
             object: send
         )
         XCTAssertEqual(XCTWaiter.wait(for: [recording], timeout: 8), .completed)
-        XCTAssertFalse(app.navigationBars["Log meal"].exists, "no second voice surface")
+        XCTAssertFalse(app.staticTexts["meal.heading"].exists, "no second voice surface")
         send.tap()
         XCTAssertTrue(app.staticTexts["overnight oats with whey"].waitForExistence(timeout: 8))
     }
@@ -158,7 +158,7 @@ final class shudoUITests: XCTestCase {
         ).firstMatch.exists)
 
         send.tap()
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["meal.heading"].waitForNonExistence(timeout: 10))
         let card = app.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS %@", "Greek yogurt with honey and granola")
         ).firstMatch
@@ -188,9 +188,9 @@ final class shudoUITests: XCTestCase {
         XCTAssertTrue(retry.waitForExistence(timeout: 8))
         XCTAssertTrue(app.descendants(matching: .any)["meal.error"].exists)
         XCTAssertTrue(app.buttons["meal.discard"].exists)
-        XCTAssertTrue(app.navigationBars["Log meal"].exists)
+        XCTAssertTrue(app.staticTexts["meal.heading"].exists)
         retry.tap()
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["meal.heading"].waitForNonExistence(timeout: 10))
     }
 
     /// One smoke test against the real recorder. Either it records or an
@@ -288,7 +288,7 @@ final class shudoUITests: XCTestCase {
         photos.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let done = app.buttons["Done"]
         if done.waitForExistence(timeout: 1) { done.tap() }
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["meal.heading"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Remove photo 1"].waitForExistence(timeout: 8))
     }
 
@@ -297,7 +297,7 @@ final class shudoUITests: XCTestCase {
     @MainActor
     private func openComposerFromFan(in app: XCUIApplication) {
         chooseFanOption(1, in: app)
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["meal.heading"].waitForExistence(timeout: 5))
     }
 
     /// Press and hold the Shudo mark, slide toward option `index` on the

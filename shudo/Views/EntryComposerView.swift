@@ -75,6 +75,10 @@ struct EntryComposerView: View {
     @State private var localError: String?
     @State private var didAutoStart = false
     @State private var clientRequestId = UUID()
+    /// Half height with nothing attached (one question, the bar under the
+    /// thumb); the full sheet once there's a photo or a label to look at.
+    @State private var detent: PresentationDetent
+    @State private var headingIn = false
 
     let selectedDay: Date
     let timezone: String
@@ -104,6 +108,7 @@ struct EntryComposerView: View {
         self.opensBarcodeScannerOnAppear = opensBarcodeScannerOnAppear
         self.voice = voice
         _images = State(initialValue: initialImages)
+        _detent = State(initialValue: initialImages.isEmpty ? .medium : .large)
         self.onSubmit = onSubmit
         dayText = Self.dayLabelText(selectedDay: selectedDay, timezone: timezone)
     }
@@ -122,39 +127,29 @@ struct EntryComposerView: View {
     private var hasAttachments: Bool { !images.isEmpty || !scannedPortions.isEmpty }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AppBackground()
+        ZStack {
+            AppBackground()
+            VStack(alignment: .leading, spacing: 0) {
+                header
                 ScrollView {
-                    VStack(spacing: 16) {
-                        if let dayText {
-                            Text(dayText)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Design.Color.textSecondary)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(Design.Color.surface1, in: Capsule())
-                                .accessibilityLabel("Logging for \(dayText)")
-                        }
+                    VStack(spacing: 12) {
                         photoGrid
                         scannedFoodSection
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 8)
+                    .padding(.top, 20)
                     .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .navigationTitle("Log meal")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                        .foregroundStyle(Design.Color.textSecondary)
-                        .disabled(isSubmitting)
-                }
-            }
-            .safeAreaInset(edge: .bottom) { bottomControls }
+        }
+        .safeAreaInset(edge: .bottom) { bottomControls }
+        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationBackgroundInteraction(.disabled)
+        .onChange(of: hasAttachments || isPreparingImage) { _, attached in
+            guard attached, detent != .large else { return }
+            withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) { detent = .large }
         }
         .preferredColorScheme(.dark)
         .fullScreenCover(isPresented: $isShowingCamera) {
@@ -221,18 +216,68 @@ struct EntryComposerView: View {
         .interactiveDismissDisabled(isSubmitting)
     }
 
+    // MARK: Header
+
+    /// One question, in the serif, with room around it. A meal for another
+    /// day says which day under it.
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("What did you eat?")
+                    .font(Design.Typeface.display(.title, weight: .regular))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("meal.heading")
+                if let dayText {
+                    Text("For \(dayText)")
+                        .font(Design.Typeface.text(.subheadline))
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .accessibilityLabel("Logging for \(dayText)")
+                }
+            }
+            .opacity(headingIn ? 1 : 0)
+            .offset(y: headingIn || reduceMotion ? 0 : 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 13))
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .frame(width: 32, height: 32)
+                    .background(Design.Color.hinoki.opacity(0.08), in: Circle())
+                    .contentShape(Circle().inset(by: -8))
+            }
+            .buttonStyle(.plain)
+            .disabled(isSubmitting)
+            .accessibilityLabel("Close")
+            .accessibilityIdentifier("meal.close")
+        }
+        .padding(.leading, 24)
+        .padding(.trailing, 18)
+        .padding(.top, 30)
+        .onAppear {
+            withAnimation(Design.Motion.calm(Design.Motion.arrive, reduceMotion: reduceMotion).delay(reduceMotion ? 0 : 0.12)) {
+                headingIn = true
+            }
+        }
+    }
+
     // MARK: Bottom: attach row + the capture bar's shape
 
     /// Everything Luke taps sits at the bottom, under his thumb: what to
     /// attach, then the bar (mic bottom-left, note, send).
     private var bottomControls: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             attachRow
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
             SheetCaptureBar(
                 voice: voice,
                 text: $note,
-                placeholder: hasAttachments ? "Add a note…" : "What did you eat?",
+                placeholder: hasAttachments ? "Add a note…" : "Say it or type it…",
                 canSend: hasAttachments,
                 isSendEnabled: canSubmit,
                 isSending: isSubmitting,
@@ -247,8 +292,9 @@ struct EntryComposerView: View {
         .padding(.top, 8)
     }
 
+    /// Left-aligned under the thumb, each sized to its word.
     private var attachRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 attachButton("Camera", systemImage: "camera.fill", enabled: canAddPhoto) {
                     Perf.mark("camera.tap")
@@ -285,12 +331,12 @@ struct EntryComposerView: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.medium))
+                .font(Design.Typeface.text(.subheadline, weight: .medium))
                 .foregroundStyle(enabled ? Design.Color.textSecondary : Design.Color.textDisabled)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, minHeight: 40)
-                .background(Design.Color.surface1, in: Capsule())
+                .padding(.horizontal, 14)
+                .frame(minHeight: 38)
+                .background(Design.Color.hinoki.opacity(0.06), in: Capsule())
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -321,7 +367,7 @@ struct EntryComposerView: View {
                                     .resizable()
                                     .scaledToFill()
                             }
-                            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous))
                             // clipShape crops drawing but NOT hit testing: a
                             // portrait photo scaled to fill this slot stays
                             // taller for touch purposes and would eat taps
@@ -332,10 +378,11 @@ struct EntryComposerView: View {
                             removePhoto(at: index)
                         } label: {
                             Image(systemName: "xmark")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.white)
+                                .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 12))
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Design.Color.textPrimary)
                                 .frame(width: 30, height: 30)
-                                .background(.black.opacity(0.58), in: Circle())
+                                .background(Design.Color.canvas.opacity(0.62), in: Circle())
                                 .contentShape(Circle().inset(by: -6))
                         }
                         .padding(8)
@@ -344,7 +391,7 @@ struct EntryComposerView: View {
                     }
                 }
                 if isPreparingImage {
-                    RoundedRectangle(cornerRadius: Design.Radius.hero, style: .continuous)
+                    RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous)
                         .fill(Design.Color.surface1)
                         .frame(height: images.isEmpty ? 300 : 150)
                         .shimmering()
@@ -482,9 +529,7 @@ struct EntryComposerView: View {
                         isDisabled: isSubmitting,
                         onRemove: { removeScannedPortion(id: portion.id) }
                     )
-                    .transition(
-                        reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top))
-                    )
+                    .transition(.ink(reduceMotion: reduceMotion))
                 }
             }
         }
@@ -518,7 +563,7 @@ struct EntryComposerView: View {
         if reduceMotion {
             body()
         } else {
-            withAnimation(.snappy, body)
+            withAnimation(Design.Motion.arrive, body)
         }
     }
 
@@ -628,10 +673,7 @@ private struct ScannedFoodCard: View {
             }
         }
         .padding(16)
-        .background(
-            Design.Color.surface1,
-            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-        )
+        .cardSurface()
         .opacity(isDisabled ? 0.6 : 1)
     }
 
@@ -639,13 +681,13 @@ private struct ScannedFoodCard: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(portion.product.name)
-                    .font(.subheadline.weight(.semibold))
+                    .font(Design.Typeface.text(.subheadline, weight: .semibold))
                     .foregroundStyle(Design.Color.ink)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail = headerDetail {
                     Text(detail)
-                        .font(.caption)
+                        .font(Design.Typeface.text(.caption))
                         .foregroundStyle(Design.Color.muted)
                         .lineLimit(1)
                 }
@@ -654,7 +696,8 @@ private struct ScannedFoodCard: View {
 
             Button(action: onRemove) {
                 Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
+                    .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 12))
+                    .fontWeight(.semibold)
                     .foregroundStyle(Design.Color.muted)
                     .frame(width: 30, height: 30)
                     .background(Design.Color.surface2, in: Circle())
@@ -698,7 +741,7 @@ private struct ScannedFoodCard: View {
                 .monospacedDigit()
                 .contentTransition(reduceMotion ? .identity : .numericText())
             Text("kcal")
-                .font(.caption2)
+                .font(Design.Typeface.text(.caption2))
                 .foregroundStyle(Design.Color.muted)
         }
     }
@@ -716,7 +759,7 @@ private struct ScannedFoodCard: View {
             HStack(spacing: 4) {
                 Circle().fill(color).frame(width: 5, height: 5)
                 Text("\(label) \(BarcodeNutrition.compactAmount(value))g")
-                    .font(.caption2)
+                    .font(Design.Typeface.numeral(.caption2, weight: .regular))
                     .foregroundStyle(Design.Color.muted)
                     .monospacedDigit()
                     .contentTransition(reduceMotion ? .identity : .numericText())
@@ -732,7 +775,7 @@ private struct ScannedFoodCard: View {
             .accessibilityHidden(true)
 
             Text(portion.quantityLabel)
-                .font(.subheadline.weight(.semibold))
+                .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
                 .foregroundStyle(Design.Color.ink)
                 .monospacedDigit()
                 .contentTransition(reduceMotion ? .identity : .numericText())
@@ -772,7 +815,8 @@ private struct ScannedFoodCard: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.footnote.weight(.bold))
+                .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 13))
+                .fontWeight(.semibold)
                 .foregroundStyle(enabled ? Design.Color.ink : Design.Color.subtle)
                 .frame(width: 34, height: 34)
                 .background(Design.Color.surface2, in: Circle())

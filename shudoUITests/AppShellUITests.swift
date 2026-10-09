@@ -88,7 +88,7 @@ final class AppShellUITests: XCTestCase {
         let app = launch()
         let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 68, dy: -68)))
-        XCTAssertTrue(app.navigationBars["Log meal"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["meal.heading"].waitForExistence(timeout: 5))
     }
 
     /// The trailing ✕ throws a recording away without sending anything.
