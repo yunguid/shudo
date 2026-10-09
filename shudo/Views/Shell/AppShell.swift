@@ -302,7 +302,7 @@ extension AppShell {
         )
     }
 
-    /// The keyboard-docked composer (the accessory itself sits under the
+    /// The keyboard-docked composer (the band itself steps under the
     /// keyboard). On Today the thread stays bright and makes room for it
     /// (`captureComposerInset`) — you're replying to what's there. Elsewhere
     /// a light scrim; tap it to tuck the draft back into the bar.

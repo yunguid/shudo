@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-// The pieces every capture bar is built from, so the tab bar's bar and the
-// sheets that cover it (meal composer, Update meal, first run) look and
-// behave the same: the bottom-left button starts, sends and retries in one
-// spot; the field turns into a timer and meter while recording (no live
+// The pieces every capture surface is built from, so the command band and
+// the sheets that cover it (meal composer, the meal page's fix bar, first
+// run) behave the same: the bottom-left button starts, sends and retries in
+// one spot; a timer and meter replace the words while recording (no live
 // words); ✕ sits on the trailing edge, away from Luke's left thumb.
 
 /// What the bottom-left button is right now.
@@ -429,7 +429,7 @@ struct VoiceMeterView: View {
 // MARK: - Fan (hold the Shudo mark)
 
 /// The hold menu's live state. The bar owns the press; the shell draws the
-/// fan above everything (the bar's accessory clips its own content).
+/// fan above everything, over the band and the tabs.
 @MainActor
 final class CaptureFan: ObservableObject {
     struct Option: Identifiable, Equatable {

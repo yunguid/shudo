@@ -13,7 +13,7 @@ struct CaptureBarActions {
     var scanBarcode: () -> Void
     var workoutPhoto: () -> Void
     var checkIn: () -> Void
-    /// Open the keyboard composer (the bottom accessory sits under the
+    /// Open the keyboard composer (the band sits under the
     /// keyboard, so typing happens in a field docked above it).
     var beginTyping: () -> Void
     /// The bar is about to listen or type: a chance to warm location.
@@ -481,8 +481,8 @@ extension EnvironmentValues {
     @Entry var captureComposerInset: CGFloat = 0
 }
 
-/// The typing surface: the tab bar's accessory sits under the keyboard, so
-/// tapping the field opens this glass field docked right above it, bound to
+/// The typing surface: the command band steps down under the keyboard, so
+/// Type (on the key's dial) opens this glass field docked right above it, bound to
 /// the same draft. Same shape as the bar: mic bottom-left, send trailing.
 /// Losing focus (swipe the thread, tap away) tucks it back into the bar with
 /// the draft kept.
