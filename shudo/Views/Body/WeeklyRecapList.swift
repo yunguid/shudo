@@ -12,21 +12,49 @@ struct WeeklyRecapList: View {
     var presentsLatest = false
 
     @State private var selected: WeeklyRecapSelection?
+    /// The ledger shows the last few weeks; older ones wait behind a fold.
+    @State private var showsEarlier = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let recentCount = 4
+    private static let maxCount = 12
 
     var body: some View {
+        let weeks = Array(summaries.prefix(Self.maxCount))
+        let shown = showsEarlier ? weeks : Array(weeks.prefix(Self.recentCount))
         VStack(alignment: .leading, spacing: 0) {
             Text("Weekly recaps").eyebrowStyle()
                 .accessibilityAddTraits(.isHeader)
                 .padding(.bottom, Design.Space.s)
-            ForEach(Array(summaries.prefix(12).enumerated()), id: \.offset) { index, summary in
-                if index > 0 { HairlineRule() }
+            ForEach(Array(shown.enumerated()), id: \.element.weekStart) { index, summary in
+                VStack(spacing: 0) {
+                    if index > 0 { HairlineRule() }
+                    Button {
+                        selected = WeeklyRecapSelection(summary: summary)
+                    } label: {
+                        row(summary)
+                    }
+                    .buttonStyle(LedgerRowStyle())
+                }
+                .transition(.ink(reduceMotion: reduceMotion))
+            }
+            if weeks.count > Self.recentCount {
+                HairlineRule()
                 Button {
-                    selected = WeeklyRecapSelection(summary: summary)
+                    withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                        showsEarlier.toggle()
+                    }
                 } label: {
-                    row(summary)
+                    Text(showsEarlier ? "Fewer weeks" : "Earlier weeks")
+                        .font(Design.Typeface.text(.footnote))
+                        .foregroundStyle(Design.Color.textSecondary)
+                        .padding(.vertical, Design.Space.m + 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(LedgerRowStyle())
+                .accessibilityHint(showsEarlier ? "Shows only the last four weeks" : "Shows the older weekly recaps")
             }
         }
         .task(id: presentsLatest) {

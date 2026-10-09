@@ -142,6 +142,9 @@
                 ("Protein was locked in; Saturday ran light again", "Five of seven days hit 175 g. Calories landed in the bulk lane on four days; Saturday stopped at 2,150 after a late start."),
                 ("Bulk on track, breakfast still the weak link", "Weekday dinners carried the calories. Two mornings started after 11 with nothing logged before lunch."),
                 ("First full week of the bulk", "Logged every day. Calories averaged 2,760, a touch under target, with protein steady."),
+                ("Setting the targets", "Three days logged while the new targets settled. Protein landed near 150 g."),
+                ("Travel week, logging held", "Hotel breakfasts ran light; dinners carried the day."),
+                ("Back from the cut", "Maintenance calories most days; weight steady at 162."),
             ]
             return headlines.enumerated().compactMap { index, item in
                 guard let startDay = LocalDayMath.adding(-7 * (index + 1) - 6, to: today),
