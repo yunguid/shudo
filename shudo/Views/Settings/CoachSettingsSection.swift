@@ -83,6 +83,12 @@ struct CoachSettingsSection: View {
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: settings.enabled)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: editingQuietEdge)
         .task { await load() }
+        #if DEBUG
+        .onAppear {
+            // PolishPreview screenshots: `-shudoQuietWheel` opens the wheel.
+            if ProcessInfo.processInfo.arguments.contains("-shudoQuietWheel") { editingQuietEdge = .start }
+        }
+        #endif
         .onChange(of: scenePhase) { _, phase in
             // Back from iOS Settings: reflect what changed there.
             guard phase == .active else { return }
@@ -194,17 +200,14 @@ struct CoachSettingsSection: View {
     }
 
     private func quietWheel(_ edge: QuietEdge) -> some View {
-        DatePicker(edge.label, selection: clockBinding(edge.keyPath), displayedComponents: .hourAndMinute)
-            .datePickerStyle(.wheel)
-            .labelsHidden()
+        ClockWheel(label: edge.label, date: clockBinding(edge.keyPath))
             .frame(maxWidth: .infinity)
             .padding(.vertical, Design.Space.s)
             .id(edge)
     }
 
     private func clockText(_ time: CoachClockTime) -> String {
-        let date = Calendar.current.date(bySettingHour: time.hour, minute: time.minute, second: 0, of: Date()) ?? Date()
-        return date.formatted(date: .omitted, time: .shortened)
+        ClockWheel.text(hour: time.hour, minute: time.minute)
     }
 
     private func openSettingsRow(_ title: String) -> some View {
@@ -365,5 +368,79 @@ struct CoachSettingsSection: View {
         if loadsRemotely {
             locationDenied = settings.locationRecsEnabled && !LocationFixProvider.shared.authorization.isAuthorized
         }
+    }
+}
+
+/// A time wheel set in the app's typeface (the system wheel draws SF):
+/// hour, minute and, on 12-hour clocks, a lowercase am/pm.
+private struct ClockWheel: View {
+    let label: String
+    @Binding var date: Date
+
+    private static var uses12Hour: Bool {
+        DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current)?.contains("a") ?? true
+    }
+
+    /// "11:00 pm", or "23:00" on a 24-hour clock: sentence case, no capitals.
+    static func text(hour: Int, minute: Int) -> String {
+        guard uses12Hour else { return String(format: "%02d:%02d", hour, minute) }
+        let twelve = hour % 12 == 0 ? 12 : hour % 12
+        return String(format: "%d:%02d %@", twelve, minute, hour < 12 ? "am" : "pm")
+    }
+
+    private var hour: Int { Calendar.current.component(.hour, from: date) }
+    private var minute: Int { Calendar.current.component(.minute, from: date) }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if Self.uses12Hour {
+                wheel("Hour", selection: Binding(
+                    get: { hour % 12 == 0 ? 12 : hour % 12 },
+                    set: { set(hour: ($0 % 12) + (hour >= 12 ? 12 : 0)) }
+                ), values: Array(1...12)) { "\($0)" }
+            } else {
+                wheel("Hour", selection: Binding(get: { hour }, set: { set(hour: $0) }), values: Array(0...23)) {
+                    String(format: "%02d", $0)
+                }
+            }
+            wheel("Minute", selection: Binding(get: { minute }, set: { set(minute: $0) }), values: Array(0...59)) {
+                String(format: "%02d", $0)
+            }
+            if Self.uses12Hour {
+                wheel("Morning or evening", selection: Binding(
+                    get: { hour >= 12 },
+                    set: { isEvening in set(hour: hour % 12 + (isEvening ? 12 : 0)) }
+                ), values: [false, true]) { $0 ? "pm" : "am" }
+            }
+        }
+        .frame(height: 150)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
+    }
+
+    private func wheel<Value: Hashable>(
+        _ title: String,
+        selection: Binding<Value>,
+        values: [Value],
+        text: @escaping (Value) -> String
+    ) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(values, id: \.self) { value in
+                Text(text(value))
+                    .font(Design.Typeface.numeral(.title3, weight: .regular))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .tag(value)
+            }
+        }
+        .pickerStyle(.wheel)
+        .labelsHidden()
+        .frame(width: 76)
+        .clipped()
+    }
+
+    private func set(hour newHour: Int? = nil, minute newMinute: Int? = nil) {
+        date = Calendar.current.date(
+            bySettingHour: newHour ?? hour, minute: newMinute ?? minute, second: 0, of: date
+        ) ?? date
     }
 }
