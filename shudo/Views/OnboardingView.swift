@@ -445,11 +445,13 @@ struct OnboardingView: View {
 
     @ViewBuilder
     private var errorView: some View {
+        // Plain crimson words, like every other error in the app.
         if let errorMessage {
-            Label(errorMessage, systemImage: "exclamationmark.circle.fill")
+            Text(errorMessage)
                 .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.danger)
                 .fixedSize(horizontal: false, vertical: true)
+                .transition(.ink(reduceMotion: reduceMotion))
         }
     }
 
