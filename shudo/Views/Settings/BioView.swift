@@ -46,22 +46,25 @@ struct BioView: View {
 
     private var page: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
+            VStack(alignment: .leading, spacing: Design.Space.section) {
                 header
                 content
                 Color.clear.frame(height: 1).id("bio.end")
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 4)
-            .padding(.bottom, 24)
+            .padding(.horizontal, Design.Space.xl)
+            .padding(.top, Design.Space.s)
+            .padding(.bottom, Design.Space.xl)
+            // A reading measure: lines stay ~60 characters even on wide
+            // screens and large text.
+            .frame(maxWidth: 560, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await load(quietly: true) }
-        .background(Design.Color.canvas.ignoresSafeArea())
+        .background(AppBackground())
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom, spacing: 0) { updateBar }
-        .animation(Design.Motion.gated(Design.Motion.snap, reduceMotion: reduceMotion), value: isTyping)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: isTyping)
         .onChange(of: typingFocused) { _, focused in
             // Keyboard dismissed with nothing typed: back to the big button.
             if !focused, !canSendTyped { isTyping = false }
@@ -71,22 +74,24 @@ struct BioView: View {
 
     // MARK: Header
 
+    /// The page's title in serif, and a byline: Shudo's mark and when he
+    /// last wrote here (it steps while an update is being merged).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            CoachAvatar(size: 44, isThinking: awaitingNewerThan != nil)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("What Shudo knows about you")
-                    .font(.title.weight(.bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: Design.Space.m) {
+            Text("What Shudo knows about you")
+                .font(Design.Typeface.display(.largeTitle))
+                .foregroundStyle(Design.Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: Design.Space.s) {
+                CoachAvatar(size: 20, isThinking: awaitingNewerThan != nil)
                 Text(status)
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textTertiary)
                     .contentTransition(.opacity)
             }
         }
-        .padding(.top, 8)
+        .padding(.top, Design.Space.s)
     }
 
     private var status: String {
@@ -115,18 +120,19 @@ struct BioView: View {
             if !recentChanges.isEmpty { recentChangesView }
         } else if isLoading {
             ForEach(0..<3, id: \.self) { _ in
-                VStack(alignment: .leading, spacing: 10) {
-                    Capsule().fill(Design.Color.surface2).frame(width: 90, height: 8)
-                    Capsule().fill(Design.Color.surface1).frame(height: 12)
-                    Capsule().fill(Design.Color.surface1).frame(width: 220, height: 12)
+                VStack(alignment: .leading, spacing: Design.Space.m) {
+                    Capsule().fill(Design.Color.surface2).frame(width: 96, height: 10)
+                    Capsule().fill(Design.Color.surface1).frame(height: 10)
+                    Capsule().fill(Design.Color.surface1).frame(width: 220, height: 10)
                 }
                 .shimmering()
             }
             .accessibilityHidden(true)
         } else if !loadFailed {
             Text("Tell him about your training, schedule, food and goals.")
-                .font(.body)
+                .font(Design.Typeface.text(.body))
                 .foregroundStyle(Design.Color.textSecondary)
+                .lineSpacing(BioMarkdownText.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -136,68 +142,70 @@ struct BioView: View {
     }
 
     private var recentChangesView: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Recent changes").eyebrowStyle()
+        VStack(alignment: .leading, spacing: Design.Space.m) {
+            BioSectionTitle(text: "Recent changes")
             ForEach(recentChanges) { revision in
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: Design.Space.m) {
                     Text(revision.changeSummary ?? "")
-                        .font(.subheadline)
+                        .font(Design.Typeface.text(.subheadline))
                         .foregroundStyle(Design.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     Text(revision.createdAt.formatted(.relative(presentation: .named)))
-                        .font(.footnote)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.textTertiary)
                         .lineLimit(1)
                 }
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(.top, 6)
     }
 
     // MARK: Update bar
 
+    /// One cream slab within the left thumb's reach; typing is the quiet
+    /// alternative beside it.
     private var updateBar: some View {
-        HStack(alignment: .bottom, spacing: 10) {
+        HStack(alignment: .bottom, spacing: Design.Space.m) {
             if isTyping {
                 typingField
-                    .transition(.opacity)
+                    .transition(.ink(reduceMotion: reduceMotion))
             } else {
                 Button(action: talk) {
                     Label("Talk to update", systemImage: "mic.fill")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Design.Color.onEmber)
+                        .font(Design.Typeface.text(.body, weight: .semibold))
                         .frame(maxWidth: .infinity)
-                        .frame(height: 54)
-                        .background(Design.Color.ember, in: Capsule())
-                        .contentShape(Capsule())
+                        .padding(.vertical, 3)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("bio.talk")
-                .transition(.opacity)
+                .transition(.ink(reduceMotion: reduceMotion))
 
                 if onTalkToUpdate != nil {
                     Button(action: startTyping) {
                         Image(systemName: "keyboard")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(Design.Typeface.text(.body, weight: .medium))
                             .foregroundStyle(Design.Color.textSecondary)
-                            .frame(width: 54, height: 54)
+                            .frame(width: 50, height: 50)
                             .background(Design.Color.surface2, in: Circle())
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Type an update")
+                    .transition(.opacity)
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, Design.Space.l)
+        .padding(.top, Design.Space.l)
+        .padding(.bottom, Design.Space.s)
         .background {
             LinearGradient(
                 colors: [Design.Color.canvas.opacity(0), Design.Color.canvas],
                 startPoint: .top,
-                endPoint: .center
+                // Fully canvas by the slab's top edge, so text never shows
+                // through beside it.
+                endPoint: UnitPoint(x: 0.5, y: 0.32)
             )
             .ignoresSafeArea()
         }
@@ -206,38 +214,47 @@ struct BioView: View {
     /// Left-handed layout like the capture bar: mic at the left edge, the
     /// field, then send.
     private var typingField: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: Design.Space.s) {
             if onTalkToUpdate != nil {
                 Button(action: talk) {
                     Image(systemName: "mic.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Design.Color.onEmber)
+                        .font(Design.Typeface.text(.body, weight: .semibold))
+                        .foregroundStyle(Design.Color.textPrimary)
                         .frame(width: 44, height: 44)
-                        .background(Design.Color.emberFill, in: Circle())
+                        .background(Design.Color.surface2, in: Circle())
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Talk to update")
             }
-            TextField("Tell Shudo what changed", text: $typed, axis: .vertical)
-                .lineLimit(1...5)
-                .focused($typingFocused)
-                .font(.body)
-                .foregroundStyle(Design.Color.textPrimary)
-                .submitLabel(.send)
-                .onSubmit(sendTyped)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 11)
-                .frame(minHeight: 44)
-                .background(Design.Color.surface2, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            TextField(
+                "",
+                text: $typed,
+                prompt: Text("Tell Shudo what changed").foregroundStyle(Design.Color.textTertiary),
+                axis: .vertical
+            )
+            .lineLimit(1...5)
+            .focused($typingFocused)
+            .font(Design.Typeface.text(.body))
+            .foregroundStyle(Design.Color.textPrimary)
+            .tint(Design.Color.pernambuco)
+            .submitLabel(.send)
+            .onSubmit(sendTyped)
+            .padding(.horizontal, Design.Space.l)
+            .padding(.vertical, 11)
+            .frame(minHeight: 44)
+            .background(Design.Color.surface2, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             Button(action: sendTyped) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(canSendTyped ? Design.Color.onEmber : Design.Color.textTertiary)
+                    .font(Design.Typeface.text(.body, weight: .bold))
+                    .foregroundStyle(canSendTyped ? Design.Color.sumi : Design.Color.textTertiary)
                     .frame(width: 44, height: 44)
-                    .background(canSendTyped ? Design.Color.ember : Design.Color.surface2, in: Circle())
+                    .background(canSendTyped ? Design.Color.pernambuco : Design.Color.surface2, in: Circle())
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .disabled(!canSendTyped)
+            .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: canSendTyped)
             .accessibilityLabel("Send bio update")
         }
     }
@@ -302,18 +319,30 @@ struct BioView: View {
     }
 }
 
-/// One bio section: a small label, then the text as you'd read it.
+/// One bio section: a quiet serif heading, then the text as you'd read it.
 private struct BioSectionView: View {
     let title: String
     let markdown: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).eyebrowStyle()
+        VStack(alignment: .leading, spacing: Design.Space.s) {
+            BioSectionTitle(text: title)
             BioMarkdownText(markdown: markdown)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A section heading on the page: small serif in oak, no caps, no tracking.
+private struct BioSectionTitle: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(Design.Typeface.display(.title3))
+            .foregroundStyle(Design.Color.textSecondary)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -337,10 +366,13 @@ enum BioPresentation {
 struct BioMarkdownText: View {
     let markdown: String
 
+    /// Extra leading for comfortable reading.
+    static let lineSpacing: CGFloat = 4
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
             ForEach(Array(BioPresentation.lines(markdown).enumerated()), id: \.offset) { _, line in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: Design.Space.m) {
                     if line.isBullet {
                         Circle()
                             .fill(Design.Color.textTertiary)
@@ -348,8 +380,9 @@ struct BioMarkdownText: View {
                             .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 5 }
                     }
                     Text(attributed(line.text))
-                        .font(.body)
+                        .font(Design.Typeface.text(.body))
                         .foregroundStyle(Design.Color.textPrimary.opacity(0.92))
+                        .lineSpacing(Self.lineSpacing)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
