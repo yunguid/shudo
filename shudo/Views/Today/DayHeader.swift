@@ -71,15 +71,15 @@ struct DayHeader<Account: View, DayPicker: View>: View {
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        // A new day's name settles in like ink; the old one
-                        // simply fades, overlapping rather than shoving.
+                        // A shoji hand-off, never a blend: the old day's name
+                        // is gone quickly, the new one settles in like ink.
                         ZStack(alignment: .leading) {
                             Text(title)
                                 .font(Design.Typeface.display(.title2))
                                 .foregroundStyle(Design.Color.textPrimary)
                                 .lineLimit(1)
                                 .id(title)
-                                .transition(.asymmetric(insertion: .ink(reduceMotion: reduceMotion), removal: .opacity))
+                                .transition(.inkHandoff(reduceMotion: reduceMotion))
                         }
                         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: title)
                         Image(systemName: "chevron.down")
@@ -155,10 +155,10 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                         .font(Design.Typeface.numeral(.footnote))
                         .monospacedDigit()
                         .foregroundStyle(Design.Color.textTertiary)
-                        .transition(.asymmetric(insertion: .ink(reduceMotion: reduceMotion), removal: .opacity))
+                        .transition(.inkHandoff(reduceMotion: reduceMotion))
                 } else {
                     macroSummary
-                        .transition(.asymmetric(insertion: .ink(reduceMotion: reduceMotion), removal: .opacity))
+                        .transition(.inkHandoff(reduceMotion: reduceMotion))
                 }
             }
             .accessibilityHidden(true)
