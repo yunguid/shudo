@@ -200,6 +200,9 @@ final class DayFormatterCache {
         timeFormatter.timeZone = calendar.timeZone
         timeFormatter.locale = Locale(identifier: "en_US")
         timeFormatter.dateFormat = "h:mm a"
+        // No capitals anywhere: "7:12 am", matching the quiet-hours clock.
+        timeFormatter.amSymbol = "am"
+        timeFormatter.pmSymbol = "pm"
         return self
     }
 

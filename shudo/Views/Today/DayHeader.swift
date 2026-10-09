@@ -334,7 +334,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
             onOpenMeal(meal)
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: Design.Space.m) {
-                Text(timeText(meal.createdAt).replacingOccurrences(of: " AM", with: "").replacingOccurrences(of: " PM", with: ""))
+                Text(timeText(meal.createdAt).replacingOccurrences(of: " am", with: "").replacingOccurrences(of: " pm", with: ""))
                     .font(Design.Typeface.numeral(.caption))
                     .monospacedDigit()
                     .foregroundStyle(Design.Color.textTertiary)
