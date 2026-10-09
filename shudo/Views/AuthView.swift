@@ -149,7 +149,8 @@ struct AuthView: View {
                     .padding(.top, Design.Space.xl)
 
                     oauthProviderDiscoveryContent
-                        .padding(.top, Design.Space.l)
+                        .padding(.top, Design.Space.xl)
+                        .animation(Design.Motion.breath, value: oauthProviderDiscovery)
 
                     Spacer(minLength: Design.Space.section)
                 }
@@ -390,7 +391,7 @@ struct AuthView: View {
                 .accessibilityIdentifier("oauth-provider-discovery-loading")
         case .loaded(let providers):
             if !providers.isEmpty {
-                HStack(spacing: 10) {
+                HStack(spacing: Design.Space.m) {
                     ForEach(providers, id: \.rawValue) { provider in
                         socialButton(
                             provider == .apple ? "Apple" : "Google",
@@ -399,6 +400,7 @@ struct AuthView: View {
                         )
                     }
                 }
+                .transition(.opacity)
             }
         case .failed:
             Button("Apple and Google sign-in didn’t load · Retry") {
@@ -415,6 +417,13 @@ struct AuthView: View {
 
     @MainActor
     private func loadOAuthProviders() async {
+        #if DEBUG
+            // PolishPreview screenshots: `-shudoAuthProviders` shows Apple and Google.
+            if ProcessInfo.processInfo.arguments.contains("-shudoAuthProviders") {
+                oauthProviderDiscovery = .loaded([.apple, .google])
+                return
+            }
+        #endif
         oauthProviderDiscovery = .loading
         do {
             let providers = try await SupabaseAuthService().fetchEnabledOAuthProviders()
