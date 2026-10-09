@@ -76,6 +76,30 @@ enum ShellPreviewFixtures {
         return allEntries()
     }
 
+    /// Meals for any day the preview walks to (Today's day switching runs
+    /// offline): today's set for today, and for earlier days a finished day
+    /// matching yesterday's recap — 2,410 kcal, 181 g protein.
+    static func entries(forLocalDay localDay: String) -> [Entry] {
+        guard localDay < today else { return entries() }
+        let back = LocalDayMath.days(from: localDay, to: today) ?? 1
+        func on(_ hour: Int, _ minute: Int) -> Date {
+            calendar.date(byAdding: .day, value: -back, to: at(hour, minute)) ?? at(hour, minute)
+        }
+        func meal(_ n: Int, _ time: Date, _ name: String, _ p: Double, _ c: Double, _ f: Double, _ kcal: Double) -> Entry {
+            Entry(
+                id: UUID(uuidString: String(format: "33333333-3333-4333-8333-%06d%06d", back, n))!,
+                createdAt: time, summary: name, imageURL: nil,
+                proteinG: p, carbsG: c, fatG: f, caloriesKcal: kcal, localDay: localDay, status: .complete
+            )
+        }
+        return [
+            meal(1, on(7, 30), "Eggs, oats, banana", 36, 88, 16, 640),
+            meal(2, on(12, 15), "Turkey sandwich + whole milk", 52, 70, 22, 690),
+            meal(3, on(15, 40), "Greek yogurt, granola", 38, 52, 9, 430),
+            meal(4, on(19, 10), "Salmon, rice, green beans", 55, 68, 22, 650),
+        ]
+    }
+
     private static func allEntries() -> [Entry] {
         [
             Entry(

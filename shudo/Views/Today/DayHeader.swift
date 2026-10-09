@@ -32,6 +32,12 @@ struct DayHeader<Account: View, DayPicker: View>: View {
     let zoomNamespace: Namespace.ID
     /// A finished day in the diary: what's left reads as "short".
     var isPast = false
+    /// The day the figure's numbers belong to; a new one hands the whole
+    /// figure line off at once.
+    var figureDay = ""
+    /// The selected day's numbers are still on their way: the old day's
+    /// figure waits, dimmed.
+    var isSettling = false
     @ViewBuilder var account: Account
     @ViewBuilder var dayPicker: DayPicker
 
@@ -116,12 +122,22 @@ struct DayHeader<Account: View, DayPicker: View>: View {
 
     private var day: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
-                figureRow
-                    .padding(.top, Design.Space.l)
-                meter
-                    .padding(.top, Design.Space.m)
+            // Number, label, macros and strokes are one line of the diary:
+            // when the day they describe changes they hand off together
+            // (old gone quickly, new inks in), overlapping in place.
+            ZStack(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 0) {
+                    figureRow
+                        .padding(.top, Design.Space.l)
+                    meter
+                        .padding(.top, Design.Space.m)
+                }
+                .id(figureDay)
+                .transition(.inkHandoff(reduceMotion: reduceMotion))
             }
+            .opacity(isSettling ? 0.4 : 1)
+            .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: figureDay)
+            .animation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion), value: isSettling)
             .contentShape(Rectangle())
             // Pull on the figure, not the ledger, so scrolling a long day
             // never folds the panel; large text scrolls instead.

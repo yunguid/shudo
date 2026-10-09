@@ -1240,3 +1240,32 @@ final class TodayViewModel: ObservableObject {
         return (previousEntries, previousTotals)
     }
 }
+
+#if DEBUG
+extension TodayViewModel {
+    /// Previews only (`loadsRemotely == false`): walk to `day` with fixture
+    /// meals and no network, so day switching can be reviewed offline. It
+    /// mimics a real fetch — the new day is selected at once, its meals land
+    /// after `latency` — so the header's hand-off is exercised as on device.
+    /// Production always goes through `load(day:)`.
+    func showPreviewDay(_ day: Date, entries previewEntries: [Entry], latency: Duration = .milliseconds(450)) async {
+        let timezone = profile?.timezone ?? TimeZone.autoupdatingCurrent.identifier
+        let generation = UUID()
+        pollingTasks.values.forEach { $0.cancel() }
+        pollingTasks.removeAll()
+        pollingTokens.removeAll()
+        completionRevealEntryIds.removeAll()
+        loadGeneration = generation
+        currentDay = day
+        currentLocalDay = supabase.localDayString(for: day, timezone: timezone)
+        isPinnedToToday = isToday(day, timezone: timezone)
+        errorMessage = nil
+        isLoadingDay = true
+        try? await Task.sleep(for: latency)
+        guard loadGeneration == generation else { return }
+        entries = previewEntries
+        recomputeTotals()
+        isLoadingDay = false
+    }
+}
+#endif

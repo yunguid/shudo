@@ -114,9 +114,11 @@ struct TodayScreen: View {
         DayHeaderMath.totals(today.todayTotals, excluding: pendingDeletion.map { [$0] } ?? [])
     }
 
+    /// The selected day's meals. While another day's meals are still in the
+    /// model (a new day loading), they stay out of this day's thread.
     private var dayMeals: [Entry] {
         today.entries
-            .filter { $0.id != pendingDeletion?.id }
+            .filter { $0.id != pendingDeletion?.id && ($0.localDay ?? selectedDay) == selectedDay }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
@@ -148,6 +150,16 @@ struct TodayScreen: View {
     }
 
     private var isTyping: Bool { coach.typing != nil && coach.localDay == selectedDay }
+
+    /// The day the header's numbers describe. While a new day loads, the
+    /// old day's meals — and so its totals — are still on screen, so the
+    /// figure and its label stay that day's (dimmed) until the new day's
+    /// meals land; then number and label hand off together. Never "855"
+    /// from one day under "kcal short" from another.
+    private var figureDay: String {
+        guard today.isLoadingDay, let shown = today.entries.first?.localDay else { return selectedDay }
+        return shown
+    }
 
     // MARK: Body
 
@@ -318,7 +330,9 @@ struct TodayScreen: View {
             onDeleteMeal: beginDeletion,
             onOpenInsights: { path.append(TodayRoute.insights) },
             zoomNamespace: zoomNamespace,
-            isPast: !isToday,
+            isPast: figureDay < todayDay,
+            figureDay: figureDay,
+            isSettling: figureDay != selectedDay,
             account: { accountButton },
             dayPicker: { datePicker }
         )
@@ -887,6 +901,15 @@ struct TodayScreen: View {
         guard day <= todayDay, day != selectedDay,
               let date = formatters.date(forLocalDay: day) else { return }
         commitPendingDeletion()
+        #if DEBUG
+        // Previews have no session: walk days on fixture meals instead of
+        // the network (production always loads below).
+        if !environment.loadsRemotely {
+            let target = day == todayDay ? environment.now() : date
+            Task { await today.showPreviewDay(target, entries: ShellPreviewFixtures.entries(forLocalDay: day)) }
+            return
+        }
+        #endif
         if day == todayDay {
             Task { await today.load(day: environment.now()) }
         } else {
