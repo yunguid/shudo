@@ -167,7 +167,16 @@ struct TodayScreen: View {
                     // The keyboard composer floats over the thread; make room
                     // for it so the newest row sits right above it.
                     .safeAreaPadding(.bottom, composerInset)
-                    .onScrollPhaseChange { _, phase in scrollPhase = phase }
+                    .onScrollPhaseChange { _, phase in
+                        scrollPhase = phase
+                        // Going back to reading slides the open day panel
+                        // shut, the way a shoji closes behind you.
+                        if phase == .interacting, headerExpanded {
+                            withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) {
+                                headerExpanded = false
+                            }
+                        }
+                    }
                     .onScrollGeometryChange(for: Bool.self, of: Self.isAtBottom) { _, atBottom in
                         if atBottom {
                             isPinnedToBottom = true
