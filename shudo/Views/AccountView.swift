@@ -85,6 +85,7 @@ struct AccountView: View {
             }
             _isShowingProfileEditor = State(initialValue: sheet == "editor")
             _isShowingDeleteAccount = State(initialValue: sheet == "delete")
+            _cropSource = State(initialValue: sheet == "crop" ? ProfilePhotoCropSource(image: profilePhoto) : nil)
             service = SupabaseService()
             accountDeletionService = PolishPreviewAccountDeletionService()
             self.hooks = hooks
@@ -147,6 +148,7 @@ struct AccountView: View {
             .padding(.horizontal, Design.Space.xl)
             .padding(.top, Design.Space.s)
             .padding(.bottom, Design.Space.xxxl)
+            .settlesOnAppear()
         }
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Settings")

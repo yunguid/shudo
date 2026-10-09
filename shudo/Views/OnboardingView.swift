@@ -44,11 +44,17 @@ struct OnboardingView: View {
         self.onCompleted = onCompleted
         #if DEBUG
             // PolishPreview screenshots: `-shudoOnboardingReview` opens on
-            // the review step with a lean-bulk proposal.
-            if ProcessInfo.processInfo.arguments.contains("-shudoOnboardingReview") {
+            // the review step with a lean-bulk proposal;
+            // `-shudoOnboardingPreparing` shows the working-it-out state.
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("-shudoOnboardingReview") {
                 let result = Self.previewProposal
                 _proposalResult = State(initialValue: result)
                 _draft = State(initialValue: OnboardingDraft(proposal: result.proposal, profileUnits: initialProfile?.units))
+            }
+            if arguments.contains("-shudoOnboardingPreparing") {
+                _isPreparing = State(initialValue: true)
+                _context = State(initialValue: "5'10\", 162 and a half. Lift six days a week, desk job otherwise. Lean bulk to 175.")
             }
         #endif
     }

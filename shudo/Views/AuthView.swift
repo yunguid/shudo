@@ -172,6 +172,19 @@ struct AuthView: View {
             .task {
                 await loadOAuthProviders()
             }
+            #if DEBUG
+            .onAppear {
+                // PolishPreview screenshots: `-shudoAuthCreate` (create-account
+                // mode), `-shudoAuthError` (a sign-in error).
+                let arguments = ProcessInfo.processInfo.arguments
+                if arguments.contains("-shudoAuthCreate") { isCreatingAccount = true }
+                if arguments.contains("-shudoAuthError") {
+                    email = "luke@example.com"
+                    password = "password"
+                    errorMessage = "That email and password don’t match."
+                }
+            }
+            #endif
         }
     }
 
