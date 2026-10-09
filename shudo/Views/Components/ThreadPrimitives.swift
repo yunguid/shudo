@@ -213,27 +213,20 @@ struct MeRow<Content: View>: View {
     }
 }
 
-/// Centered stamp between the day's chapters: "7:21 PM", or with the day
-/// on the first one ("Today 6:52 AM"), like Messages. It brings the pause
-/// above it — the ma that says a new part of the day begins.
+/// Centered stamp between the day's chapters: just the time ("7:21 PM") —
+/// the header above already names the day. It brings the pause above it,
+/// the ma that says a new part of the day begins.
 struct ThreadTimestamp: View {
-    var day: String?
     let time: String
 
     var body: some View {
-        Group {
-            if let day {
-                Text("\(Text(day).foregroundStyle(Design.Color.textSecondary))  \(time)")
-            } else {
-                Text(time)
-            }
-        }
-        .font(Design.Typeface.text(.caption2))
-        .monospacedDigit()
-        .foregroundStyle(Design.Color.textTertiary)
-        .frame(maxWidth: .infinity)
-        .padding(.top, 30)
-        .padding(.bottom, 10)
+        Text(time)
+            .font(Design.Typeface.text(.caption2))
+            .monospacedDigit()
+            .foregroundStyle(Design.Color.textTertiary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 30)
+            .padding(.bottom, 10)
     }
 }
 

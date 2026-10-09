@@ -395,7 +395,10 @@ struct TodayScreen: View {
     private func rowView(_ row: DayThreadRow, isFirst: Bool, showsReceipt: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let timestamp = row.timestamp {
-                ThreadTimestamp(day: isFirst ? threadDayName : nil, time: timeText(timestamp))
+                // The header already names the day; the stamp keeps only
+                // the time (VoiceOver still hears the day on the first).
+                ThreadTimestamp(time: timeText(timestamp))
+                    .accessibilityLabel(isFirst ? "\(threadDayName), \(timeText(timestamp))" : timeText(timestamp))
                     .accessibilityAddTraits(isFirst ? .isHeader : [])
             }
             Group {
