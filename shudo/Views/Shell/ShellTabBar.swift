@@ -18,9 +18,9 @@ struct ShellTabBar: View {
     }
 
     private static let items: [Item] = [
-        Item(tab: .today, title: "Today", symbol: "bubble.left.and.text.bubble.right.fill"),
+        Item(tab: .today, title: "Today", symbol: "bubble.left.and.text.bubble.right"),
         Item(tab: .body, title: "Body", symbol: "figure.arms.open"),
-        Item(tab: .train, title: "Train", symbol: "dumbbell.fill"),
+        Item(tab: .train, title: "Train", symbol: "dumbbell"),
     ]
 
     var body: some View {
@@ -52,6 +52,8 @@ struct ShellTabBar: View {
                 Image(systemName: item.symbol)
                     .font(.custom(Design.Typeface.faceName(.medium), fixedSize: 17))
                     .fontWeight(.medium)
+                    // Outline at rest, filled when chosen.
+                    .symbolVariant(selected ? .fill : .none)
                     .frame(height: 21)
                     .foregroundStyle(selected ? Design.Color.pernambuco : Design.Color.textSecondary)
                     .overlay(alignment: .topTrailing) {

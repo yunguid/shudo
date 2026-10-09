@@ -211,7 +211,7 @@ extension AppShell {
             .frame(maxHeight: .infinity, alignment: .bottom)
             .ignoresSafeArea(.container, edges: .bottom)
             .ignoresSafeArea(.keyboard)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
         }
     }
 
@@ -425,6 +425,8 @@ extension AppShell {
             NavigationStack {
                 dependencies.makeAccountView(currentProfile, accountHooks(scrollToCoach: scrollToCoach))
             }
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(Design.Radius.sheet)
         case .bio:
             NavigationStack {
                 BioView(
@@ -442,6 +444,8 @@ extension AppShell {
                     }
                 }
             }
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(Design.Radius.sheet)
         case .workoutLog(let context):
             WorkoutLogSheet(
                 session: context.session,
