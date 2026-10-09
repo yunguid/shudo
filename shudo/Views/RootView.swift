@@ -43,53 +43,60 @@ struct RootView: View {
         }
     }
 
-    @ViewBuilder
-    private var sessionContent: some View {
-        if session.session == nil {
-            AuthView()
-        } else if let profile {
-            switch ProfileLaunchPolicy.destination(for: profile) {
-            case .onboarding:
-                OnboardingView(initialProfile: profile) { updatedProfile in
-                    ProfileCache.save(updatedProfile)
-                    self.profile = updatedProfile
-                }
-                .id("onboarding-\(profile.userId)")
-            case .loading:
-                loadingView
-            case .today:
-                AppShell(profile: profile)
-                    .id(profile.userId)
-            }
-        } else {
-            loadingView
+    /// Which room the app is in. Moving between them is a slow crossfade
+    /// (ink drying), never a hard cut.
+    private enum Stage: Hashable { case auth, loading, onboarding, today }
+
+    private var stage: Stage {
+        guard session.session != nil else { return .auth }
+        guard let profile else { return .loading }
+        switch ProfileLaunchPolicy.destination(for: profile) {
+        case .onboarding: return .onboarding
+        case .loading: return .loading
+        case .today: return .today
         }
     }
 
-    private var loadingView: some View {
-        VStack(spacing: 14) {
-            CoachAvatar(size: 56, isThinking: profileError == nil)
-                .accessibilityLabel(profileError == nil ? "Opening Shudo" : "Shudo")
-            if let profileError {
-                Text(profileError)
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Try again") { prepareProfile() }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .padding(.top, 6)
-                Button("Sign out") {
-                    Task { await CoachSync.shared.reset() }
-                    AuthSessionManager.shared.signOut()
+    @ViewBuilder
+    private var sessionContent: some View {
+        Group {
+            if session.session == nil {
+                AuthView()
+                    .transition(.opacity)
+            } else if let profile {
+                switch ProfileLaunchPolicy.destination(for: profile) {
+                case .onboarding:
+                    OnboardingView(initialProfile: profile) { updatedProfile in
+                        ProfileCache.save(updatedProfile)
+                        self.profile = updatedProfile
+                    }
+                    .id("onboarding-\(profile.userId)")
+                    .transition(.opacity)
+                case .loading:
+                    loadingView
+                        .transition(.opacity)
+                case .today:
+                    AppShell(profile: profile)
+                        .id(profile.userId)
+                        .transition(.opacity)
                 }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Design.Color.textTertiary)
-                .frame(minHeight: 44)
+            } else {
+                loadingView
+                    .transition(.opacity)
             }
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(Design.Motion.breath, value: stage)
+    }
+
+    private var loadingView: some View {
+        LaunchStateView(
+            errorMessage: profileError,
+            onRetry: prepareProfile,
+            onSignOut: {
+                Task { await CoachSync.shared.reset() }
+                AuthSessionManager.shared.signOut()
+            }
+        )
     }
 
     private func prepareProfile() {
@@ -123,4 +130,55 @@ struct RootView: View {
             }
         }
     }
+}
+
+/// Between rooms: Shudo's mark breathing slowly on the walnut while the
+/// profile loads (a fade only under Reduce Motion), and a calm way back
+/// when it can't.
+struct LaunchStateView: View {
+    var errorMessage: String?
+    var onRetry: () -> Void
+    var onSignOut: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One slow breath every 4.4 s.
+    private static let breathPeriod: Double = 4.4
+
+    var body: some View {
+        VStack(spacing: Design.Space.xl) {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isBreathing)) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let depth = isBreathing ? (1 - cos(t * 2 * .pi / Self.breathPeriod)) / 2 : 0
+                CoachAvatar(size: 56)
+                    .opacity(1 - 0.45 * depth)
+                    .scaleEffect(reduceMotion ? 1 : 1 - 0.04 * depth)
+            }
+            .accessibilityElement()
+            .accessibilityLabel(errorMessage == nil ? "Opening Shudo" : "Shudo")
+
+            if let errorMessage {
+                VStack(spacing: Design.Space.l) {
+                    Text(errorMessage)
+                        .font(Design.Typeface.display(.title3))
+                        .foregroundStyle(Design.Color.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Try again", action: onRetry)
+                        .buttonStyle(PrimaryButtonStyle())
+                    Button("Sign out", action: onSignOut)
+                        .font(Design.Typeface.text(.subheadline, weight: .medium))
+                        .foregroundStyle(Design.Color.textSecondary)
+                        .frame(minHeight: 44)
+                        .buttonStyle(.plain)
+                }
+                .transition(.ink(reduceMotion: reduceMotion))
+            }
+        }
+        .padding(Design.Space.xxl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(Design.Motion.calm(Design.Motion.arrive, reduceMotion: reduceMotion), value: errorMessage)
+    }
+
+    private var isBreathing: Bool { errorMessage == nil }
 }

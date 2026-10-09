@@ -65,178 +65,101 @@ struct AuthView: View {
     @State private var canResendConfirmation = false
     @ObservedObject private var router = AppRouter.shared
     @FocusState private var focusedField: Field?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             AppBackground()
 
             ScrollView {
-                VStack(spacing: 30) {
-                    Spacer(minLength: 62)
+                VStack(alignment: .leading, spacing: 0) {
+                    wordmark
+                        .padding(.top, Design.Space.xxxl)
 
-                    VStack(spacing: 14) {
-                        CoachAvatar(size: 64)
-                        Text("Shudo")
-                            .font(Design.Typeface.screenTitle)
-                            .foregroundStyle(Design.Color.textPrimary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityAddTraits(.isHeader)
-
-                    VStack(spacing: 12) {
-                        VStack(spacing: 0) {
-                            credentialRow(systemImage: "envelope", label: "Email") {
-                                TextField(
-                                    "",
-                                    text: $email,
-                                    prompt: Text(verbatim: "you@example.com")
-                                        .foregroundStyle(Design.Color.muted)
-                                )
-                                .foregroundStyle(Design.Color.ink)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.emailAddress)
-                                .textContentType(.username)
-                                .autocorrectionDisabled()
-                                .submitLabel(.next)
-                                .focused($focusedField, equals: .email)
-                                .onSubmit { focusedField = .password }
-                            }
-
-                            Rectangle()
-                                .fill(Design.Color.rule)
-                                .frame(height: 0.5)
-                                .padding(.leading, 48)
-
-                            credentialRow(systemImage: "lock", label: "Password") {
-                                SecureField(
-                                    "",
-                                    text: $password,
-                                    prompt: Text("Password")
-                                        .foregroundStyle(Design.Color.muted)
-                                )
-                                .foregroundStyle(Design.Color.ink)
-                                .textContentType(.password)
-                                .submitLabel(.go)
-                                .focused($focusedField, equals: .password)
-                                .onSubmit { submitIfReady() }
-                            }
+                    VStack(alignment: .leading, spacing: Design.Space.l) {
+                        underlinedField(.email) {
+                            TextField(
+                                "",
+                                text: $email,
+                                prompt: Text(verbatim: "Email")
+                                    .foregroundStyle(Design.Color.textTertiary)
+                            )
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            .textContentType(.username)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                            .focused($focusedField, equals: .email)
+                            .onSubmit { focusedField = .password }
+                            .accessibilityLabel("Email")
                         }
-                        .padding(.horizontal, 16)
-                        .background(
-                            Design.Color.elevated,
-                            in: RoundedRectangle(cornerRadius: Design.Radius.xl, style: .continuous)
-                        )
 
-                        if !isCreatingAccount {
-                            Button(action: requestPasswordRecovery) {
-                            HStack(spacing: 7) {
-                                if isRecoveryLoading {
+                        underlinedField(.password) {
+                            SecureField(
+                                "",
+                                text: $password,
+                                prompt: Text("Password")
+                                    .foregroundStyle(Design.Color.textTertiary)
+                            )
+                            .textContentType(.password)
+                            .submitLabel(.go)
+                            .focused($focusedField, equals: .password)
+                            .onSubmit { submitIfReady() }
+                            .accessibilityLabel("Password")
+                        }
+
+                        passwordFootnote
+                    }
+                    .padding(.top, Design.Space.section)
+
+                    messages
+                        .padding(.top, Design.Space.l)
+
+                    VStack(alignment: .leading, spacing: Design.Space.m) {
+                        Button(action: submitIfReady) {
+                            HStack(spacing: 9) {
+                                if isLoading {
                                     ProgressView()
                                         .controlSize(.small)
-                                        .tint(Design.Color.accentSecondary)
+                                        .tint(Design.Color.onCream)
                                 }
-                                Text(isRecoveryLoading ? "Sending…" : "Forgot password?")
+                                Text(isLoading
+                                     ? (isCreatingAccount ? "Creating…" : "Opening…")
+                                     : (isCreatingAccount ? "Create account" : "Sign in"))
+                                    .contentTransition(.opacity)
                             }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Design.Color.accentSecondary)
-                            .frame(minHeight: 44)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isBusy)
-                            .accessibilityHint("Sends a password reset link to the email above")
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .frame(maxWidth: .infinity)
                         }
-                    }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(!canSubmit)
 
-                    if let errorMessage {
-                        HStack(spacing: 9) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                            Text(errorMessage)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(Design.Color.danger)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                    }
-
-                    if let recoveryMessage {
-                        HStack(alignment: .top, spacing: 9) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .accessibilityHidden(true)
-                            Text(recoveryMessage)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(Design.Color.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                        .accessibilityElement(children: .combine)
-                    }
-
-                    if canResendConfirmation {
-                        Button {
-                            resendConfirmation()
-                        } label: {
-                            HStack(spacing: 7) {
-                                if isConfirmationLoading {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                        .tint(Design.Color.accentSecondary)
-                                }
-                                Text(isConfirmationLoading
-                                     ? "Sending confirmation…"
-                                     : "Resend confirmation email")
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Design.Color.accentSecondary)
-                            .frame(minHeight: 44)
+                        Button(action: toggleMode) {
+                            Text(isCreatingAccount ? "I have an account" : "Create an account")
+                                .font(Design.Typeface.text(.subheadline, weight: .medium))
+                                .foregroundStyle(Design.Color.textSecondary)
+                                .contentTransition(.opacity)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .disabled(isBusy)
-                        .accessibilityHint("Sends a new account confirmation link to the email above")
                     }
-
-                    Button(action: submitIfReady) {
-                        HStack(spacing: 9) {
-                            if isLoading {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(.white)
-                            }
-                            Text(isLoading
-                                 ? (isCreatingAccount ? "Creating…" : "Opening…")
-                                 : (isCreatingAccount ? "Create account" : "Sign in"))
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(!canSubmit)
-                    .opacity(canSubmit ? 1 : 0.48)
-
-                    Button {
-                        isCreatingAccount.toggle()
-                        errorMessage = nil
-                        recoveryMessage = nil
-                        canResendConfirmation = false
-                    } label: {
-                        Text(isCreatingAccount ? "I have an account" : "Create an account")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Design.Color.accentSecondary)
-                            .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isBusy)
+                    .padding(.top, Design.Space.xl)
 
                     oauthProviderDiscoveryContent
+                        .padding(.top, Design.Space.l)
 
-                    Spacer(minLength: 42)
+                    Spacer(minLength: Design.Space.section)
                 }
-                .frame(maxWidth: 430)
-                .padding(.horizontal, 24)
+                .frame(maxWidth: 430, alignment: .leading)
+                .padding(.horizontal, Design.Space.xl)
                 .frame(maxWidth: .infinity)
+                .settlesOnAppear()
             }
             .scrollDismissesKeyboard(.interactively)
+            .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: focusedField)
+            .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: errorMessage)
+            .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: recoveryMessage)
             .onChange(of: email) {
                 recoveryMessage = nil
                 canResendConfirmation = false
@@ -252,6 +175,146 @@ struct AuthView: View {
         }
     }
 
+    /// The pad mark, the name in serif, and one quiet line that slides
+    /// like a shoji panel when the mode changes.
+    private var wordmark: some View {
+        VStack(alignment: .leading, spacing: Design.Space.xl) {
+            CoachAvatar(size: 48)
+            VStack(alignment: .leading, spacing: Design.Space.s) {
+                Text("Shudo")
+                    .font(Design.Typeface.display(.largeTitle))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                ZStack(alignment: .leading) {
+                    if isCreatingAccount {
+                        modeLine("Create your account.")
+                            .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+                    } else {
+                        modeLine("Sign in to continue.")
+                            .transition(.shoji(.leading, reduceMotion: reduceMotion))
+                    }
+                }
+            }
+        }
+    }
+
+    private func modeLine(_ text: String) -> some View {
+        Text(text)
+            .font(Design.Typeface.text(.body))
+            .foregroundStyle(Design.Color.textSecondary)
+    }
+
+    /// Under the password: "Forgot password?" when signing in, the length
+    /// rule when creating an account. Same slot, sliding past each other.
+    private var passwordFootnote: some View {
+        ZStack(alignment: .leading) {
+            if isCreatingAccount {
+                Text("At least 10 characters.")
+                    .font(Design.Typeface.text(.footnote))
+                    .foregroundStyle(password.count >= 10 ? Design.Color.textSecondary : Design.Color.textTertiary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+            } else {
+                Button(action: requestPasswordRecovery) {
+                    HStack(spacing: 7) {
+                        if isRecoveryLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(Design.Color.textSecondary)
+                        }
+                        Text(isRecoveryLoading ? "Sending…" : "Forgot password?")
+                    }
+                    .font(Design.Typeface.text(.footnote, weight: .medium))
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .accessibilityHint("Sends a password reset link to the email above")
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .transition(.shoji(.leading, reduceMotion: reduceMotion))
+            }
+        }
+        .padding(.top, -Design.Space.s)
+    }
+
+    /// Errors in crimson, confirmations in oak; each arrives like ink.
+    @ViewBuilder
+    private var messages: some View {
+        VStack(alignment: .leading, spacing: Design.Space.m) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(Design.Typeface.text(.footnote))
+                    .foregroundStyle(Design.Color.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.ink(reduceMotion: reduceMotion))
+            }
+
+            if let recoveryMessage {
+                Text(recoveryMessage)
+                    .font(Design.Typeface.text(.footnote))
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.ink(reduceMotion: reduceMotion))
+            }
+
+            if canResendConfirmation {
+                Button {
+                    resendConfirmation()
+                } label: {
+                    HStack(spacing: 7) {
+                        if isConfirmationLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(Design.Color.textSecondary)
+                        }
+                        Text(isConfirmationLoading
+                             ? "Sending confirmation…"
+                             : "Resend confirmation email")
+                    }
+                    .font(Design.Typeface.text(.footnote, weight: .medium))
+                    .foregroundStyle(Design.Color.oak)
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .accessibilityHint("Sends a new account confirmation link to the email above")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toggleMode() {
+        withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) {
+            isCreatingAccount.toggle()
+            errorMessage = nil
+            recoveryMessage = nil
+            canResendConfirmation = false
+        }
+    }
+
+    /// A field written on a line, like a form on washi: no box, no icon,
+    /// the rule warming to Pernambuco while you write.
+    private func underlinedField<Content: View>(
+        _ field: Field,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let isFocused = focusedField == field
+        return VStack(alignment: .leading, spacing: 0) {
+            content()
+                .font(Design.Typeface.text(.body))
+                .foregroundStyle(Design.Color.textPrimary)
+                .tint(Design.Color.pernambuco)
+                .frame(minHeight: 52)
+            Rectangle()
+                .fill(isFocused ? Design.Color.pernambuco.opacity(0.75) : Design.Color.strokeStrong)
+                .frame(height: isFocused ? 1 : Design.Stroke.hairline)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { focusedField = field }
+    }
+
     private var isBusy: Bool {
         isLoading || isRecoveryLoading || isConfirmationLoading || isOAuthLoading
     }
@@ -263,24 +326,6 @@ struct AuthView: View {
 
     private var isEmailValid: Bool {
         AuthEmailInput.isValid(email)
-    }
-
-    private func credentialRow<Content: View>(
-        systemImage: String,
-        label: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Design.Color.muted)
-                .frame(width: 20)
-
-            content()
-                .font(.body)
-                .accessibilityLabel(label)
-        }
-        .frame(minHeight: 58)
     }
 
     private func submitIfReady() {
@@ -298,12 +343,12 @@ struct AuthView: View {
             startOAuth(provider)
         } label: {
             Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Design.Color.ink)
+                .font(Design.Typeface.text(.subheadline, weight: .medium))
+                .foregroundStyle(Design.Color.textPrimary)
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .background(
-                    Design.Color.elevated,
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    Design.Color.surface1,
+                    in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
                 )
         }
         .buttonStyle(.plain)
@@ -336,9 +381,9 @@ struct AuthView: View {
             Button("Apple and Google sign-in didn’t load · Retry") {
                 Task { await loadOAuthProviders() }
             }
-            .font(.footnote.weight(.medium))
+            .font(Design.Typeface.text(.footnote))
             .foregroundStyle(Design.Color.textTertiary)
-            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .buttonStyle(.plain)
             .disabled(isBusy)
             .accessibilityIdentifier("oauth-provider-discovery-retry")

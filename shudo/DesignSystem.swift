@@ -409,13 +409,16 @@ struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Design.Typeface.text(.subheadline, weight: .semibold))
-            .foregroundStyle(Design.Color.onCream)
+            // Disabled is a quiet walnut slab with faint ink, not a washed-out
+            // cream (which read muddy on the canvas).
+            .foregroundStyle(isEnabled ? Design.Color.onCream : Design.Color.textTertiary)
             .padding(.horizontal, 20)
             .padding(.vertical, 13)
             .background(
-                Design.Color.hinoki.opacity(isEnabled ? 1 : 0.35),
+                isEnabled ? Design.Color.hinoki : Design.Color.surface2,
                 in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
             )
+            .animation(Design.Motion.snap, value: isEnabled)
             .opacity(configuration.isPressed ? 0.85 : 1)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
             .animation(Design.Motion.snap, value: configuration.isPressed)

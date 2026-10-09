@@ -20,6 +20,8 @@ enum PolishPreviewScreen: String {
     case onboarding
     /// Signed-out sign-in screen.
     case auth
+    /// The launch/loading room (`-shudoLaunchError` shows the offline state).
+    case launch
     /// The meal composer sheet (`-shudoPreviewRecord` starts a take).
     case composer
     /// The meal page with its inline fix bar.
@@ -196,6 +198,13 @@ struct PolishPreviewView: View {
             OnboardingView(initialProfile: ShellPreviewFixtures.profile) { _ in }
         case .auth:
             AuthView()
+        case .launch:
+            LaunchStateView(
+                errorMessage: ProcessInfo.processInfo.arguments.contains("-shudoLaunchError")
+                    ? "Can’t reach Shudo right now." : nil,
+                onRetry: {},
+                onSignOut: {}
+            )
         case .composer:
             PreviewComposerHost()
         case .correction:
