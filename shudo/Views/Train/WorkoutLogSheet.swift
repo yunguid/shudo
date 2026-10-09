@@ -67,7 +67,7 @@ struct WorkoutLogSheet: View {
                     }
                     if let photoError {
                         Text(photoError)
-                            .font(.footnote)
+                            .font(Design.Typeface.text(.footnote))
                             .foregroundStyle(Design.Color.danger)
                             .transition(.opacity)
                     }
@@ -122,7 +122,7 @@ struct WorkoutLogSheet: View {
             }
             Button(action: fillFromPlan) {
                 Label("Fill in as planned", systemImage: "text.badge.plus")
-                    .font(.footnote.weight(.semibold))
+                    .font(Design.Typeface.text(.footnote, weight: .semibold))
                     .foregroundStyle(Design.Color.pernambuco)
                     .padding(.vertical, 6)
                     .contentShape(Rectangle())
@@ -142,7 +142,7 @@ struct WorkoutLogSheet: View {
                     }
                 } label: {
                     Label(option == .strength ? "Lift" : option.label, systemImage: option.symbolName)
-                        .font(.subheadline.weight(.medium))
+                        .font(Design.Typeface.text(.subheadline, weight: .medium))
                         .foregroundStyle(selected ? Design.Color.onCream : Design.Color.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
@@ -160,14 +160,14 @@ struct WorkoutLogSheet: View {
         ZStack(alignment: .topLeading) {
             if text.isEmpty {
                 Text(placeholder)
-                    .font(.body)
+                    .font(Design.Typeface.text(.body))
                     .foregroundStyle(Design.Color.textTertiary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .allowsHitTesting(false)
             }
             TextField("", text: $text, axis: .vertical)
-                .font(.body)
+                .font(Design.Typeface.text(.body))
                 .foregroundStyle(Design.Color.textPrimary)
                 .lineLimit(5...14)
                 .focused($textFocused)
@@ -217,7 +217,7 @@ struct WorkoutLogSheet: View {
                         Image(systemName: "xmark.circle.fill")
                             .symbolRenderingMode(.palette)
                             .foregroundStyle(Design.Color.textPrimary, Design.Color.surface3)
-                            .font(.body)
+                            .font(Design.Typeface.text(.body))
                     }
                     .offset(x: 6, y: -6)
                     .accessibilityLabel("Remove photo")
@@ -234,7 +234,7 @@ struct WorkoutLogSheet: View {
     /// Quiet text actions under the field — no pills competing with "Log".
     private func attachmentLabel(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol)
-            .font(.subheadline.weight(.medium))
+            .font(Design.Typeface.text(.subheadline, weight: .medium))
             .foregroundStyle(Design.Color.textSecondary)
             .padding(.horizontal, 10)
             .frame(height: 44)

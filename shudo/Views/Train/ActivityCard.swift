@@ -32,7 +32,7 @@ struct ActivityCard: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(activity.title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(Design.Typeface.text(.subheadline, weight: .semibold))
                         .foregroundStyle(Design.Color.textPrimary)
                         .lineLimit(1)
                     if !activity.prs.isEmpty {
@@ -72,18 +72,18 @@ struct ActivityCard: View {
     private var statusLine: some View {
         if activity.isNotSent {
             Text("Not sent")
-                .font(.footnote.weight(.medium))
+                .font(Design.Typeface.text(.footnote, weight: .medium))
                 .foregroundStyle(Design.Color.danger)
         } else if activity.isProcessing {
             Text(ActivityCard.readingLine(for: activity))
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textSecondary)
                 .lineLimit(1)
                 .contentTransition(.opacity)
                 .shimmering()
         } else if activity.status == .failed {
             Text("Couldn’t read this one")
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.danger)
         } else if let line = ActivitySummaryFormatter.statLine(for: activity, units: units) {
             Text(line)
@@ -129,7 +129,7 @@ struct ActivityKindTile: View {
             .fill(tint.opacity(0.13))
             .overlay {
                 Image(systemName: kind.symbolName)
-                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .font(.custom(Design.Typeface.faceName(.semibold), fixedSize: size * 0.42))
                     .foregroundStyle(tint)
                     .symbolEffect(.pulse, options: .repeating, isActive: isProcessing)
             }
@@ -144,7 +144,6 @@ struct TrainPRBadge: View {
     var body: some View {
         Text(count > 1 ? "\(count) PRs" : "PR")
             .font(Design.Typeface.eyebrow)
-            .tracking(0.6)
             .foregroundStyle(Design.Color.onEmber)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
@@ -158,7 +157,7 @@ struct TrainCapsuleButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.footnote.weight(.semibold))
+            .font(Design.Typeface.text(.footnote, weight: .semibold))
             .foregroundStyle(prominent ? Design.Color.onEmber : Design.Color.textPrimary)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)

@@ -15,25 +15,8 @@ enum TrainStyle {
     /// it does the separating, so it never needs a rule or a box.
     static func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.footnote.weight(.semibold))
+            .font(Design.Typeface.text(.footnote, weight: .semibold))
             .foregroundStyle(Design.Color.textTertiary)
-            .accessibilityAddTraits(.isHeader)
-    }
-}
-
-/// A screen's large title in New York, for the navigation bar's large-title
-/// slot (it still collapses to the plain inline title on scroll). Nudged
-/// onto the page's 20 pt gutter so the title and the content share one edge.
-struct TrainLargeTitle: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(Design.Typeface.display(.largeTitle))
-            .foregroundStyle(Design.Color.textPrimary)
-            .lineLimit(2)
-            .padding(.leading, TrainStyle.gutter - 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -72,12 +55,12 @@ struct TrainWeekHeader: View {
     private var caption: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(planName ?? "This week")
-                .font(.footnote.weight(.medium))
+                .font(Design.Typeface.text(.footnote, weight: .medium))
                 .foregroundStyle(Design.Color.textSecondary)
                 .lineLimit(1)
             if let count = week.countLabel {
                 Text("·")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
                 Text(count)
                     .font(Design.Typeface.numeral(.footnote, weight: .medium))
@@ -87,7 +70,7 @@ struct TrainWeekHeader: View {
             }
             if onOpenPlan != nil {
                 Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
+                    .font(Design.Typeface.text(.caption2, weight: .semibold))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
@@ -118,7 +101,7 @@ struct TrainDayPad: View {
     var body: some View {
         VStack(spacing: 9) {
             Text(day.weekdayInitial)
-                .font(.caption2.weight(day.isToday ? .bold : .medium))
+                .font(Design.Typeface.text(.caption2, weight: day.isToday ? .bold : .medium))
                 .foregroundStyle(day.isToday ? Design.Color.pernambuco : Design.Color.textTertiary)
             ZStack {
                 if day.trained {
@@ -146,7 +129,7 @@ struct TrainDayPad: View {
                 .foregroundStyle(Design.Color.onBubbleMe)
         } else if let symbol = day.symbolName {
             Image(systemName: symbol)
-                .font(.caption.weight(.semibold))
+                .font(Design.Typeface.text(.caption, weight: .semibold))
                 .foregroundStyle(day.trained ? Design.Color.onBubbleMe : Design.Color.textTertiary)
         } else {
             Circle()
@@ -159,7 +142,7 @@ struct TrainDayPad: View {
 // MARK: - The hero: today's session
 
 /// The hero's heading: a small Pernambuco line ("Next up · ~55 min"), then
-/// the session's name in New York.
+/// the session's name as the display line.
 struct TrainHeroHeading: View {
     let label: String
     var detail: String?
@@ -170,11 +153,11 @@ struct TrainHeroHeading: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(label)
-                    .font(.footnote.weight(.semibold))
+                    .font(Design.Typeface.text(.footnote, weight: .semibold))
                     .foregroundStyle(Design.Color.pernambuco)
                 if let detail {
                     Text("·")
-                        .font(.footnote)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.textTertiary)
                     Text(detail)
                         .font(Design.Typeface.numeral(.footnote, weight: .medium))
@@ -267,7 +250,7 @@ struct TrainValueRow<Trailing: View>: View {
 
     private var label: some View {
         Text(name)
-            .font(.subheadline)
+            .font(Design.Typeface.text(.subheadline))
             .foregroundStyle(Design.Color.textSecondary)
     }
 }
@@ -329,7 +312,7 @@ struct LoggedSessionCard: View {
             Group {
                 if activity.isProcessing {
                     Text(ActivityCard.readingLine(for: activity))
-                        .font(.subheadline)
+                        .font(Design.Typeface.text(.subheadline))
                         .foregroundStyle(Design.Color.textSecondary)
                         .lineSpacing(3)
                         .lineLimit(3)
@@ -378,7 +361,7 @@ struct EmptyPlanCard: View {
                     .foregroundStyle(Design.Color.textPrimary)
                     .accessibilityAddTraits(.isHeader)
                 Text("Shudo will build one around your week.")
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -408,7 +391,7 @@ struct DraftPlanCard: View {
             Button(action: onDetails) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("A new plan from Shudo")
-                        .font(.footnote.weight(.semibold))
+                        .font(Design.Typeface.text(.footnote, weight: .semibold))
                         .foregroundStyle(Design.Color.oak)
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(plan.plan.name)
@@ -416,12 +399,12 @@ struct DraftPlanCard: View {
                             .foregroundStyle(Design.Color.textPrimary)
                             .multilineTextAlignment(.leading)
                         Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
+                            .font(Design.Typeface.text(.footnote, weight: .semibold))
                             .foregroundStyle(Design.Color.textTertiary)
                     }
                     if let summary = plan.changeSummary ?? plan.rationale {
                         Text(summary)
-                            .font(.subheadline)
+                            .font(Design.Typeface.text(.subheadline))
                             .foregroundStyle(Design.Color.textSecondary)
                             .lineSpacing(2)
                             .lineLimit(4)
@@ -473,7 +456,7 @@ struct PRBoardCard: View {
                 TrainStyle.sectionLabel("Records")
                 Spacer()
                 Text("est. 1RM")
-                    .font(.caption)
+                    .font(Design.Typeface.text(.caption))
                     .foregroundStyle(Design.Color.textTertiary)
                     .accessibilityLabel("Estimated one-rep max")
             }
@@ -494,10 +477,10 @@ struct PRBoardCard: View {
                     HStack(spacing: 5) {
                         Text(expanded ? "Fewer" : "All \(bests.count) lifts")
                         Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.semibold))
+                            .font(Design.Typeface.text(.caption2, weight: .semibold))
                             .rotationEffect(.degrees(expanded ? 180 : 0))
                     }
-                    .font(.footnote.weight(.medium))
+                    .font(Design.Typeface.text(.footnote, weight: .medium))
                     .foregroundStyle(Design.Color.textTertiary)
                     .padding(.vertical, 10)
                     .contentShape(Rectangle())
@@ -538,7 +521,7 @@ struct PRBoardRow: View {
 
     private var name: some View {
         Text(ActivitySummaryFormatter.shortLiftName(best.name))
-            .font(.subheadline)
+            .font(Design.Typeface.text(.subheadline))
             .foregroundStyle(Design.Color.textPrimary)
             .lineLimit(1)
     }
@@ -560,7 +543,7 @@ struct PRBoardRow: View {
                     .foregroundStyle(best.isFresh ? Design.Color.pernambuco : Design.Color.textPrimary)
                     .monospacedDigit()
                 Text(unit.rawValue)
-                    .font(.caption)
+                    .font(Design.Typeface.text(.caption))
                     .foregroundStyle(Design.Color.textTertiary)
             } else {
                 Text("\(best.bestSet.reps)")
@@ -568,7 +551,7 @@ struct PRBoardRow: View {
                     .foregroundStyle(best.isFresh ? Design.Color.pernambuco : Design.Color.textPrimary)
                     .monospacedDigit()
                 Text("reps")
-                    .font(.caption)
+                    .font(Design.Typeface.text(.caption))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
@@ -592,7 +575,7 @@ struct ActivityLedgerRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 14) {
             if let dayColumnWidth {
                 Text(dayLabel ?? " ")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
                     .lineLimit(1)
                     .frame(width: dayColumnWidth, alignment: .leading)
@@ -601,17 +584,17 @@ struct ActivityLedgerRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Image(systemName: activity.kind.symbolName)
-                        .font(.caption.weight(.semibold))
+                        .font(Design.Typeface.text(.caption, weight: .semibold))
                         .foregroundStyle(Design.Color.textTertiary)
                         .symbolEffect(.pulse, options: .repeating, isActive: activity.isProcessing)
                         .accessibilityHidden(true)
                     Text(activity.title)
-                        .font(.subheadline.weight(.medium))
+                        .font(Design.Typeface.text(.subheadline, weight: .medium))
                         .foregroundStyle(Design.Color.textPrimary)
                         .lineLimit(1)
                     if !activity.isProcessing, !activity.prs.isEmpty {
                         Text(activity.prs.count > 1 ? "\(activity.prs.count) PRs" : "PR")
-                            .font(.caption2.weight(.bold))
+                            .font(Design.Typeface.text(.caption2, weight: .bold))
                             .foregroundStyle(Design.Color.pernambuco)
                             .accessibilityLabel(activity.prs.count > 1
                                 ? "\(activity.prs.count) personal records" : "Personal record")
@@ -630,13 +613,13 @@ struct ActivityLedgerRow: View {
     private var statusLine: some View {
         if activity.isProcessing {
             Text(ActivityCard.readingLine(for: activity))
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textSecondary)
                 .lineLimit(1)
                 .shimmering()
         } else if activity.status == .failed {
             Text("Couldn’t read this one")
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.danger)
         } else if let line = ActivitySummaryFormatter.statLine(for: activity, units: units) {
             Text(line)
@@ -665,7 +648,7 @@ struct ActivityLedgerRow: View {
 
 // MARK: - Plan detail sheet
 
-/// The whole plan, as a page: the name in New York, then each session as a
+/// The whole plan, as a page: the name as the display line, then each session as a
 /// short list separated by space, not boxes.
 struct TrainingPlanSheet: View {
     let plan: TrainingPlan
@@ -681,7 +664,7 @@ struct TrainingPlanSheet: View {
                     VStack(alignment: .leading, spacing: 8) {
                         if plan.status == .draft {
                             Text("Draft")
-                                .font(.footnote.weight(.semibold))
+                                .font(Design.Typeface.text(.footnote, weight: .semibold))
                                 .foregroundStyle(Design.Color.oak)
                         }
                         Text(plan.plan.name)
@@ -689,11 +672,11 @@ struct TrainingPlanSheet: View {
                             .foregroundStyle(Design.Color.textPrimary)
                             .accessibilityAddTraits(.isHeader)
                         Text("\(plan.plan.sessionsPerWeek) days a week")
-                            .font(.subheadline)
+                            .font(Design.Typeface.text(.subheadline))
                             .foregroundStyle(Design.Color.textSecondary)
                         if let notes = plan.rationale ?? plan.plan.notes {
                             Text(notes)
-                                .font(.subheadline)
+                                .font(Design.Typeface.text(.subheadline))
                                 .foregroundStyle(Design.Color.textTertiary)
                                 .lineSpacing(2)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -705,7 +688,7 @@ struct TrainingPlanSheet: View {
                     }
                     if let conditioning = plan.plan.conditioning {
                         Label(conditioning.summary, systemImage: "figure.outdoor.cycle")
-                            .font(.subheadline)
+                            .font(Design.Typeface.text(.subheadline))
                             .foregroundStyle(Design.Color.textSecondary)
                     }
                     VStack(spacing: 10) {
@@ -752,7 +735,7 @@ struct TrainingPlanSheet: View {
                     .accessibilityAddTraits(.isHeader)
                 if let focus = session.focus {
                     Text(focus)
-                        .font(.footnote)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.textTertiary)
                         .lineLimit(1)
                 }
@@ -771,7 +754,7 @@ struct TrainingPlanSheet: View {
                         let meta = [exercise.restSec.map { "Rest \(Self.restText($0))" }, exercise.cue].compactMap { $0 }
                         if !meta.isEmpty {
                             Text(meta.joined(separator: " · "))
-                                .font(.caption)
+                                .font(Design.Typeface.text(.caption))
                                 .foregroundStyle(Design.Color.textTertiary)
                         }
                     }

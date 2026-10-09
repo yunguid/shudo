@@ -146,13 +146,6 @@ struct TrainScreen: View {
         }
         .background(AppBackground())
         .navigationTitle("Train")
-        .toolbar {
-            // The title in New York; it still collapses to the inline
-            // "Train" as the page scrolls.
-            ToolbarItem(placement: .largeTitle) {
-                TrainLargeTitle(text: "Train")
-            }
-        }
         .refreshable { await viewModel.refresh() }
         .task {
             if viewModel.hasLoaded {
@@ -257,7 +250,7 @@ struct TrainScreen: View {
                     .transition(.ink(reduceMotion: reduceMotion))
             } else {
                 Text("\(plan.plan.name) has no sessions to run.")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         } else if snapshot.draftPlan == nil, viewModel.hasLoaded {
@@ -279,7 +272,7 @@ struct TrainScreen: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if !diary {
                         Text(group.title)
-                            .font(.footnote)
+                            .font(Design.Typeface.text(.footnote))
                             .foregroundStyle(Design.Color.textTertiary)
                             .padding(.top, 10)
                     }
@@ -303,9 +296,9 @@ struct TrainScreen: View {
                     HStack(spacing: 5) {
                         Text("Earlier")
                         Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.semibold))
+                            .font(Design.Typeface.text(.caption2, weight: .semibold))
                     }
-                    .font(.footnote.weight(.medium))
+                    .font(Design.Typeface.text(.footnote, weight: .medium))
                     .foregroundStyle(Design.Color.textTertiary)
                     .padding(.vertical, 10)
                     .padding(.leading, diary ? dayColumnWidth + 14 : 0)
@@ -352,14 +345,14 @@ struct TrainScreen: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(Design.Color.warning)
             Text(message)
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textSecondary)
             Spacer(minLength: 0)
             Button {
                 viewModel.errorMessage = nil
             } label: {
                 Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
+                    .font(Design.Typeface.text(.caption, weight: .bold))
                     .foregroundStyle(Design.Color.textTertiary)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
@@ -402,7 +395,7 @@ struct ActivityDetailContainer: View {
                 .onAppear { lastKnown = activity }
             } else {
                 Text("This workout is gone.")
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textTertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(AppBackground())

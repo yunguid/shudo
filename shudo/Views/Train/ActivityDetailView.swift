@@ -46,7 +46,7 @@ struct ActivityDetailView: View {
             VStack(alignment: .leading, spacing: Design.Space.xxl) {
                 VStack(alignment: .leading, spacing: Design.Space.l) {
                     Text(dateText)
-                        .font(.subheadline)
+                        .font(Design.Typeface.text(.subheadline))
                         .foregroundStyle(Design.Color.textTertiary)
                     statusView
                     if isSettled { statsRow }
@@ -72,9 +72,6 @@ struct ActivityDetailView: View {
         .navigationTitle(activity.title)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            ToolbarItem(placement: .largeTitle) {
-                TrainLargeTitle(text: activity.title)
-            }
             if canDelete {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
@@ -124,7 +121,7 @@ struct ActivityDetailView: View {
         if activity.isNotSent {
             HStack(spacing: 12) {
                 Label(activity.errorMessage ?? "Not sent", systemImage: "wifi.exclamationmark")
-                    .font(.subheadline.weight(.medium))
+                    .font(Design.Typeface.text(.subheadline, weight: .medium))
                     .foregroundStyle(Design.Color.danger)
                 Spacer(minLength: 8)
                 if let onRetry {
@@ -136,13 +133,13 @@ struct ActivityDetailView: View {
             .cardSurface()
         } else if activity.isProcessing {
             Text(ActivityCard.readingLine(for: activity))
-                .font(.subheadline)
+                .font(Design.Typeface.text(.subheadline))
                 .foregroundStyle(Design.Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .shimmering()
         } else if activity.status == .failed {
             Text("Couldn’t read this one. Delete it and log it again in your own words.")
-                .font(.subheadline)
+                .font(Design.Typeface.text(.subheadline))
                 .foregroundStyle(Design.Color.danger)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -195,7 +192,7 @@ struct ActivityDetailView: View {
             }
             .popover(isPresented: $showsBurnMath, arrowEdge: .top) {
                 Text(Self.burnExplanation(for: activity, units: units))
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(width: 250, alignment: .leading)
@@ -227,7 +224,7 @@ struct ActivityDetailView: View {
                 .foregroundStyle(Design.Color.textPrimary)
                 .monospacedDigit()
             Text(stat.unit)
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textTertiary)
         }
         .lineLimit(1)
@@ -272,7 +269,7 @@ struct ActivityDetailView: View {
     private var prSection: some View {
         VStack(alignment: .leading, spacing: TrainStyle.rowSpacing) {
             Text(prs.count == 1 ? "New record" : "\(prs.count) new records")
-                .font(.footnote.weight(.semibold))
+                .font(Design.Typeface.text(.footnote, weight: .semibold))
                 .foregroundStyle(Design.Color.pernambuco)
                 .accessibilityAddTraits(.isHeader)
             ForEach(Array(prs.enumerated()), id: \.offset) { _, pr in
@@ -284,7 +281,7 @@ struct ActivityDetailView: View {
                             .foregroundStyle(Design.Color.textPrimary)
                             .monospacedDigit()
                         Text(parts.unit)
-                            .font(.caption)
+                            .font(Design.Typeface.text(.caption))
                             .foregroundStyle(Design.Color.textTertiary)
                         if let delta = parts.delta {
                             Text(delta)
@@ -327,10 +324,10 @@ struct ActivityDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// What was said, set as a quotation in New York italic.
+    /// What was said, set as a quotation.
     private func saidLine(_ input: String) -> some View {
         Text("“\(input)”")
-            .font(Design.Typeface.display(.callout).italic())
+            .font(Design.Typeface.display(.callout))
             .foregroundStyle(Design.Color.textSecondary)
             .lineSpacing(3)
             .textSelection(.enabled)
@@ -368,7 +365,7 @@ struct ActivityDetailView: View {
             Design.Color.surface1
             if failed {
                 Image(systemName: "photo")
-                    .font(.title3)
+                    .font(Design.Typeface.text(.title3))
                     .foregroundStyle(Design.Color.textTertiary)
             } else {
                 ProgressView().tint(Design.Color.ember)
