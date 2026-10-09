@@ -14,9 +14,11 @@ struct WorkoutLogContext: Identifiable {
     var initialImage: UIImage?
 }
 
-/// The Train tab: this week's strip, the plan's next session with numbers
-/// to beat (or today's, once it's logged), PRs and history. Host it inside a
-/// `NavigationStack` (activity detail pushes onto it):
+/// The Train tab, one idea per region and space between them: the week as
+/// seven seals, today's session as the one panel (the next session with
+/// numbers to beat, or today's once it's logged), the records as a ledger,
+/// and the history as a diary. Host it inside a `NavigationStack`
+/// (activity detail pushes onto it):
 ///
 ///     NavigationStack {
 ///         TrainScreen(profile: profile, onAskCoach: { coach.compose($0) })
@@ -26,6 +28,8 @@ struct WorkoutLogContext: Identifiable {
 /// training plan…") — send it, or prefill the capture bar with it.
 /// `onLogByVoice` is "Log session": the shell binds it to the capture bar's
 /// mic in the Train context. Unbound, it opens the typed logger instead.
+/// There is no "+" — logging lives in the capture bar (tap to talk, hold
+/// for "Log workout" or a photo).
 struct TrainScreen: View {
     @StateObject private var viewModel: TrainViewModel
     var onAskCoach: (String) -> Void
@@ -34,7 +38,11 @@ struct TrainScreen: View {
     @State private var logContext: WorkoutLogContext?
     @State private var planSheet: TrainingPlan?
     @State private var submittedLogs = 0
+    @State private var freshRecords = 0
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .footnote) private var dayColumnWidth: CGFloat = 46
 
     #if DEBUG
     /// PolishPreview only: scroll to an anchor ("prs", "recent") after load.
@@ -79,17 +87,24 @@ struct TrainScreen: View {
         return { planSheet = plan }
     }
 
+    private func motion(_ animation: Animation) -> Animation {
+        Design.Motion.calm(animation, reduceMotion: reduceMotion)
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 0) {
                     if let error = viewModel.errorMessage {
                         errorBanner(error)
+                            .padding(.bottom, Design.Space.xl)
+                            .transition(.shoji(.top, reduceMotion: reduceMotion))
                     }
                     TrainWeekHeader(
                         planName: snapshot.activePlan?.plan.name,
                         week: snapshot.week,
                         onOpenPlan: openPlanAction)
+                        .padding(.bottom, Design.Space.xxl)
                     if let draft = snapshot.draftPlan {
                         DraftPlanCard(
                             plan: draft,
@@ -97,21 +112,28 @@ struct TrainScreen: View {
                             onRun: { Task { await viewModel.activateDraft() } },
                             onChange: { onAskCoach(Self.changeDraftPrompt) },
                             onDetails: { planSheet = draft })
+                            .padding(.bottom, Design.Space.l)
+                            .transition(.ink(reduceMotion: reduceMotion))
                     }
                     sessionSection
                     if !snapshot.personalBests.isEmpty {
                         PRBoardCard(bests: snapshot.personalBests, units: viewModel.units)
+                            .padding(.top, Design.Space.section)
                             .id("prs")
                     }
                     if !recentGroups.isEmpty {
                         recentSection
+                            .padding(.top, Design.Space.section)
                             .id("recent")
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 32)
-                .animation(Design.Motion.arrive, value: snapshot.recent.map(\.id))
+                .padding(.horizontal, TrainStyle.gutter)
+                .padding(.top, Design.Space.m)
+                .padding(.bottom, Design.Space.xxl)
+                .animation(motion(Design.Motion.arrive), value: snapshot.recent.map(\.id))
+                .animation(motion(Design.Motion.settle), value: heroKey)
+                .animation(motion(Design.Motion.settle), value: viewModel.errorMessage)
+                .animation(motion(Design.Motion.settle), value: snapshot.draftPlan?.id)
             }
             .scrollIndicators(.hidden)
             #if DEBUG
@@ -122,18 +144,13 @@ struct TrainScreen: View {
             }
             #endif
         }
-        .background(Design.Color.canvas.ignoresSafeArea())
+        .background(AppBackground())
         .navigationTitle("Train")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    logContext = WorkoutLogContext()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                }
-                .accessibilityLabel("Log a workout")
+            // The title in New York; it still collapses to the inline
+            // "Train" as the page scrolls.
+            ToolbarItem(placement: .largeTitle) {
+                TrainLargeTitle(text: "Train")
             }
         }
         .refreshable { await viewModel.refresh() }
@@ -147,6 +164,13 @@ struct TrainScreen: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { await viewModel.refreshIfStale() }
+        }
+        .onChange(of: snapshot.loggedToday) { old, new in
+            // A record just landed: today's session finished reading with a
+            // PR in it — the one moment besides logging worth a haptic.
+            guard let old, let new, old.id == new.id, old.isProcessing,
+                  !new.isProcessing, !new.prs.isEmpty else { return }
+            freshRecords += 1
         }
         .sheet(item: $logContext) { context in
             WorkoutLogSheet(
@@ -175,6 +199,7 @@ struct TrainScreen: View {
             ActivityDetailContainer(viewModel: viewModel, id: route.id)
         }
         .sensoryFeedback(.success, trigger: submittedLogs)
+        .sensoryFeedback(.impact(weight: .heavy, intensity: 0.8), trigger: freshRecords)
     }
 
     // MARK: Sections
@@ -183,6 +208,16 @@ struct TrainScreen: View {
     /// history list); otherwise the next session does.
     private var heroActivityId: UUID? {
         snapshot.activePlan == nil ? nil : snapshot.loggedToday?.id
+    }
+
+    /// Which hero is showing, so a state change (next → reading → read)
+    /// settles instead of popping.
+    private var heroKey: String {
+        if snapshot.activePlan != nil, let logged = snapshot.loggedToday {
+            return "logged-\(logged.id)-\(logged.isProcessing)"
+        }
+        if let next = snapshot.nextSession { return "next-\(next.id)" }
+        return snapshot.activePlan == nil ? "empty" : "none"
     }
 
     private var recentGroups: [ActivityDayGroup] {
@@ -206,6 +241,7 @@ struct TrainScreen: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(logged.isLocalOnly)
+                .transition(.ink(reduceMotion: reduceMotion))
             } else if let next = snapshot.nextSession {
                 NextSessionCard(
                     session: next,
@@ -218,6 +254,7 @@ struct TrainScreen: View {
                         }
                     },
                     onType: { logContext = WorkoutLogContext(session: next, targets: snapshot.nextTargets) })
+                    .transition(.ink(reduceMotion: reduceMotion))
             } else {
                 Text("\(plan.plan.name) has no sessions to run.")
                     .font(.footnote)
@@ -225,48 +262,79 @@ struct TrainScreen: View {
             }
         } else if snapshot.draftPlan == nil, viewModel.hasLoaded {
             EmptyPlanCard { onAskCoach(Self.buildPlanPrompt) }
+                .transition(.ink(reduceMotion: reduceMotion))
         }
     }
 
+    /// The history as a diary: the day written once in a narrow left
+    /// column, each workout a quiet line. At accessibility sizes the day
+    /// moves above its rows instead.
     private var recentSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Recent").eyebrowStyle()
-                .padding(.top, 10)
+        let diary = !typeSize.isAccessibilitySize
+        let today = viewModel.todayLocalDay
+        return VStack(alignment: .leading, spacing: 0) {
+            TrainStyle.sectionLabel("Recent")
+                .padding(.bottom, 6)
             ForEach(recentGroups) { group in
-                Text(group.title)
-                    .font(Design.Typeface.meta)
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .padding(.top, 4)
-                ForEach(group.activities) { activity in
-                    activityRow(activity)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .top).combined(with: .opacity),
-                            removal: .opacity))
+                VStack(alignment: .leading, spacing: 0) {
+                    if !diary {
+                        Text(group.title)
+                            .font(.footnote)
+                            .foregroundStyle(Design.Color.textTertiary)
+                            .padding(.top, 10)
+                    }
+                    ForEach(Array(group.activities.enumerated()), id: \.element.id) { index, activity in
+                        activityRow(
+                            activity,
+                            dayLabel: diary && index == 0
+                                ? ActivityLedgerRow.dayLabel(
+                                    localDay: group.localDay, today: today, timezone: viewModel.timezone)
+                                : nil,
+                            diary: diary)
+                            .transition(.ink(reduceMotion: reduceMotion))
+                    }
                 }
+                .padding(.bottom, 6)
             }
             if viewModel.canShowMoreRecent {
-                Button("Show more") { viewModel.showMoreRecent() }
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Design.Color.textSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 4)
+                Button {
+                    withAnimation(motion(Design.Motion.settle)) { viewModel.showMoreRecent() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text("Earlier")
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Design.Color.textTertiary)
+                    .padding(.vertical, 10)
+                    .padding(.leading, diary ? dayColumnWidth + 14 : 0)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 
     @ViewBuilder
-    private func activityRow(_ activity: Activity) -> some View {
+    private func activityRow(_ activity: Activity, dayLabel: String?, diary: Bool) -> some View {
         if activity.isLocalOnly {
+            // Unsent: the card keeps Retry / Discard where they can't be missed.
             ActivityCard(
                 activity: activity,
                 units: viewModel.units,
                 onRetry: { viewModel.retry(activity) },
                 onDiscard: { Task { await viewModel.delete(activity) } })
+                .padding(.vertical, 6)
         } else {
             NavigationLink(value: ActivityRoute(id: activity.id)) {
-                ActivityCard(activity: activity, units: viewModel.units)
+                ActivityLedgerRow(
+                    activity: activity,
+                    units: viewModel.units,
+                    dayLabel: dayLabel,
+                    dayColumnWidth: diary ? dayColumnWidth : nil)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TrainRowButtonStyle())
             .contextMenu {
                 if !activity.isProcessing {
                     Button(role: .destructive) {
@@ -293,11 +361,24 @@ struct TrainScreen: View {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Design.Color.textTertiary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Dismiss")
         }
-        .padding(12)
+        .padding(.leading, 14)
+        .padding(.vertical, 6)
+        .padding(.trailing, 4)
         .cardSurface(radius: Design.Radius.control)
+    }
+}
+
+/// A list row press: the row dims a touch, nothing moves.
+struct TrainRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .animation(Design.Motion.snap, value: configuration.isPressed)
     }
 }
 
@@ -324,7 +405,7 @@ struct ActivityDetailContainer: View {
                     .font(.subheadline)
                     .foregroundStyle(Design.Color.textTertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Design.Color.canvas.ignoresSafeArea())
+                    .background(AppBackground())
             }
         }
     }

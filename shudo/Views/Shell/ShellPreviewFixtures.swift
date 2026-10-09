@@ -432,7 +432,13 @@ enum ShellPreviewFixtures {
             previewEntryDetail: entryDetail,
             composerSeedImages: composerSeedImages,
             now: { ShellPreviewFixtures.now() },
-            initialTab: .today,
+            // `-shudoPreviewCaptureContext train|body` also opens on that tab,
+            // so `-shudoPreviewFan` shows the tab's own dial.
+            initialTab: ProcessInfo.processInfo.arguments.firstIndex(of: "-shudoPreviewCaptureContext")
+                .flatMap { index in
+                    let arguments = ProcessInfo.processInfo.arguments
+                    return arguments.indices.contains(index + 1) ? CaptureContext(rawValue: arguments[index + 1])?.tab : nil
+                } ?? .today,
             initialHeaderExpanded: variant == .todayExpanded,
             onLaunch: { coach in
                 guard options.contains("typing") else { return }

@@ -14,6 +14,7 @@ struct WorkoutLogSheet: View {
     let onSubmit: (WorkoutLogDraft) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var text: String
     @State private var kind: ActivityKind?
     @State private var imageJPEG: Data?
@@ -53,25 +54,32 @@ struct WorkoutLogSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Design.Space.xl) {
                     if session != nil, !targets.isEmpty {
-                        targetsCard
+                        targetsList
                     }
                     if session == nil {
                         kindChips
                     }
-                    entryField
-                    attachmentRow
+                    VStack(alignment: .leading, spacing: Design.Space.m) {
+                        entryField
+                        attachmentRow
+                    }
                     if let photoError {
                         Text(photoError)
                             .font(.footnote)
                             .foregroundStyle(Design.Color.danger)
+                            .transition(.opacity)
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, TrainStyle.gutter)
+                .padding(.top, Design.Space.s)
+                .padding(.bottom, Design.Space.xl)
+                .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: previewImage != nil)
+                .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: photoError)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(Design.Color.canvas.ignoresSafeArea())
+            .background(AppBackground())
             .navigationTitle(session?.name ?? "Log a workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -100,54 +108,52 @@ struct WorkoutLogSheet: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .presentationCornerRadius(Design.Radius.sheet)
     }
 
     // MARK: Sections
 
     /// The session's numbers, and one tap to write them in so logging "as
     /// planned" is just editing what went differently.
-    private var targetsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var targetsList: some View {
+        VStack(alignment: .leading, spacing: TrainStyle.rowSpacing) {
             ForEach(targets) { target in
                 LiftTargetRow(target: target)
             }
             Button(action: fillFromPlan) {
                 Label("Fill in as planned", systemImage: "text.badge.plus")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Design.Color.ember)
+                    .foregroundStyle(Design.Color.pernambuco)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(.top, 4)
         }
-        .padding(14)
-        .cardSurface(radius: Design.Radius.control)
     }
 
+    /// Lift · Cardio · Walk — the chosen one becomes a hinoki slab.
     private var kindChips: some View {
         HStack(spacing: 8) {
             ForEach([ActivityKind.strength, .cardio, .walk], id: \.self) { option in
                 let selected = kind == option
                 Button {
-                    withAnimation(Design.Motion.snap) { kind = selected ? nil : option }
+                    withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) {
+                        kind = selected ? nil : option
+                    }
                 } label: {
                     Label(option == .strength ? "Lift" : option.label, systemImage: option.symbolName)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(selected ? Design.Color.onEmber : Design.Color.textPrimary)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(selected ? Design.Color.onCream : Design.Color.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
-                        .background {
-                            if selected {
-                                Capsule().fill(Design.Color.emberFill)
-                            } else {
-                                Capsule().fill(Design.Color.surface2)
-                            }
-                        }
+                        .background(
+                            selected ? Design.Color.hinoki : Design.Color.surface1,
+                            in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        .sensoryFeedback(.selection, trigger: kind)
     }
 
     private var entryField: some View {
@@ -169,11 +175,8 @@ struct WorkoutLogSheet: View {
                 .padding(.vertical, 12)
                 .accessibilityLabel("What did you do?")
         }
-        .frame(minHeight: 132, alignment: .topLeading)
-        .background(Design.Color.surface2, in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous)
-                .stroke(Design.Color.hairline, lineWidth: Design.Stroke.hairline))
+        .frame(minHeight: 150, alignment: .topLeading)
+        .cardSurface()
     }
 
     private var placeholder: String {
@@ -186,7 +189,7 @@ struct WorkoutLogSheet: View {
     }
 
     private var attachmentRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             PhotosPicker(selection: $photoItem, matching: .images) {
                 attachmentLabel("Screenshot", symbol: "photo.on.rectangle")
             }
@@ -204,7 +207,8 @@ struct WorkoutLogSheet: View {
                         .resizable()
                         .scaledToFill()
                         .frame(width: 52, height: 52)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous))
+                        .transition(.ink(reduceMotion: reduceMotion))
                     Button {
                         self.previewImage = nil
                         imageJPEG = nil
@@ -222,15 +226,19 @@ struct WorkoutLogSheet: View {
                 ProgressView().tint(Design.Color.ember)
             }
         }
+        // The labels carry their own tap padding; keep the icons on the
+        // field's edge.
+        .padding(.leading, -10)
     }
 
+    /// Quiet text actions under the field — no pills competing with "Log".
     private func attachmentLabel(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Design.Color.textPrimary)
-            .padding(.horizontal, 14)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(Design.Color.textSecondary)
+            .padding(.horizontal, 10)
             .frame(height: 44)
-            .background(Design.Color.surface3, in: Capsule())
+            .contentShape(Rectangle())
     }
 
     // MARK: Actions

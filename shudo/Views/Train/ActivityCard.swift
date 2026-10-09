@@ -125,13 +125,8 @@ struct ActivityKindTile: View {
 
     var body: some View {
         let tint = Self.tint(for: kind)
-        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-            .fill(LinearGradient(
-                colors: [tint.opacity(0.30), tint.opacity(0.10)],
-                startPoint: .topLeading, endPoint: .bottomTrailing))
-            .overlay(
-                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                    .stroke(tint.opacity(0.28), lineWidth: 0.5))
+        RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+            .fill(tint.opacity(0.13))
             .overlay {
                 Image(systemName: kind.symbolName)
                     .font(.system(size: size * 0.42, weight: .semibold))

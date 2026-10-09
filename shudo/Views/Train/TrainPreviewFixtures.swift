@@ -11,6 +11,8 @@ import UIKit
 ///   `next`  nothing logged today `done`  today's session read, with a PR
 ///   `detail` an activity detail  `log`  the typed logger on "Next up"
 ///   `empty`  no plan yet         `draft` a drafted plan waiting to run
+///   `log-free` the logger with no session    `plan` the plan sheet
+///   `detail-today` today's Lower B (a PR) in full
 enum TrainPreviewFixtures {
     static let timezone = "America/New_York"
 
@@ -325,6 +327,14 @@ enum TrainPreviewFixtures {
                 session: next,
                 targets: DoubleProgressionPolicy.targets(for: next, history: activities),
                 onSubmit: { _ in })
+        case "log-free":
+            WorkoutLogSheet(initialKind: .cardio, onSubmit: { _ in })
+        case "plan":
+            TrainingPlanSheet(plan: activePlan, onChange: {})
+        case "detail-today":
+            NavigationStack {
+                ActivityDetailView(activity: completedToday, units: profile.units, onDelete: { true })
+            }
         case "empty":
             NavigationStack {
                 TrainScreen(

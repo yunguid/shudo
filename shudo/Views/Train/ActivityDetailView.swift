@@ -30,6 +30,7 @@ struct ActivityDetailView: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var imageURL: URL?
     @State private var confirmingDelete = false
     @State private var isDeleting = false
@@ -42,34 +43,38 @@ struct ActivityDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text(dateText)
-                    .font(.subheadline)
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .padding(.top, -8)
-                statusView
-                if isSettled { statsRow }
-                if !prs.isEmpty { prCard }
-                if !exercises.isEmpty { exercisesCard }
-                if activity.imagePath != nil { photoCard }
-                if let input = activity.inputText?.trimmingCharacters(in: .whitespacesAndNewlines), !input.isEmpty {
-                    Text("“\(input)”")
+            VStack(alignment: .leading, spacing: Design.Space.xxl) {
+                VStack(alignment: .leading, spacing: Design.Space.l) {
+                    Text(dateText)
                         .font(.subheadline)
-                        .italic()
                         .foregroundStyle(Design.Color.textTertiary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityLabel("You said: \(input)")
+                    statusView
+                    if isSettled { statsRow }
                 }
+                Group {
+                    if !prs.isEmpty { prSection }
+                    if !exercises.isEmpty { exercisesSection }
+                    if activity.imagePath != nil { photoCard }
+                    if let input = activity.inputText?.trimmingCharacters(in: .whitespacesAndNewlines), !input.isEmpty {
+                        saidLine(input)
+                    }
+                }
+                .transition(.ink(reduceMotion: reduceMotion))
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 32)
+            .padding(.horizontal, TrainStyle.gutter)
+            .padding(.top, Design.Space.xs)
+            .padding(.bottom, Design.Space.xxl)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .animation(Design.Motion.calm(Design.Motion.arrive, reduceMotion: reduceMotion), value: isSettled)
         }
-        .background(Design.Color.canvas.ignoresSafeArea())
+        .scrollIndicators(.hidden)
+        .background(AppBackground())
         .navigationTitle(activity.title)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
+            ToolbarItem(placement: .largeTitle) {
+                TrainLargeTitle(text: activity.title)
+            }
             if canDelete {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
@@ -101,7 +106,6 @@ struct ActivityDetailView: View {
                 }
             }
         }
-        .sensoryFeedback(.impact(weight: .medium), trigger: isDeleting) { _, new in new }
         .task(id: activity.imagePath) {
             guard let path = activity.imagePath, let loadImageURL else { return }
             imageURL = await loadImageURL(path)
@@ -182,7 +186,7 @@ struct ActivityDetailView: View {
         let stats = stats
         if !stats.isEmpty {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 22) {
+                HStack(alignment: .firstTextBaseline, spacing: 26) {
                     ForEach(stats) { stat($0) }
                 }
                 VStack(alignment: .leading, spacing: 6) {
@@ -217,13 +221,13 @@ struct ActivityDetailView: View {
     }
 
     private func statLabel(_ stat: Stat) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 3) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(stat.value)
-                .font(Design.Typeface.numeral(.title2, weight: .bold))
+                .font(Design.Typeface.numeral(.title2, weight: .regular))
                 .foregroundStyle(Design.Color.textPrimary)
                 .monospacedDigit()
             Text(stat.unit)
-                .font(.footnote.weight(.medium))
+                .font(.footnote)
                 .foregroundStyle(Design.Color.textTertiary)
         }
         .lineLimit(1)
@@ -263,42 +267,38 @@ struct ActivityDetailView: View {
 
     // MARK: PRs
 
-    private var prCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(prs.count == 1 ? "New PR" : "\(prs.count) new PRs").eyebrowStyle(Design.Color.ember)
+    /// The records this session set — no panel, no glow: a Pernambuco line
+    /// and the numbers, the gain in the accent.
+    private var prSection: some View {
+        VStack(alignment: .leading, spacing: TrainStyle.rowSpacing) {
+            Text(prs.count == 1 ? "New record" : "\(prs.count) new records")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Design.Color.pernambuco)
+                .accessibilityAddTraits(.isHeader)
             ForEach(Array(prs.enumerated()), id: \.offset) { _, pr in
                 let parts = Self.prParts(pr)
                 TrainValueRow(ActivitySummaryFormatter.shortLiftName(pr.exercise)) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(parts.value)
-                            .font(Design.Typeface.numeral(.title3, weight: .bold))
+                            .font(Design.Typeface.numeral(.body, weight: .medium))
                             .foregroundStyle(Design.Color.textPrimary)
                             .monospacedDigit()
                         Text(parts.unit)
-                            .font(Design.Typeface.meta)
+                            .font(.caption)
                             .foregroundStyle(Design.Color.textTertiary)
                         if let delta = parts.delta {
                             Text(delta)
-                                .font(Design.Typeface.numeral(.footnote, weight: .bold))
-                                .foregroundStyle(Design.Color.ember)
+                                .font(Design.Typeface.numeral(.footnote, weight: .semibold))
+                                .foregroundStyle(Design.Color.pernambuco)
                                 .monospacedDigit()
-                                .padding(.leading, 4)
+                                .padding(.leading, 6)
                         }
                     }
                 }
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [Design.Color.ember.opacity(0.16), Design.Color.surface1],
-                startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                .stroke(Design.Color.ember.opacity(0.4), lineWidth: 1))
     }
 
     /// "228" "lb e1RM" "+6"; "15" "reps" "+3".
@@ -313,8 +313,10 @@ struct ActivityDetailView: View {
 
     // MARK: Lifts
 
-    private var exercisesCard: some View {
-        VStack(spacing: 12) {
+    /// Every lift as a ledger line — the canvas is the page.
+    private var exercisesSection: some View {
+        VStack(alignment: .leading, spacing: TrainStyle.rowSpacing) {
+            TrainStyle.sectionLabel("Lifts")
             ForEach(Array(exercises.enumerated()), id: \.offset) { _, exercise in
                 TrainValueRow(
                     ActivitySummaryFormatter.shortLiftName(exercise.name),
@@ -322,9 +324,18 @@ struct ActivityDetailView: View {
                     .accessibilityElement(children: .combine)
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
+    }
+
+    /// What was said, set as a quotation in New York italic.
+    private func saidLine(_ input: String) -> some View {
+        Text("“\(input)”")
+            .font(Design.Typeface.display(.callout).italic())
+            .foregroundStyle(Design.Color.textSecondary)
+            .lineSpacing(3)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("You said: \(input)")
     }
 
     // MARK: Photo
@@ -349,9 +360,6 @@ struct ActivityDetailView: View {
         .frame(maxWidth: .infinity)
         .frame(maxHeight: 420)
         .clipShape(RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                .stroke(Design.Color.hairline, lineWidth: Design.Stroke.hairline))
         .accessibilityLabel("Workout photo")
     }
 
