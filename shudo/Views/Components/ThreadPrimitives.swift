@@ -46,26 +46,38 @@ struct CoachAvatar: View {
     }
 }
 
-/// Typing indicator: three pads in a coach bubble, stepping like a sequencer.
+/// Typing indicator: three small pads in a coach bubble, breathing one
+/// after another — slow enough to read as thought, not as a spinner. No
+/// words under it, ever.
 struct CoachTypingBubble: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        PhaseAnimator([0, 1, 2]) { phase in
-            HStack(spacing: 5) {
-                ForEach(0..<3, id: \.self) { i in
-                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                        .fill(Design.Color.ember)
-                        .frame(width: 9, height: 9)
-                        .opacity(reduceMotion ? 0.7 : (i == phase ? 1 : 0.28))
-                        .scaleEffect(reduceMotion ? 1 : (i == phase ? 1.12 : 0.9))
-                }
+        Group {
+            if reduceMotion {
+                pads(lit: nil)
+            } else {
+                PhaseAnimator([0, 1, 2]) { phase in
+                    pads(lit: phase)
+                } animation: { _ in .easeInOut(duration: 0.42) }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .background(Design.Color.bubbleCoach, in: BubbleShape(isMine: false, position: .single))
-        } animation: { _ in .snappy(duration: 0.22) }
+        }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 14)
+        .background(Design.Color.bubbleCoach, in: BubbleShape(isMine: false, position: .single))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Shudo is typing")
+    }
+
+    private func pads(lit: Int?) -> some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Design.Color.ember)
+                    .frame(width: 7, height: 7)
+                    .opacity(lit.map { $0 == index ? 0.95 : 0.3 } ?? 0.6)
+            }
+        }
     }
 }
 
@@ -195,7 +207,8 @@ struct MeRow<Content: View>: View {
 }
 
 /// Centered stamp between the day's chapters: "7:21 PM", or with the day
-/// on the first one ("**Today** 6:52 AM"), like Messages.
+/// on the first one ("Today 6:52 AM"), like Messages. It brings the pause
+/// above it — the ma that says a new part of the day begins.
 struct ThreadTimestamp: View {
     var day: String?
     let time: String
@@ -203,16 +216,17 @@ struct ThreadTimestamp: View {
     var body: some View {
         Group {
             if let day {
-                Text("\(Text(day).fontWeight(.semibold)) \(time)")
+                Text("\(Text(day).foregroundStyle(Design.Color.textSecondary))  \(time)")
             } else {
                 Text(time)
             }
         }
-        .font(Design.Typeface.meta)
+        .font(.caption2)
+        .monospacedDigit()
         .foregroundStyle(Design.Color.textTertiary)
         .frame(maxWidth: .infinity)
-        .padding(.top, 18)
-        .padding(.bottom, 8)
+        .padding(.top, 30)
+        .padding(.bottom, 10)
     }
 }
 
@@ -237,7 +251,8 @@ struct RingArc: Shape {
     }
 }
 
-/// Two concentric rings: calories (cream, outer) and protein (ember, inner).
+/// Two concentric rings: calories (hinoki, outer) and protein (Pernambuco,
+/// inner). A met target is simply a closed ring — no glow.
 struct MacroRings: View {
     let kcal: Double
     let protein: Double
@@ -256,68 +271,65 @@ struct MacroRings: View {
 
     private func ring(progress: Double, color: Color, inset: CGFloat, width: CGFloat) -> some View {
         ZStack {
-            Circle().stroke(color.opacity(0.16), lineWidth: width)
+            Circle().stroke(color.opacity(0.13), lineWidth: width)
             RingArc(progress: progress)
                 .stroke(color, style: StrokeStyle(lineWidth: width, lineCap: .round))
-                .shadow(color: color.opacity(progress >= 1 ? 0.6 : 0), radius: 6)
         }
         .padding(inset)
     }
 }
 
+/// One labelled line of the day's breakdown: "Protein ━━━━ 179 / 175 g".
 struct MacroBar: View {
     let label: String
     let value: Double
     let target: Double
     let color: Color
 
-    @ScaledMetric(relativeTo: .caption) private var valueWidth: CGFloat = 62
+    @ScaledMetric(relativeTo: .footnote) private var labelWidth: CGFloat = 56
+    @ScaledMetric(relativeTo: .caption) private var valueWidth: CGFloat = 76
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Space.m) {
             Text(label)
-                .font(Design.Typeface.eyebrow)
-                .foregroundStyle(color)
+                .font(.footnote)
+                .foregroundStyle(Design.Color.textSecondary)
+                .lineLimit(1)
                 .fixedSize()
-                .frame(minWidth: 12, alignment: .leading)
-            GeometryReader { geo in
-                Capsule().fill(color.opacity(0.16))
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(color)
-                            .frame(width: value > 0 ? max(5, geo.size.width * min(value / target, 1)) : 0)
-                    }
+                .frame(minWidth: labelWidth, alignment: .leading)
+            DayStroke(progress: min(value / target, 1), color: color)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text("\(Int(value.rounded()))").foregroundStyle(Design.Color.textPrimary)
+                Text(" / \(Int(target.rounded())) g").foregroundStyle(Design.Color.textTertiary)
             }
-            .frame(height: 5)
-            HStack(spacing: 0) {
-                Text("\(Int(value))").foregroundStyle(Design.Color.textPrimary)
-                Text("/\(Int(target))").foregroundStyle(Design.Color.textTertiary)
-            }
-            .font(Design.Typeface.numeral(.caption, weight: .semibold))
+            .font(Design.Typeface.numeral(.caption))
             .monospacedDigit()
             .lineLimit(1)
             .fixedSize()
             .frame(minWidth: valueWidth, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label), \(Int(value)) of \(Int(target)) grams")
+        .accessibilityLabel("\(label), \(Int(value.rounded())) of \(Int(target.rounded())) grams")
     }
 }
 
+/// "58 P  72 C  19 F" under a meal: protein carries the accent, carbs and
+/// fat recede into their pigments.
 struct MacroInline: View {
     let p: Double, c: Double, f: Double
     var body: some View {
-        HStack(spacing: 8) {
-            item(p, "P", Design.Color.macroProtein)
-            item(c, "C", Design.Color.macroCarbs)
-            item(f, "F", Design.Color.macroFat)
+        HStack(spacing: 9) {
+            item(p, "P", value: Design.Color.textPrimary, letter: Design.Color.macroProtein)
+            item(c, "C", value: Design.Color.textSecondary, letter: Design.Color.macroCarbs)
+            item(f, "F", value: Design.Color.textSecondary, letter: Design.Color.macroFat)
         }
-        .font(Design.Typeface.numeral(.caption, weight: .semibold))
+        .font(Design.Typeface.numeral(.caption))
         .monospacedDigit()
     }
-    private func item(_ value: Double, _ label: String, _ color: Color) -> some View {
+    private func item(_ amount: Double, _ label: String, value: Color, letter: Color) -> some View {
         HStack(spacing: 2) {
-            Text("\(Int(value))").foregroundStyle(Design.Color.textPrimary)
-            Text(label).foregroundStyle(color)
+            Text("\(Int(amount.rounded()))").foregroundStyle(value)
+            Text(label).foregroundStyle(letter)
         }
         .lineLimit(1)
         .fixedSize()

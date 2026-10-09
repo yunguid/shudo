@@ -65,6 +65,10 @@ struct TodayScreen: View {
     @State private var nudgeRescheduleTask: Task<Void, Never>?
     @Namespace private var zoomNamespace
     @GestureState private var daySwipePreview: CGFloat = 0
+    /// The new day sliding in like a shoji panel: a short offset (sign =
+    /// direction of travel through the diary) and a fade, both settling to 0.
+    @State private var dayEntrance: CGFloat = 0
+    @State private var dayVeil: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.captureComposerInset) private var composerInset
@@ -171,12 +175,14 @@ struct TodayScreen: View {
                             isPinnedToBottom = false
                         }
                     }
-                    .offset(x: daySwipePreview)
+                    .offset(x: daySwipePreview + dayEntrance)
+                    .opacity(1 - dayVeil)
                     .refreshable {
                         guard environment.loadsRemotely else { return }
                         await reloadDay()
                     }
-                    .onChange(of: selectedDay) { _, day in
+                    .onChange(of: selectedDay) { previous, day in
+                        slideIn(day: day, from: previous)
                         Task { await coach.refresh(day: day) }
                         Task { await context.load(localDay: day) }
                         settledDay = nil
@@ -211,19 +217,19 @@ struct TodayScreen: View {
                 .contentShape(Rectangle())
                 .simultaneousGesture(daySwipeGesture(containerWidth: geometry.size.width))
             }
-            .background(Design.Color.canvas.ignoresSafeArea())
+            .background { AppBackground() }
+            // The header is the page's own top (no nav bar, no glass card):
+            // the day's name, the figure, and the account at the corner.
             .safeAreaBar(edge: .top, spacing: 0) { header }
             .overlay(alignment: .bottom) { bottomOverlay }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbar }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: TodayRoute.self) { route in destination(route) }
         }
-        .sensoryFeedback(.selection, trigger: selectedDay)
+        // Haptics only where something landed: Shudo's reply, a delete.
         .sensoryFeedback(trigger: lastCoachMessageId) { _, _ in
             isActiveTab && isToday ? .impact(flexibility: .soft, intensity: 0.5) : nil
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: pendingDeletion?.id)
-        .popover(isPresented: $isShowingDatePicker) { datePicker }
         .task {
             settledDay = selectedDay
             if context.localDay != selectedDay { await context.load(localDay: selectedDay) }
@@ -278,6 +284,10 @@ struct TodayScreen: View {
         let numbers = DayHeaderMath.numbers(totals: headerTotals, target: today.effectiveTarget)
         return DayHeader(
             expanded: $headerExpanded,
+            isPickingDay: $isShowingDatePicker,
+            title: threadDayName,
+            subtitle: titleSubtitle,
+            subtitleIsLive: isTyping,
             numbers: numbers,
             totals: headerTotals,
             target: today.effectiveTarget,
@@ -299,10 +309,10 @@ struct TodayScreen: View {
             onDeleteMeal: beginDeletion,
             onOpenInsights: { path.append(TodayRoute.insights) },
             zoomNamespace: zoomNamespace,
-            isPast: !isToday
+            isPast: !isToday,
+            account: { accountButton },
+            dayPicker: { datePicker }
         )
-        .padding(.horizontal, 12)
-        .padding(.bottom, 6)
     }
 
     // MARK: Thread
@@ -336,12 +346,13 @@ struct TodayScreen: View {
         )
     }
 
-    /// Messages rhythm: bubbles in a run sit 2pt apart, anything with a card
-    /// 6pt, a new speaker 14pt; a timestamp brings its own room.
+    /// Messages rhythm: tight within a burst, a breath between speakers,
+    /// real ma between chapters. Bubbles in a run sit 3pt apart, anything
+    /// with a card 8pt, a new speaker 18pt; a timestamp brings its own room.
     static func spacing(above row: DayThreadRow, after previous: DayThreadRow?) -> CGFloat {
         guard let previous, row.timestamp == nil else { return 0 }
-        if row.startsGroup { return 14 }
-        return isPlainBubble(previous.item) && isPlainBubble(row.item) ? 2 : 6
+        if row.startsGroup { return 18 }
+        return isPlainBubble(previous.item) && isPlainBubble(row.item) ? 3 : 8
     }
 
     /// A text bubble with nothing hanging off it.
@@ -360,15 +371,10 @@ struct TodayScreen: View {
         }
     }
 
+    /// New rows settle like ink on paper (a soft blur clearing, a small
+    /// rise); leaving rows simply fade.
     private func arrival(for side: ThreadSide) -> AnyTransition {
-        guard !reduceMotion else { return .opacity }
-        let anchor: UnitPoint = side == .me ? .bottomTrailing : .bottomLeading
-        return .asymmetric(
-            insertion: .move(edge: .bottom)
-                .combined(with: .opacity)
-                .combined(with: .scale(scale: 0.96, anchor: anchor)),
-            removal: .opacity
-        )
+        .asymmetric(insertion: .ink(reduceMotion: reduceMotion), removal: .opacity)
     }
 
     /// "Today", "Yesterday", "Monday", "Mon, Sep 28".
@@ -434,13 +440,11 @@ struct TodayScreen: View {
             }
         case .systemEvent:
             Text(message.body)
-                .font(.caption.weight(.semibold))
+                .font(.caption)
                 .foregroundStyle(Design.Color.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Design.Color.surface2, in: Capsule())
+                .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+                .padding(.vertical, 6)
         case .coach:
             let hasBody = !message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let card = cardView(for: message)
@@ -454,7 +458,9 @@ struct TodayScreen: View {
                         )
                         .contentTransition(.opacity)
                     }
-                    if let card { card }
+                    if let card {
+                        card.environment(\.threadCardJoinsAbove, hasBody)
+                    }
                 }
             }
         }
@@ -680,15 +686,15 @@ struct TodayScreen: View {
     /// above already says what the day asks for. A past empty day just
     /// says so.
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            CoachAvatar(size: 64)
-                .opacity(isToday ? 1 : 0.5)
+        VStack(spacing: Design.Space.xl) {
+            CoachAvatar(size: 56)
+                .opacity(isToday ? 1 : 0.45)
             Text(
                 isToday
                     ? DayLabelPolicy.greeting(hour: formatters.calendar.component(.hour, from: environment.now()), name: currentProfile.displayName)
                     : "Nothing logged"
             )
-            .font(.title3.weight(.semibold))
+            .font(Design.Typeface.display(.title2))
             .foregroundStyle(isToday ? Design.Color.textPrimary : Design.Color.textSecondary)
         }
         .multilineTextAlignment(.center)
@@ -702,11 +708,11 @@ struct TodayScreen: View {
                 HStack {
                     if index == 1 { Spacer() }
                     RoundedRectangle(cornerRadius: Design.Radius.bubble, style: .continuous)
-                        .fill(Design.Color.surface2)
+                        .fill(Design.Color.surface1)
                         .frame(width: [220, 160, 250][index], height: 40)
                     if index != 1 { Spacer() }
                 }
-                .shimmering()
+                .modifier(Breathing())
             }
         }
         .padding(.top, 20)
@@ -762,60 +768,30 @@ struct TodayScreen: View {
         .animation(Design.Motion.snap, value: isToday)
     }
 
-    // MARK: Toolbar
+    // MARK: Account
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button {
-                isShowingDatePicker = true
-            } label: {
-                Image(systemName: "calendar")
-                    .foregroundStyle(Design.Color.textSecondary)
-            }
-            .accessibilityLabel("Pick a day")
+    private var accountButton: some View {
+        Button(action: actions.openSettings) {
+            AccountAvatarIcon(
+                userId: currentProfile.userId,
+                avatarPath: currentProfile.avatarPath,
+                displayName: currentProfile.displayName,
+                loadsRemotely: environment.loadsRemotely
+            )
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
-        ToolbarItem(placement: .principal) { coachTitle }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(action: actions.openSettings) {
-                AccountAvatarIcon(
-                    userId: currentProfile.userId,
-                    avatarPath: currentProfile.avatarPath,
-                    displayName: currentProfile.displayName,
-                    loadsRemotely: environment.loadsRemotely
-                )
-            }
-            .accessibilityLabel("Account")
-            .accessibilityHint("Settings and your bio")
-        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Account")
+        .accessibilityHint("Settings and your bio")
     }
 
-    private var coachTitle: some View {
-        HStack(spacing: 8) {
-            CoachAvatar(size: 26, isThinking: isTyping)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Shudo")
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.textPrimary)
-                if let titleSubtitle {
-                    Text(titleSubtitle)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isTyping ? Design.Color.ember : Design.Color.textTertiary)
-                        .lineLimit(1)
-                        .contentTransition(.opacity)
-                }
-            }
-        }
-        .animation(Design.Motion.snap, value: isTyping)
-        .accessibilityElement(children: .combine)
-    }
-
-    /// "typing…" while Shudo works (never the tool phase), else where he is
-    /// in the phase today ("Day 35 of the bulk") or which day this is.
+    /// "typing…" while Shudo works (never the tool phase), else where that
+    /// day sits in the phase ("Day 35 of the bulk"). The title above already
+    /// names the day.
     private var titleSubtitle: String? {
         if isTyping { return "typing…" }
-        if isToday { return phaseDayLabel }
-        return threadDayName
+        return phaseDayLabel
     }
 
     private var datePicker: some View {
@@ -833,8 +809,9 @@ struct TodayScreen: View {
         )
         .datePickerStyle(.graphical)
         .tint(Design.Color.ember)
-        .padding()
-        .presentationCompactAdaptation(.sheet)
+        .frame(width: 320)
+        .padding(Design.Space.m)
+        .presentationCompactAdaptation(.popover)
     }
 
     // MARK: Destinations
@@ -905,6 +882,26 @@ struct TodayScreen: View {
         }
     }
 
+    /// The thread for a new day slides in from the side it came from —
+    /// earlier days from the left, later from the right — and settles once.
+    private func slideIn(day: String, from previous: String) {
+        guard !reduceMotion else {
+            dayVeil = 1
+            withAnimation(Design.Motion.calm(Design.Motion.breath, reduceMotion: true)) { dayVeil = 0 }
+            return
+        }
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
+            dayEntrance = day < previous ? -28 : 28
+            dayVeil = 1
+        }
+        withAnimation(Design.Motion.shoji) {
+            dayEntrance = 0
+            dayVeil = 0
+        }
+    }
+
     private func shift(by delta: Int) {
         guard let target = LocalDayMath.adding(delta, to: selectedDay), target <= todayDay else { return }
         select(day: target)
@@ -972,6 +969,13 @@ struct TodayScreen: View {
     /// screenshots can show the morning without a touch driver.
     private func previewScroll(proxy: ScrollViewProxy) {
         let arguments = ProcessInfo.processInfo.arguments
+        // `-shudoTodayPicker`: open the day picker for screenshots.
+        if arguments.contains("-shudoTodayPicker") {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1_200))
+                isShowingDatePicker = true
+            }
+        }
         guard let flag = arguments.firstIndex(of: "-shudoTodayScrollRow"),
               arguments.indices.contains(flag + 1),
               let index = Int(arguments[flag + 1]) else { return }

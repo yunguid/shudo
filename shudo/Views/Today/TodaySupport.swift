@@ -168,11 +168,14 @@ struct AccountAvatarIcon: View {
                     .clipShape(Circle())
                     .overlay(Circle().stroke(Design.Color.hairline, lineWidth: Design.Stroke.hairline))
             } else {
+                // A quiet seal, not a bright disc: the initial in serif on
+                // walnut, so the corner doesn't compete with the day.
                 Text(initial)
-                    .font(.system(.footnote, design: .rounded, weight: .bold))
-                    .foregroundStyle(Design.Color.onEmber)
+                    .font(Design.Typeface.display(.subheadline, weight: .medium))
+                    .foregroundStyle(Design.Color.honey)
                     .frame(width: 30, height: 30)
-                    .background(Design.Color.honey, in: Circle())
+                    .background(Design.Color.surface2, in: Circle())
+                    .overlay(Circle().stroke(Design.Color.hairline, lineWidth: Design.Stroke.hairline))
             }
         }
         .task(id: avatarPath) { await loadAvatar() }

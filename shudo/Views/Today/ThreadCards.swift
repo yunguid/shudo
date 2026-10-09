@@ -3,18 +3,38 @@ import SwiftUI
 
 // MARK: - Rich cards inside the coach thread
 //
-// Shared chrome: opaque surface1, 22pt continuous corners, one width for
-// the whole column. The bubble above a card says *why*; the card holds the
-// one thing to look at or act on, so it carries no explainer copy and at
-// most one prominent button. An eyebrow appears only where the card is a
-// document worth naming (game plan, recap, a store run, new targets).
+// A card is Shudo speaking at more length, not a widget dropped into the
+// chat: it wears his bubble's walnut and bubble corners, and when it
+// follows his text it joins that bubble the way a second message in a run
+// does (tight corner where they meet). One width for the whole column.
+// The bubble above says *why*; the card holds the one thing to look at or
+// act on, so it carries no explainer copy and at most one prominent button.
+// An eyebrow appears only where the card is a document worth naming, and
+// it stays quiet — Pernambuco is kept for a PR.
+
+extension EnvironmentValues {
+    /// The card follows Shudo's own text bubble in the same message: its
+    /// top-leading corner tightens to join the run.
+    @Entry var threadCardJoinsAbove = false
+}
 
 struct ThreadCard<Content: View>: View {
     var eyebrow: String?
-    var accent: Color = Design.Color.ember
+    var accent: Color = Design.Color.textTertiary
     @ViewBuilder var content: Content
 
+    @Environment(\.threadCardJoinsAbove) private var joinsAbove
+
     var body: some View {
+        let shape = UnevenRoundedRectangle(
+            cornerRadii: RectangleCornerRadii(
+                topLeading: joinsAbove ? Design.Radius.tail : Design.Radius.bubble,
+                bottomLeading: Design.Radius.bubble,
+                bottomTrailing: Design.Radius.bubble,
+                topTrailing: Design.Radius.bubble
+            ),
+            style: .continuous
+        )
         VStack(alignment: .leading, spacing: 10) {
             if let eyebrow {
                 Text(eyebrow)
@@ -26,7 +46,21 @@ struct ThreadCard<Content: View>: View {
         }
         .padding(16)
         .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
-        .cardSurface(radius: Design.Radius.card)
+        .background(Design.Color.bubbleCoach, in: shape)
+        .contentShape(.contextMenuPreview, shape)
+    }
+}
+
+/// A card's headline: New York, quiet weight — a document's title, not a
+/// dashboard label.
+private struct CardHeadline: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(Design.Typeface.display(.title3))
+            .foregroundStyle(Design.Color.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -59,6 +93,7 @@ struct CardButtonStyle: ButtonStyle {
             .frame(minHeight: 40)
             .padding(.horizontal, fills ? 0 : 16)
             .background(prominent ? Design.Color.ember : Design.Color.surface3, in: Capsule())
+            .animation(Design.Motion.snap, value: configuration.isPressed)
             .opacity(configuration.isPressed ? 0.8 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
@@ -110,18 +145,15 @@ struct GamePlanCardView: View {
     var body: some View {
         ThreadCard(eyebrow: "Game plan") {
             if let theme = card.theme, !theme.isEmpty {
-                Text(theme)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CardHeadline(text: theme)
             }
             if !card.actions.isEmpty {
                 VStack(alignment: .leading, spacing: 9) {
                     ForEach(Array(card.actions.enumerated()), id: \.offset) { _, action in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Image(systemName: ThreadCardCopy.planSymbol(for: action))
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Design.Color.honey)
+                                .font(.caption)
+                                .foregroundStyle(Design.Color.honey.opacity(0.8))
                                 .frame(width: 16)
                                 .accessibilityHidden(true)
                             Text(action)
@@ -166,10 +198,7 @@ struct RecapCardView: View {
     var body: some View {
         ThreadCard(eyebrow: eyebrow) {
             if let headline = card.headline, !headline.isEmpty {
-                Text(headline)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CardHeadline(text: headline)
             }
             if let kcal = card.kcal {
                 HStack(spacing: 14) {
@@ -341,14 +370,11 @@ struct TrainingPlanCardView: View {
 
     var body: some View {
         ThreadCard(eyebrow: "Training plan") {
-            Text(card.name)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(Design.Color.textPrimary)
+            CardHeadline(text: card.name)
                 .accessibilityLabel("\(card.name), \(card.sessionsPerWeek) days a week")
             if !card.sessions.isEmpty {
                 VStack(spacing: 0) {
-                    ForEach(Array(card.sessions.prefix(5).enumerated()), id: \.element.id) { index, session in
-                        if index > 0 { HairlineRule() }
+                    ForEach(Array(card.sessions.prefix(5).enumerated()), id: \.element.id) { _, session in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(session.name)
                                 .font(.subheadline.weight(.semibold))
@@ -359,7 +385,7 @@ struct TrainingPlanCardView: View {
                                 .foregroundStyle(Design.Color.textTertiary)
                                 .lineLimit(1)
                         }
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 6)
                         .accessibilityElement(children: .combine)
                     }
                 }
@@ -612,7 +638,7 @@ struct WorkoutAckCardView: View {
         Button {
             if let id = card.activityId { actions.openActivity(id) }
         } label: {
-            ThreadCard(eyebrow: card.prs.count > 1 ? "\(card.prs.count) new PRs" : "New PR") {
+            ThreadCard(eyebrow: card.prs.count > 1 ? "\(card.prs.count) new PRs" : "New PR", accent: Design.Color.ember) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(card.prs) { record in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -622,12 +648,12 @@ struct WorkoutAckCardView: View {
                                 .lineLimit(1)
                             Spacer(minLength: 6)
                             Text(ThreadCardCopy.prValue(record))
-                                .font(Design.Typeface.numeral(.headline, weight: .bold))
+                                .font(Design.Typeface.numeral(.headline, weight: .semibold))
                                 .foregroundStyle(Design.Color.textPrimary)
                                 .monospacedDigit()
                             if let delta = ThreadCardCopy.prDelta(record) {
                                 Text(delta)
-                                    .font(Design.Typeface.numeral(.caption, weight: .bold))
+                                    .font(Design.Typeface.numeral(.caption, weight: .semibold))
                                     .foregroundStyle(Design.Color.ember)
                                     .monospacedDigit()
                             }
@@ -651,10 +677,7 @@ struct PhysiqueReviewCardView: View {
     var body: some View {
         ThreadCard {
             if !review.headline.isEmpty {
-                Text(review.headline)
-                    .font(.headline)
-                    .foregroundStyle(Design.Color.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CardHeadline(text: review.headline)
             }
             ForEach(review.observations.prefix(3), id: \.self) { observation in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {

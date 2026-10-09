@@ -187,10 +187,14 @@ struct DayThreadPolicyTests {
             messages: [coach(0, "a"), coach(1, "b"), card, me(3)],
             pending: [], entries: [], activities: [], checkIn: nil, typing: nil, now: at(4)
         ))
+        // The order is the invariant (tight run < card < new speaker), not
+        // the exact points, which are a taste call.
+        let run = TodayScreen.spacing(above: rows[1], after: rows[0])
+        let cardRoom = TodayScreen.spacing(above: rows[2], after: rows[1])
+        let newSpeaker = TodayScreen.spacing(above: rows[3], after: rows[2])
         #expect(TodayScreen.spacing(above: rows[0], after: nil) == 0)
-        #expect(TodayScreen.spacing(above: rows[1], after: rows[0]) == 2)
-        #expect(TodayScreen.spacing(above: rows[2], after: rows[1]) == 6, "a card in the run gets room")
-        #expect(TodayScreen.spacing(above: rows[3], after: rows[2]) == 14, "a new speaker")
+        #expect(run > 0 && run < cardRoom, "a card in the run gets room")
+        #expect(cardRoom < newSpeaker, "a new speaker")
     }
 
     @Test @MainActor func bubbleBeforeItsCardKeepsATightBottomCorner() {

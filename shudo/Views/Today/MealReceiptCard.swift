@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A meal in the day thread, on Luke's side: title, P/C/F and the kcal
-/// number. While Shudo works on it the macro line is one quiet shimmer —
+/// number. While Shudo works on it the macro line is one slow breath —
 /// the research, sources and confidence live in the meal's detail, not
 /// here — and the receipt settles in place when the numbers land.
 struct MealReceiptCard: View {
@@ -30,7 +30,7 @@ struct MealReceiptCard: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(entry.summary)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(isSettled ? Design.Color.textPrimary : Design.Color.textSecondary)
                     .lineLimit(stacked ? 4 : 2)
                     .multilineTextAlignment(.leading)
@@ -43,16 +43,10 @@ struct MealReceiptCard: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 13)
         .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
-        .cardSurface(radius: Design.Radius.card)
-        .overlay {
-            if entry.status == .failed {
-                RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                    .stroke(Design.Color.danger.opacity(0.4), lineWidth: 1)
-            }
-        }
+        .receiptSurface()
         .animation(Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion), value: isSettled)
         .task(id: animateCompletion) {
             guard animateCompletion else { return }
@@ -115,7 +109,7 @@ private struct ReceiptNumber: View {
             : AnyLayout(VStackLayout(alignment: .trailing, spacing: 0))
         layout {
             Text(value.formatted())
-                .font(Design.Typeface.numeral(.title3, weight: .bold))
+                .font(Design.Typeface.numeral(.title3, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(Design.Color.textPrimary)
                 .lineLimit(1)
@@ -128,17 +122,48 @@ private struct ReceiptNumber: View {
     }
 }
 
-/// The one processing line every thread card uses: a short shimmering bar
-/// where the numbers will land. No phases, no narration.
+/// The one processing line every thread card uses: a short bar where the
+/// numbers will land, breathing slowly. No phases, no narration.
 struct ThreadShimmerLine: View {
     var width: CGFloat = 112
 
     var body: some View {
         Capsule()
             .fill(Design.Color.surface3)
-            .frame(width: width, height: 8)
-            .shimmering()
-            .padding(.vertical, 3)
+            .frame(width: width, height: 6)
+            .modifier(Breathing())
+            .padding(.vertical, 4)
+    }
+}
+
+/// A slow rise and fall of opacity — the calm stand-in for a spinner.
+/// Holds still under Reduce Motion.
+struct Breathing: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var inhaled = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(reduceMotion ? 0.8 : (inhaled ? 1 : 0.4))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                    inhaled = true
+                }
+            }
+    }
+}
+
+extension View {
+    /// Luke's side of the thread: the walnut card warmed by the faintest
+    /// heartwood, so his meals and lifts read as his, beside his lacquered
+    /// bubbles, without becoming another accent.
+    func receiptSurface() -> some View {
+        background(
+            Design.Color.heartwood.opacity(0.09),
+            in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
+        )
+        .cardSurface(radius: Design.Radius.card)
     }
 }
 
@@ -154,7 +179,7 @@ private struct MealPhotoTile: View {
             }
         }
         .frame(width: 44, height: 44)
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous))
         .allowsHitTesting(false)
         .accessibilityLabel("Meal photo")
     }
@@ -179,7 +204,7 @@ struct WorkoutReceiptCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label {
                     Text(activity.title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(Design.Color.textPrimary)
                         .lineLimit(1)
                 } icon: {
@@ -190,7 +215,7 @@ struct WorkoutReceiptCard: View {
                 .labelStyle(TightLabelStyle())
                 if let subtitle = ActivitySummaryFormatter.subtitle(for: activity, units: units) {
                     Text(subtitle)
-                        .font(Design.Typeface.numeral(.footnote, weight: .medium))
+                        .font(Design.Typeface.numeral(.caption))
                         .foregroundStyle(Design.Color.textSecondary)
                         .lineLimit(stacked ? 3 : 1)
                 }
@@ -200,10 +225,10 @@ struct WorkoutReceiptCard: View {
                 ReceiptNumber(value: Int(minutes.rounded()), unit: "min", inline: stacked)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 13)
         .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
-        .cardSurface(radius: Design.Radius.card)
+        .receiptSurface()
         .accessibilityElement(children: .combine)
     }
 }
@@ -237,7 +262,7 @@ struct CheckInThreadCard: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Check-in")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(Design.Color.textPrimary)
                 if let detail {
                     Text(detail)
@@ -250,7 +275,7 @@ struct CheckInThreadCard: View {
         }
         .padding(10)
         .frame(width: Design.Layout.threadCardWidth)
-        .cardSurface(radius: Design.Radius.card)
+        .receiptSurface()
         .contentShape(RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
         .onTapGesture(perform: onOpenBody)
         .accessibilityElement(children: .combine)
@@ -275,7 +300,7 @@ struct CheckInThreadCard: View {
 
     private var thumbnail: some View {
         ZStack {
-            LinearGradient(colors: [Color(hex: 0x3A2C20), Color(hex: 0x1A1511)], startPoint: .top, endPoint: .bottom)
+            LinearGradient(colors: [Design.Color.surface3, Design.Color.surface1], startPoint: .top, endPoint: .bottom)
             if let image {
                 Image(uiImage: image)
                     .resizable()
@@ -290,7 +315,7 @@ struct CheckInThreadCard: View {
             }
         }
         .frame(width: 48, height: 64)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(Design.Motion.snap) { revealed.toggle() }

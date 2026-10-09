@@ -1,12 +1,23 @@
 import SwiftUI
 
-/// The pinned glass header over the day thread. Compact: rings, "855 kcal
-/// left", P/C/F bars. Tap to expand (matched geometry) into the week
-/// strip, the big rings, and the meal ledger — tap a meal for its detail,
-/// swipe it away to delete (with undo). At accessibility text sizes the
-/// bars drop under the number and the expanded day scrolls in place.
-struct DayHeader: View {
+/// The top of the day, written like a diary page: the day's name in serif
+/// (tap it for the calendar), where Luke is in the phase, and one figure —
+/// kcal left — over two brushstrokes, calories and protein. Nothing boxed.
+///
+/// Tap (or pull down on) the figure and the day unfolds beneath it like a
+/// shoji panel sliding open: the macro breakdown, the meal ledger (tap to
+/// open, swipe to delete with undo), and the week. What was already on
+/// screen stays exactly where it was; only the panel moves. At accessibility
+/// text sizes the trailing numbers drop under the figure and the open day
+/// scrolls in place.
+struct DayHeader<Account: View, DayPicker: View>: View {
     @Binding var expanded: Bool
+    @Binding var isPickingDay: Bool
+    /// "Today", "Yesterday", "Monday", "Mon, Sep 28".
+    let title: String
+    /// "Day 35 of the bulk", or "typing…" while Shudo answers.
+    let subtitle: String?
+    var subtitleIsLive = false
     let numbers: DayHeaderNumbers
     let totals: DayTotals
     let target: MacroTarget
@@ -21,91 +32,130 @@ struct DayHeader: View {
     let zoomNamespace: Namespace.ID
     /// A finished day in the diary: what's left reads as "short".
     var isPast = false
+    @ViewBuilder var account: Account
+    @ViewBuilder var dayPicker: DayPicker
 
-    @Namespace private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
-    @ScaledMetric(relativeTo: .caption) private var timeWidth: CGFloat = 40
+
+    /// How far the canvas behind the header dissolves into the thread.
+    private let fade: CGFloat = 26
 
     var body: some View {
-        Group {
-            if expanded, typeSize.isAccessibilitySize {
-                ScrollView { expandedDay }
-                    .scrollBounceBehavior(.basedOnSize)
-                    .frame(maxHeight: 520)
-            } else if expanded {
-                expandedDay
-            } else if typeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 14) {
-                        rings(size: 58)
-                        remaining(style: .title)
-                        Spacer(minLength: 0)
-                    }
-                    VStack(spacing: 7) { bars }
-                }
-            } else {
-                HStack(spacing: 14) {
-                    rings(size: 58)
-                    remaining(style: .title)
-                    Spacer(minLength: 0)
-                    VStack(spacing: 7) { bars }
-                        .frame(width: 136)
+        VStack(alignment: .leading, spacing: 0) {
+            titleRow
+            Group {
+                if expanded, typeSize.isAccessibilitySize {
+                    ScrollView { day }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(maxHeight: 520)
+                } else {
+                    day
                 }
             }
         }
-        .padding(14)
-        .chromeGlass(
-            in: RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous),
-            tint: Design.Color.canvas.opacity(0.55),
-            interactive: true
-        )
-        .contentShape(RoundedRectangle(cornerRadius: Design.Radius.cardLarge, style: .continuous))
-        .onTapGesture { toggle() }
-        .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.6), trigger: expanded)
+        .padding(.horizontal, Design.Space.gutter)
+        .padding(.top, Design.Space.xs)
+        .padding(.bottom, Design.Space.s)
+        .background(alignment: .top) { backdrop }
+        .simultaneousGesture(pull)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today.header")
     }
 
-    private var expandedDay: some View {
-        VStack(spacing: 0) {
-            WeekStrip(days: weekDays, onSelect: onSelectDay)
-                .padding(.bottom, 14)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            VStack(spacing: 16) {
-                HStack(spacing: 18) {
-                    rings(size: 104)
-                    remaining(style: .largeTitle)
-                    Spacer(minLength: 0)
+    // MARK: Title
+
+    private var titleRow: some View {
+        HStack(alignment: .center, spacing: Design.Space.m) {
+            Button {
+                isPickingDay = true
+            } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(title)
+                            .font(Design.Typeface.display(.title2))
+                            .foregroundStyle(Design.Color.textPrimary)
+                            .lineLimit(1)
+                            .contentTransition(.opacity)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Design.Color.textTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(subtitleIsLive ? Design.Color.ember : Design.Color.textTertiary)
+                            .lineLimit(1)
+                            .contentTransition(.opacity)
+                    }
                 }
-                VStack(spacing: 9) { bars }
+                .contentShape(Rectangle())
             }
-            ledger
-                .padding(.top, 14)
-                .transition(.opacity)
+            .buttonStyle(.plain)
+            .popover(isPresented: $isPickingDay, arrowEdge: .top) { dayPicker }
+            .animation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion), value: subtitle)
+            .accessibilityLabel(title)
+            .accessibilityValue(subtitle ?? "")
+            .accessibilityHint("Pick a day")
+            .accessibilityIdentifier("today.day")
+
+            Spacer(minLength: 0)
+            account
         }
+        .frame(minHeight: 44)
     }
 
-    private func toggle() {
-        withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
-            expanded.toggle()
+    // MARK: The day
+
+    private var day: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            figureRow
+                .padding(.top, Design.Space.l)
+            meter
+                .padding(.top, Design.Space.m)
+            if expanded {
+                unfolded
+                    .transition(unfold)
+            }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { toggle() }
+        // The panel slides out from under the strokes, never over them.
+        .clipped()
     }
 
-    private func rings(size: CGFloat) -> some View {
-        MacroRings(kcal: numbers.kcalProgress, protein: numbers.proteinProgress, size: size)
-            .matchedGeometryEffect(id: "rings", in: namespace)
-            .animation(Design.Motion.gated(Design.Motion.ring, reduceMotion: reduceMotion), value: numbers)
+    /// "855 kcal left" with the macros at the trailing edge; open, the
+    /// trailing edge names the target instead and the macros move below.
+    private var figureRow: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: Design.Space.s))
+            : AnyLayout(HStackLayout(alignment: .lastTextBaseline, spacing: Design.Space.m))
+        return layout {
+            remaining
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            ZStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing) {
+                if expanded {
+                    Text("of \(numbers.targetKcal.formatted()) kcal")
+                        .font(Design.Typeface.numeral(.footnote))
+                        .monospacedDigit()
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .transition(.opacity)
+                } else {
+                    macroSummary
+                        .transition(.opacity)
+                }
+            }
             .accessibilityHidden(true)
+        }
     }
 
-    /// The hero number. Compact: "855 kcal left" and nothing else — the
-    /// ring already shows how far along the day is. Expanded adds the target.
-    private func remaining(style: Font.TextStyle) -> some View {
+    /// The hero number: serif, quiet weight, alone.
+    private var remaining: some View {
         let value = numbers.isOver ? numbers.overKcal : numbers.remainingKcal
-        return VStack(alignment: .leading, spacing: 2) {
+        return HStack(alignment: .firstTextBaseline, spacing: 7) {
             Text(value.formatted())
-                .font(Design.Typeface.numeral(style, weight: .bold))
+                .font(Design.Typeface.figure(.largeTitle))
                 .monospacedDigit()
                 .foregroundStyle(Design.Color.textPrimary)
                 .contentTransition(.numericText(value: Double(value)))
@@ -113,85 +163,150 @@ struct DayHeader: View {
                 .lineLimit(1)
                 .fixedSize()
             Text(DayHeaderMath.remainingLabel(numbers, isPast: isPast))
-                .font(.footnote.weight(.semibold))
+                .font(.subheadline)
                 .foregroundStyle(numbers.isOver ? Design.Color.honey : Design.Color.textSecondary)
                 .lineLimit(1)
                 .fixedSize()
-            if expanded {
-                Text("of \(numbers.targetKcal.formatted())")
-                    .font(Design.Typeface.numeral(.footnote, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .transition(.opacity)
-            }
         }
-        .matchedGeometryEffect(id: "remaining", in: namespace)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint(expanded ? "Collapses the day" : "Shows the week and your meals")
+        .accessibilityHint(expanded ? "Folds the day away" : "Shows your macros, meals and the week")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { toggle() }
         .accessibilityIdentifier("today.header.remaining")
     }
 
-    private var accessibilityLabel: String {
-        numbers.isOver
-            ? "\(numbers.overKcal) kilocalories over \(numbers.targetKcal)"
-            : "\(numbers.remainingKcal) kilocalories \(isPast ? "short" : "left") of \(numbers.targetKcal)"
+    /// Protein is the one accented metric; carbs and fat recede.
+    private var macroSummary: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(Int(totals.proteinG.rounded()).formatted())
+                    .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
+                    .foregroundStyle(Design.Color.macroProtein)
+                Text("g protein")
+                    .font(.caption)
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
+            Text("\(Int(totals.carbsG.rounded())) C  ·  \(Int(totals.fatG.rounded())) F")
+                .font(Design.Typeface.numeral(.caption))
+                .foregroundStyle(Design.Color.textTertiary)
+        }
+        .monospacedDigit()
+        .lineLimit(1)
+        .fixedSize()
     }
 
-    @ViewBuilder
-    private var bars: some View {
-        MacroBar(label: "P", value: totals.proteinG, target: max(target.proteinG, 1), color: Design.Color.macroProtein)
-        MacroBar(label: "C", value: totals.carbsG, target: max(target.carbsG, 1), color: Design.Color.macroCarbs)
-        MacroBar(label: "F", value: totals.fatG, target: max(target.fatG, 1), color: Design.Color.macroFat)
+    private var accessibilityLabel: String {
+        let calories = numbers.isOver
+            ? "\(numbers.overKcal) kilocalories over \(numbers.targetKcal)"
+            : "\(numbers.remainingKcal) kilocalories \(isPast ? "short" : "left") of \(numbers.targetKcal)"
+        return "\(calories). \(Int(totals.proteinG.rounded())) of \(Int(target.proteinG.rounded())) grams protein"
+    }
+
+    /// Two brushstrokes: calories in hinoki, protein in Pernambuco. Open,
+    /// protein joins carbs and fat in the breakdown below.
+    private var meter: some View {
+        VStack(spacing: 5) {
+            DayStroke(progress: numbers.kcalProgress, color: Design.Color.macroKcal)
+            if !expanded {
+                DayStroke(progress: numbers.proteinProgress, color: Design.Color.macroProtein)
+                    .transition(.opacity)
+            }
+        }
+        .animation(Design.Motion.gated(Design.Motion.ring, reduceMotion: reduceMotion), value: numbers)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: Unfolded
+
+    private var unfolded: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 11) {
+                MacroBar(label: "Protein", value: totals.proteinG, target: max(target.proteinG, 1), color: Design.Color.macroProtein)
+                MacroBar(label: "Carbs", value: totals.carbsG, target: max(target.carbsG, 1), color: Design.Color.macroCarbs)
+                MacroBar(label: "Fat", value: totals.fatG, target: max(target.fatG, 1), color: Design.Color.macroFat)
+            }
+            .padding(.top, Design.Space.xl)
+
+            if !meals.isEmpty {
+                ledger
+                    .padding(.top, Design.Space.xl)
+            }
+
+            WeekStrip(days: weekDays, onSelect: onSelectDay)
+                .padding(.top, Design.Space.xl)
+            insightsLink
+                .padding(.top, Design.Space.xs)
+        }
+    }
+
+    /// A panel drawn out from under the strokes, weighted, no bounce.
+    private var unfold: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .asymmetric(
+                insertion: .move(edge: .top).combined(with: .opacity),
+                removal: .move(edge: .top).combined(with: .opacity)
+            )
+    }
+
+    private func toggle() {
+        withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) {
+            expanded.toggle()
+        }
+    }
+
+    /// Pull down to open the day, push up to fold it away.
+    private var pull: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onEnded { value in
+                let vertical = value.translation.height
+                guard abs(vertical) > abs(value.translation.width) * 1.5 else { return }
+                if vertical > 36, !expanded { toggle() }
+                if vertical < -36, expanded { toggle() }
+            }
+    }
+
+    // MARK: Backdrop
+
+    /// The page itself, not a card: the same lamplit canvas as the screen,
+    /// dissolving into the thread over a short fade so messages pass
+    /// beneath it like ink under washi.
+    private var backdrop: some View {
+        AppBackground()
+            .mask {
+                VStack(spacing: 0) {
+                    Color.black
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: fade)
+                }
+                .ignoresSafeArea(edges: .top)
+            }
+            .padding(.bottom, -fade)
+            .allowsHitTesting(false)
     }
 
     // MARK: Ledger
 
-    /// The day's meals (tap to fix, swipe to delete — no need to say so),
-    /// then the way into the week's insights.
+    /// The day's meals, one line each (tap to open, swipe to delete — no
+    /// need to say so). Rows are separated by space, not rules.
     private var ledger: some View {
-        VStack(spacing: 0) {
-            if !meals.isEmpty {
-                HairlineRule().padding(.bottom, 4)
-                if meals.count <= 5 || typeSize.isAccessibilitySize {
-                    ledgerRows
-                } else {
-                    // A long day scrolls inside the header instead of pushing
-                    // the thread off screen.
-                    ScrollView { ledgerRows }
-                        .scrollBounceBehavior(.basedOnSize)
-                        .frame(height: 300)
-                }
+        Group {
+            if meals.count <= 6 || typeSize.isAccessibilitySize {
+                ledgerRows
+            } else {
+                // A long day scrolls inside the panel instead of pushing
+                // the thread off screen.
+                ScrollView { ledgerRows }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(height: 260)
             }
-            HairlineRule().padding(.top, 4)
-            Button(action: onOpenInsights) {
-                HStack {
-                    Text("This week")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Design.Color.textSecondary)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(Design.Color.textTertiary)
-                }
-                .padding(.top, 12)
-                .padding(.bottom, 2)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("This week")
-            .accessibilityHint("Protein, weekly patterns and the protein guide")
         }
     }
 
     private var ledgerRows: some View {
         VStack(spacing: 0) {
-            ForEach(Array(meals.enumerated()), id: \.element.id) { index, meal in
-                if index > 0 { HairlineRule() }
+            ForEach(meals) { meal in
                 LedgerSwipeRow(onDelete: { onDeleteMeal(meal) }, canDelete: meal.canDelete) {
                     ledgerRow(meal)
                 }
@@ -203,46 +318,94 @@ struct DayHeader: View {
         Button {
             onOpenMeal(meal)
         } label: {
-            HStack(spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.m) {
                 Text(timeText(meal.createdAt).replacingOccurrences(of: " AM", with: "").replacingOccurrences(of: " PM", with: ""))
                     .font(Design.Typeface.numeral(.caption))
                     .monospacedDigit()
                     .foregroundStyle(Design.Color.textTertiary)
                     .lineLimit(1)
                     .fixedSize()
-                    .frame(minWidth: timeWidth, alignment: .leading)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(meal.summary)
-                        .font(.subheadline)
-                        .foregroundStyle(meal.status == .complete ? Design.Color.textPrimary : Design.Color.textSecondary)
-                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                    if meal.status == .complete {
-                        MacroInline(p: meal.proteinG, c: meal.carbsG, f: meal.fatG)
-                    } else if meal.status == .failed {
-                        Text(meal.displayStatusMessage)
-                            .font(.caption)
-                            .foregroundStyle(Design.Color.danger)
-                            .lineLimit(1)
-                    } else {
-                        ThreadShimmerLine(width: 72)
-                            .accessibilityLabel("Working on it")
-                    }
-                }
-                Spacer()
-                if meal.status == .complete {
-                    Text(Int(meal.caloriesKcal.rounded()).formatted())
-                        .font(Design.Typeface.numeral(.subheadline, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(Design.Color.textPrimary)
-                }
+                    .frame(minWidth: 34, alignment: .leading)
+                Text(meal.summary)
+                    .font(.subheadline)
+                    .foregroundStyle(meal.status == .complete ? Design.Color.textPrimary : Design.Color.textSecondary)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                Spacer(minLength: Design.Space.s)
+                ledgerTrailing(meal)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 9)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .matchedTransitionSource(id: TodayRoute.zoomID(meal.id, from: .ledger), in: zoomNamespace)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("ledger.\(meal.id.uuidString)")
+    }
+
+    @ViewBuilder
+    private func ledgerTrailing(_ meal: Entry) -> some View {
+        switch meal.status {
+        case .complete:
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("\(Int(meal.proteinG.rounded())) P")
+                    .font(Design.Typeface.numeral(.caption))
+                    .foregroundStyle(Design.Color.macroProtein)
+                Text(Int(meal.caloriesKcal.rounded()).formatted())
+                    .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .frame(minWidth: 36, alignment: .trailing)
+            }
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize()
+        case .failed:
+            Text("Not logged")
+                .font(.caption)
+                .foregroundStyle(Design.Color.danger)
+                .fixedSize()
+        default:
+            ThreadShimmerLine(width: 36)
+        }
+    }
+
+    private var insightsLink: some View {
+        Button(action: onOpenInsights) {
+            HStack(spacing: 6) {
+                Text("This week")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Design.Color.textSecondary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("This week")
+        .accessibilityHint("Protein, weekly patterns and the protein guide")
+    }
+}
+
+/// One brushstroke of progress: a hairline track and a filled length, the
+/// width of the page.
+struct DayStroke: View {
+    let progress: Double
+    let color: Color
+    var thickness: CGFloat = 2.5
+
+    var body: some View {
+        GeometryReader { geometry in
+            Capsule()
+                .fill(color.opacity(0.13))
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(color)
+                        .frame(width: progress > 0 ? max(thickness, geometry.size.width * min(progress, 1)) : 0)
+                }
+        }
+        .frame(height: thickness)
     }
 }
 
@@ -268,16 +431,16 @@ struct LedgerSwipeRow<Content: View>: View {
                 } label: {
                     Image(systemName: "trash.fill")
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Design.Color.textPrimary)
                         .frame(width: max(revealWidth, -offset))
                         .frame(maxHeight: .infinity)
-                        .background(Design.Color.danger, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(Design.Color.danger, in: RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Delete meal")
             }
             content
-                .background(Design.Color.surface1.opacity(offset < 0 ? 0.001 : 0))
+                .background(Design.Color.canvas.opacity(offset < 0 ? 1 : 0))
                 .offset(x: offset)
         }
         .clipped()
@@ -314,6 +477,8 @@ struct LedgerSwipeRow<Content: View>: View {
     }
 }
 
+/// The week under the day: a letter and a small pair of rings per day. The
+/// selected day carries one Pernambuco mark beneath it; no pills.
 struct WeekStrip: View {
     let days: [WeekStripDay]
     var onSelect: (String) -> Void
@@ -324,21 +489,19 @@ struct WeekStrip: View {
                 Button {
                     onSelect(day.localDay)
                 } label: {
-                    VStack(spacing: 5) {
+                    VStack(spacing: 7) {
                         Text(day.letter)
-                            .font(Design.Typeface.eyebrow)
-                            .foregroundStyle(day.isSelected ? Design.Color.ember : Design.Color.textTertiary)
-                        MacroRings(kcal: day.kcalProgress, protein: day.proteinProgress, size: 30, lineWidth: 3.5)
-                            .opacity(day.isFuture ? 0.3 : (day.hasLog || day.isSelected ? 1 : 0.55))
+                            .font(.caption2.weight(day.isSelected ? .semibold : .medium))
+                            .foregroundStyle(letterColor(day))
+                        MacroRings(kcal: day.kcalProgress, protein: day.proteinProgress, size: 24, lineWidth: 2.5)
+                            .opacity(day.isFuture ? 0.25 : (day.hasLog || day.isSelected ? 1 : 0.5))
+                        Circle()
+                            .fill(Design.Color.ember)
+                            .frame(width: 4, height: 4)
+                            .opacity(day.isSelected ? 1 : 0)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background {
-                        if day.isSelected {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Design.Color.ember.opacity(0.12))
-                        }
-                    }
+                    .padding(.vertical, 4)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -347,7 +510,12 @@ struct WeekStrip: View {
                 .accessibilityAddTraits(day.isSelected ? .isSelected : [])
             }
         }
-        .sensoryFeedback(.selection, trigger: days.first(where: \.isSelected)?.localDay)
+    }
+
+    private func letterColor(_ day: WeekStripDay) -> Color {
+        if day.isSelected { return Design.Color.textPrimary }
+        if day.isToday { return Design.Color.textSecondary }
+        return Design.Color.textTertiary
     }
 
     private func accessibilityLabel(_ day: WeekStripDay) -> String {
