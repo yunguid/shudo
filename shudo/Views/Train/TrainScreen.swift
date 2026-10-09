@@ -45,8 +45,11 @@ struct TrainScreen: View {
     @ScaledMetric(relativeTo: .footnote) private var dayColumnWidth: CGFloat = 46
 
     #if DEBUG
-    /// PolishPreview only: scroll to an anchor ("prs", "recent") after load.
-    var previewScrollAnchor: String?
+    /// PolishPreview only: scroll to an anchor ("prs", "recent", "bottom")
+    /// after load. Inside the shell it comes from `-shudoTrainPreview`.
+    var previewScrollAnchor: String? = TrainPreviewFixtures.variant.flatMap {
+        ["prs", "recent", "bottom"].contains($0) ? $0 : nil
+    }
     #endif
 
     static let buildPlanPrompt =
@@ -126,6 +129,9 @@ struct TrainScreen: View {
                             .padding(.top, Design.Space.section)
                             .id("recent")
                     }
+                    #if DEBUG
+                    Color.clear.frame(height: 0).id("bottom")
+                    #endif
                 }
                 .padding(.horizontal, TrainStyle.gutter)
                 .padding(.top, Design.Space.m)
@@ -140,7 +146,7 @@ struct TrainScreen: View {
             .task(id: viewModel.hasLoaded) {
                 guard let anchor = previewScrollAnchor, viewModel.hasLoaded else { return }
                 try? await Task.sleep(nanoseconds: 400_000_000)
-                proxy.scrollTo(anchor, anchor: .top)
+                proxy.scrollTo(anchor, anchor: anchor == "bottom" ? .bottom : .top)
             }
             #endif
         }
@@ -232,7 +238,7 @@ struct TrainScreen: View {
                         sessionName: snapshot.loggedTodaySession?.name,
                         units: viewModel.units)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(TrainPanelButtonStyle())
                 .disabled(logged.isLocalOnly)
                 .transition(.ink(reduceMotion: reduceMotion))
             } else if let next = snapshot.nextSession {
@@ -371,6 +377,18 @@ struct TrainRowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.55 : 1)
+            .animation(Design.Motion.snap, value: configuration.isPressed)
+    }
+}
+
+/// A panel press: it gives a little under the thumb, like a wooden key.
+struct TrainPanelButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
             .animation(Design.Motion.snap, value: configuration.isPressed)
     }
 }
