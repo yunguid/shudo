@@ -95,6 +95,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                             .contentTransition(.opacity)
                     }
                 }
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
