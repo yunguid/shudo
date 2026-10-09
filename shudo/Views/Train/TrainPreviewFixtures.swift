@@ -369,6 +369,19 @@ enum TrainPreviewFixtures {
                         plans: TrainingPlanState(active: activePlan), activities: Array(activities.dropLast()) + [completedToday]),
                     onAskCoach: { _ in })
             }
+        case "landing":
+            // Today's session is being read, then lands with a PR ~3.5 s in.
+            NavigationStack {
+                TrainScreen(
+                    viewModel: TrainViewModel(
+                        profile: profile,
+                        service: PreviewTrainService(
+                            plans: TrainingPlanState(active: activePlan), activities: activities,
+                            landing: completedToday),
+                        preloadedPlans: TrainingPlanState(active: activePlan),
+                        preloadedActivities: activities),
+                    onAskCoach: { _ in })
+            }
         case "draft":
             NavigationStack {
                 TrainScreen(
@@ -399,13 +412,26 @@ actor PreviewTrainService: TrainServing {
     private var plans: TrainingPlanState
     private var rows: [UUID: Activity]
     private var acceptedAt: [UUID: Date] = [:]
+    /// A row that finishes reading on its own a few seconds in (the
+    /// `landing` variant: watch today's session land).
+    private var landing: (at: Date, row: Activity)?
 
-    init(plans: TrainingPlanState, activities: [Activity]) {
+    init(plans: TrainingPlanState, activities: [Activity], landing: Activity? = nil, after delay: TimeInterval = 3.5) {
         self.plans = plans
         self.rows = Dictionary(uniqueKeysWithValues: activities.map { ($0.id, $0) })
+        self.landing = landing.map { (Date().addingTimeInterval(delay), $0) }
+    }
+
+    private func land() {
+        guard let landing, Date() >= landing.at else { return }
+        var row = landing.row
+        row.updatedAt = Date()
+        rows[row.id] = row
+        self.landing = nil
     }
 
     func fetchActivities(fromLocalDay: String, throughLocalDay: String?, limit: Int) async throws -> [Activity] {
+        land()
         let filtered = rows.values.filter { row in
             row.localDay >= fromLocalDay && (throughLocalDay.map { row.localDay <= $0 } ?? true)
         }
@@ -413,6 +439,7 @@ actor PreviewTrainService: TrainServing {
     }
 
     func fetchActivity(id: UUID) async throws -> Activity? {
+        land()
         guard var row = rows[id] else { return nil }
         if let accepted = acceptedAt[id], row.status == .processing, Date().timeIntervalSince(accepted) > 4 {
             row.status = .complete

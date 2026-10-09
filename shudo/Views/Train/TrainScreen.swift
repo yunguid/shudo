@@ -120,7 +120,9 @@ struct TrainScreen: View {
                             .padding(.bottom, Design.Space.l)
                             .transition(.ink(reduceMotion: reduceMotion))
                     }
-                    sessionSection
+                    // One slot: the outgoing hero and the incoming one share
+                    // it while they cross, so nothing below jumps twice.
+                    ZStack(alignment: .top) { sessionSection }
                     if !snapshot.personalBests.isEmpty {
                         PRBoardCard(bests: snapshot.personalBests, units: viewModel.units)
                             .padding(.top, Design.Space.section)

@@ -320,7 +320,11 @@ struct LoggedSessionCard: View {
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .shimmering()
-                        .transition(.opacity)
+                        // The words step aside quickly so the lifts can ink in
+                        // over clean paper.
+                        .transition(.asymmetric(
+                            insertion: .opacity,
+                            removal: .opacity.animation(.easeOut(duration: 0.14))))
                 } else {
                     lifts
                         .transition(.ink(reduceMotion: reduceMotion))
@@ -479,6 +483,7 @@ struct PRBoardCard: View {
                 } label: {
                     HStack(spacing: 5) {
                         Text(expanded ? "Fewer" : "All \(bests.count) lifts")
+                            .contentTransition(.numericText(value: Double(bests.count)))
                         Image(systemName: "chevron.down")
                             .font(Design.Typeface.text(.caption2, weight: .semibold))
                             .rotationEffect(.degrees(expanded ? 180 : 0))
@@ -546,6 +551,7 @@ struct PRBoardRow: View {
                     .font(Design.Typeface.numeral(.body, weight: .medium))
                     .foregroundStyle(best.isFresh ? Design.Color.pernambuco : Design.Color.textPrimary)
                     .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(value)))
                     .accessibilityLabel("\(value) \(unit == .kg ? "kilograms" : "pounds")")
             } else {
                 Text("\(best.bestSet.reps)")
