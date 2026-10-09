@@ -83,7 +83,7 @@ struct AppShell: View {
             commandBand
         }
         .overlay(alignment: .bottom) { typingOverlay }
-        .overlay { CaptureFanOverlay(fan: fanHolder.value) }
+        .overlay { CaptureFanOverlay(fan: fanHolder.value, metrics: bandMetrics) }
         .environment(\.captureComposerInset, isTyping ? composerHeight : 0)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: isTyping)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: bandHidden)

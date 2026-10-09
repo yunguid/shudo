@@ -590,6 +590,7 @@ struct ThumbPressGesture: UIGestureRecognizerRepresentable {
 /// Reduce Motion it simply fades.
 struct CaptureFanOverlay: View {
     @ObservedObject var fan: CaptureFan
+    var metrics: CommandBandMetrics = .fallback
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -607,7 +608,7 @@ struct CaptureFanOverlay: View {
                         .onTapGesture { fan.close() }
                         .accessibilityHidden(true)
                         .transition(.opacity)
-                    CaptureFanDial(fan: fan)
+                    CaptureFanDial(fan: fan, metrics: metrics)
                         .transition(
                             reduceMotion
                                 ? .opacity
@@ -629,6 +630,7 @@ struct CaptureFanOverlay: View {
 
 private struct CaptureFanDial: View {
     @ObservedObject var fan: CaptureFan
+    let metrics: CommandBandMetrics
     @State private var isOut = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -641,8 +643,8 @@ private struct CaptureFanDial: View {
                     in: CaptureFanBand(center: fan.origin, progress: isOut ? 1 : 0)
                 )
             // The key stays lit under the thumb: the dial grows out of it.
-            CommandKey(role: .mic)
-                .shadow(color: Design.Color.hinoki.opacity(0.32), radius: 12)
+            CommandKey(role: .mic, metrics: metrics)
+                .shadow(color: Design.Color.hinoki.opacity(0.28), radius: 12)
                 .position(fan.origin)
             ForEach(Array(fan.options.enumerated()), id: \.element.id) { index, option in
                 let offset = CaptureFanLayout.offset(index: index, count: count)

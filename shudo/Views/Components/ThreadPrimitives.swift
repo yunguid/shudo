@@ -8,6 +8,9 @@ import UIKit
 struct CoachAvatar: View {
     var size: CGFloat = 30
     var isThinking = false
+    /// False draws just the pads, for a surface that brings its own (the
+    /// command key's walnut slab).
+    var showsDisc = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let rowColors: [Color] = [
@@ -20,10 +23,12 @@ struct CoachAvatar: View {
             let pad = size * 0.2
             let gap = size * 0.06
             ZStack {
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [Color(hex: 0x2A2118), Color(hex: 0x120F0C)],
-                        center: .init(x: 0.5, y: 0.35), startRadius: 0, endRadius: size * 0.7))
+                if showsDisc {
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [Color(hex: 0x2A2118), Color(hex: 0x120F0C)],
+                            center: .init(x: 0.5, y: 0.35), startRadius: 0, endRadius: size * 0.7))
+                }
                 VStack(spacing: gap) {
                     ForEach(0..<3, id: \.self) { row in
                         HStack(spacing: gap) {
@@ -40,7 +45,9 @@ struct CoachAvatar: View {
                 }
             }
             .frame(width: size, height: size)
-            .overlay(Circle().stroke(Design.Color.hairline, lineWidth: 0.5))
+            .overlay {
+                if showsDisc { Circle().stroke(Design.Color.hairline, lineWidth: 0.5) }
+            }
         }
         .accessibilityHidden(true)
     }

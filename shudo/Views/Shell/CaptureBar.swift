@@ -98,17 +98,17 @@ struct CaptureBar: View {
         ZStack(alignment: .bottomLeading) {
             base
             CommandWell(metrics: metrics)
+            // Level with the key, but always clear of the home indicator.
             trailing
                 .frame(height: CommandBandMetrics.barHeight)
                 .padding(.leading, metrics.wellSide + CommandBandMetrics.barGap)
                 .padding(.trailing, CommandBandMetrics.trailingMargin)
-                .padding(.top, CommandBandMetrics.topGap)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.bottom, max(metrics.keyCenterInset - CommandBandMetrics.barHeight / 2, 22))
             // Always the same view, so its gesture survives the role change:
             // Shudo → send arrow → (spinner) → Shudo.
             key
-                .padding(.leading, metrics.keyCenterInset - metrics.keyRadius)
-                .padding(.bottom, metrics.keyCenterInset - metrics.keyRadius)
+                .padding(.leading, CommandBandMetrics.margin)
+                .padding(.bottom, CommandBandMetrics.margin)
         }
         .frame(height: metrics.bandHeight)
         .frame(maxWidth: .infinity)
@@ -170,7 +170,7 @@ struct CaptureBar: View {
             .padding(.leading, 18)
             .padding(.trailing, 11)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .chromeGlass(in: Capsule(), tint: CommandBandMetrics.barTint)
+            .background(Design.Color.surface1, in: Capsule())
             .transition(.shoji(.leading, reduceMotion: reduceMotion))
         } else {
             ShellTabBar(tab: $tab, todayBadge: todayBadge)
@@ -202,8 +202,8 @@ struct CaptureBar: View {
 
     private var key: some View {
         let role = leadingRole
-        return CommandKey(role: role, isPressed: isPressed, hasDraft: !draft.isEmpty)
-            .scaleEffect(fan.isOpen ? 1.06 : 1)
+        return CommandKey(role: role, metrics: metrics, isPressed: isPressed, hasDraft: !draft.isEmpty)
+            .opacity(fan.isOpen ? 0 : 1)
             .gesture(pressGesture)
             .onGeometryChange(for: CGPoint.self) { proxy in
                 let frame = proxy.frame(in: .global)

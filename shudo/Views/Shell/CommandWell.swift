@@ -3,20 +3,24 @@ import UIKit
 
 // MARK: - The command band
 //
-// The bottom of the app is one reserved band: on the left, a well carved out
-// of the screen's bottom-left corner holding Shudo's key (tap to talk, hold
-// for the dial); on the right, the tab bar. The band is opaque and the shell
-// pads every tab's safe area by its height (`shellBandInset`), so nothing —
-// text, icons, cards, the thread's last message — ever tangles with the well.
+// The bottom of the app is one reserved band: on the left, a well milled out
+// of the screen's bottom-left corner with Shudo's key seated in it (tap to
+// talk, hold for the dial); on the right, the tab bar. The band is opaque and
+// the shell pads every tab's safe area by its height (`shellBandInset`), so
+// nothing — text, icons, cards, the thread's last message — tangles with it.
 
-/// Geometry of the command band, derived from the device's display corner so
-/// the well's outer corner is the screen's own corner and the key sits
-/// concentric with it.
+/// Geometry of the command band. The well is flush with the screen's
+/// bottom-left corner; the key fills it but for one small, even margin, its
+/// outer corner concentric with the display's own and its other corners
+/// concentric with the well's.
 struct CommandBandMetrics: Equatable {
-    /// The Shudo key's diameter.
-    static let keyDiameter: CGFloat = 56
-    /// The small, even margin between the key and the well's rim.
-    static let rimGap: CGFloat = 5
+    /// The key's side, before the display corner asks for more.
+    static let keySide: CGFloat = 76
+    /// The key's three inner corners (continuous).
+    static let keyCorner: CGFloat = 20
+    /// The one small, even margin between the key and everything around it:
+    /// the rim, the screen edges, the display corner.
+    static let margin: CGFloat = 5
     /// The tab bar's (and the recording strip's) height.
     static let barHeight: CGFloat = 54
     /// Well → tab bar.
@@ -25,32 +29,22 @@ struct CommandBandMetrics: Equatable {
     /// Breathing room between the content above and the well's lip; content
     /// scrolling down into it dissolves before it reaches the lip.
     static let topGap: CGFloat = 16
-    /// The tab bar's and recording strip's glass: warmed toward walnut so it
-    /// sits on the band like lacquer, not grey plastic.
-    static let barTint = Color(hex: 0x3A2A21).opacity(0.45)
-    /// The fillet where the well's lip meets the left screen edge.
-    static let filletRadius: CGFloat = 12
 
     /// Screen display corner radius (0 on square-cornered screens).
     let displayCornerRadius: CGFloat
     /// The window's bottom safe-area inset (home indicator).
     let bottomSafeArea: CGFloat
 
-    var keyRadius: CGFloat { Self.keyDiameter / 2 }
-
-    /// Distance of the key's center from the left and bottom screen edges:
-    /// close enough to the corner to feel tucked in, never closer to the
-    /// rounded display corner than the rim gap.
-    var keyCenterInset: CGFloat {
-        let r = displayCornerRadius
-        let concentric = r - (r - keyRadius - Self.rimGap) / 2.squareRoot()
-        return max(keyRadius + 12, concentric)
-    }
-
-    /// The well is square: from the corner out past the key by the rim gap.
-    var wellSide: CGFloat { keyCenterInset + keyRadius + Self.rimGap }
-    /// Concentric with the key.
-    var wellCornerRadius: CGFloat { keyRadius + Self.rimGap }
+    /// The key's outer (bottom-left) corner: concentric with the display.
+    var keyOuterCorner: CGFloat { max(Self.keyCorner, displayCornerRadius - Self.margin) }
+    /// Big enough that the outer corner and an inner corner never meet.
+    var keySide: CGFloat { max(Self.keySide, keyOuterCorner + Self.keyCorner + 2) }
+    /// The well: the key plus the margin on every side.
+    var wellSide: CGFloat { keySide + Self.margin * 2 }
+    /// The well's inner corner, concentric with the key's.
+    var wellCornerRadius: CGFloat { Self.keyCorner + Self.margin }
+    /// The key's center, from the left and the bottom screen edges.
+    var keyCenterInset: CGFloat { Self.margin + keySide / 2 }
 
     /// How much of the band sits above the home-indicator safe area — the
     /// bottom safe-area padding every tab gets.
@@ -135,26 +129,19 @@ struct TabSafeAreaInset: UIViewControllerRepresentable {
 
 // MARK: - Well
 
-/// The well's outline: the screen's bottom-left corner, carved out to a
-/// square with a rounded inner corner; the lip flows into the left screen
-/// edge through a small fillet, the wall runs straight into the bottom. `rect` is the full screen.
+/// The well's outline: the screen's bottom-left corner milled out to a
+/// square with a rounded inner corner. `rect` is the full band; its left
+/// and bottom edges are the screen's.
 struct CommandWellShape: Shape {
     var side: CGFloat
     var cornerRadius: CGFloat
-    var fillet: CGFloat = CommandBandMetrics.filletRadius
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let top = rect.maxY - side
         let right = rect.minX + side
-        // Up the left screen edge past the fillet, then into the lip.
         path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: top - fillet))
-        path.addArc(
-            tangent1End: CGPoint(x: rect.minX, y: top),
-            tangent2End: CGPoint(x: rect.minX + fillet, y: top),
-            radius: fillet
-        )
+        path.addLine(to: CGPoint(x: rect.minX, y: top))
         path.addLine(to: CGPoint(x: right - cornerRadius, y: top))
         path.addArc(
             tangent1End: CGPoint(x: right, y: top),
@@ -167,23 +154,17 @@ struct CommandWellShape: Shape {
     }
 }
 
-/// Just the visible rim of the well (lip, inner corner, wall), open at the
-/// screen edges, for the machined edge stroke.
+/// Just the visible edge of the well — lip, inner corner, wall — open at
+/// the screen edges, for the machined rim.
 struct CommandWellRim: Shape {
     var side: CGFloat
     var cornerRadius: CGFloat
-    var fillet: CGFloat = CommandBandMetrics.filletRadius
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let top = rect.maxY - side
         let right = rect.minX + side
-        path.move(to: CGPoint(x: rect.minX, y: top - fillet))
-        path.addArc(
-            tangent1End: CGPoint(x: rect.minX, y: top),
-            tangent2End: CGPoint(x: rect.minX + fillet, y: top),
-            radius: fillet
-        )
+        path.move(to: CGPoint(x: rect.minX, y: top))
         path.addLine(to: CGPoint(x: right - cornerRadius, y: top))
         path.addArc(
             tangent1End: CGPoint(x: right, y: top),
@@ -195,24 +176,28 @@ struct CommandWellRim: Shape {
     }
 }
 
-/// The carved corner itself: a recess a shade deeper than the canvas, shaded
-/// under its lip, edged with a fine warm-titanium rim that catches the
-/// lamplight at the lip and falls off down the wall. Drawn full-screen; the
-/// display's own rounded corner finishes the outer edge.
+/// The milled corner: a recess stepped down toward sumi black, shaded under
+/// its lip and along its wall, edged with a fine warm-titanium chamfer that
+/// catches the lamplight along the lip and falls off down the wall. Drawn in
+/// the band's frame; the display's own rounded corner finishes the outside.
 struct CommandWell: View {
     let metrics: CommandBandMetrics
 
-    private static let recessTop = Color(hex: 0x070504)
-    private static let recessBottom = Color(hex: 0x0B0907)
-    /// Warm titanium: hinoki with the colour drawn out of it.
-    private static let metal = Color(hex: 0xE6DCCD)
+    private static let recessTop = Color(hex: 0x040302)
+    private static let recessBottom = Color(hex: 0x080605)
+    /// Warm titanium: hinoki with most of the colour drawn out of it.
+    static let metal = Color(hex: 0xE9DFD0)
 
     var body: some View {
-        let shape = CommandWellShape(side: metrics.wellSide, cornerRadius: metrics.wellCornerRadius)
-        let rim = CommandWellRim(side: metrics.wellSide, cornerRadius: metrics.wellCornerRadius)
+        let side = metrics.wellSide
+        let radius = metrics.wellCornerRadius
+        let shape = CommandWellShape(side: side, cornerRadius: radius)
+        let rim = CommandWellRim(side: side, cornerRadius: radius)
         GeometryReader { proxy in
             let size = proxy.size
-            let top = (size.height - metrics.wellSide) / max(size.height, 1)
+            let height = max(size.height, 1)
+            let width = max(size.width, 1)
+            let top = (size.height - side) / height
             ZStack {
                 shape.fill(
                     LinearGradient(
@@ -221,38 +206,44 @@ struct CommandWell: View {
                         endPoint: .bottom
                     )
                 )
-                // Shadow cast by the lip into the recess.
+                // Shadow under the lip.
                 shape.fill(
                     LinearGradient(
-                        stops: [
-                            .init(color: .black.opacity(0.55), location: 0),
-                            .init(color: .black.opacity(0), location: 1),
-                        ],
+                        colors: [.black.opacity(0.75), .black.opacity(0)],
                         startPoint: UnitPoint(x: 0.5, y: top),
-                        endPoint: UnitPoint(x: 0.5, y: top + 18 / max(size.height, 1))
+                        endPoint: UnitPoint(x: 0.5, y: top + 9 / height)
                     )
                 )
-                // The inner wall: a dark line just inside the rim.
-                rim.offset(x: -0.75, y: 0.75)
-                    .stroke(Color.black.opacity(0.7), lineWidth: 1.5)
-                // The machined lip: bright where the light catches the
-                // corner, falling off along the lip and down the wall.
+                // And a softer one along the wall.
+                shape.fill(
+                    LinearGradient(
+                        colors: [.black.opacity(0), .black.opacity(0.45)],
+                        startPoint: UnitPoint(x: (side - 8) / width, y: 0.5),
+                        endPoint: UnitPoint(x: side / width, y: 0.5)
+                    )
+                )
+                // The chamfer's outer facet: a whisper of light on the canvas
+                // side of the edge.
+                rim.offset(x: 0.75, y: -0.75)
+                    .stroke(Self.metal.opacity(0.07), lineWidth: 1)
+                // The chamfer itself: bright along the lip, brightest at the
+                // inner corner, falling off down the wall; it fades into the
+                // bezel at both screen edges.
                 rim.stroke(
                     LinearGradient(
                         stops: [
-                            .init(color: Self.metal.opacity(0.12), location: 0),
-                            .init(color: Self.metal.opacity(0.34), location: 0.36),
+                            .init(color: Self.metal.opacity(0.10), location: 0),
+                            .init(color: Self.metal.opacity(0.42), location: 0.1),
+                            .init(color: Self.metal.opacity(0.52), location: 0.38),
                             .init(color: Self.metal.opacity(0.62), location: 0.5),
-                            .init(color: Self.metal.opacity(0.28), location: 0.68),
-                            .init(color: Self.metal.opacity(0.05), location: 1),
+                            .init(color: Self.metal.opacity(0.30), location: 0.64),
+                            .init(color: Self.metal.opacity(0.08), location: 0.9),
+                            .init(color: Self.metal.opacity(0.03), location: 1),
                         ],
                         startPoint: UnitPoint(x: 0, y: top),
-                        endPoint: UnitPoint(
-                            x: metrics.wellSide / max(size.width, 1),
-                            y: 1
-                        )
+                        endPoint: UnitPoint(x: side / width, y: 1)
                     ),
-                    lineWidth: 1
+                    style: StrokeStyle(lineWidth: 1, lineCap: .butt)
                 )
             }
         }
@@ -263,74 +254,112 @@ struct CommandWell: View {
 
 // MARK: - Key
 
-/// Shudo's key in the well: the pad-grid mark on a walnut disc with a fine
-/// metal edge, pressed down while touched. While recording it becomes the
-/// Pernambuco send arrow, a spinner while transcribing, retry after a failed
-/// upload — always the same spot.
+/// The key's outline: three inner corners concentric with the well's, the
+/// outer corner concentric with the display's.
+struct CommandKeyShape: Shape {
+    var corner: CGFloat = CommandBandMetrics.keyCorner
+    var outerCorner: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        UnevenRoundedRectangle(
+            cornerRadii: RectangleCornerRadii(
+                topLeading: corner,
+                bottomLeading: outerCorner,
+                bottomTrailing: corner,
+                topTrailing: corner
+            ),
+            style: .continuous
+        )
+        .path(in: rect)
+    }
+}
+
+/// Shudo's key, seated in the well: the pad-grid mark on a walnut slab with
+/// a fine metal edge, pressed down while touched. While recording it becomes
+/// the Pernambuco send arrow, a spinner while transcribing, retry after a
+/// failed upload — always the same spot.
 struct CommandKey: View {
     let role: CaptureLeadingRole
+    let metrics: CommandBandMetrics
     var isPressed = false
     var hasDraft = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var diameter: CGFloat { CommandBandMetrics.keyDiameter }
+    private var shape: CommandKeyShape { CommandKeyShape(outerCorner: metrics.keyOuterCorner) }
+    /// The slab's visual center sits a little up and in from its box center,
+    /// away from the big outer corner.
+    private var visualOffset: CGSize { CGSize(width: 2, height: -2) }
 
     var body: some View {
         ZStack {
-            if role == .mic {
-                CoachAvatar(size: diameter)
-                    .transition(.opacity)
-            } else {
-                face
-                    .transition(.opacity)
-            }
+            shape.fill(
+                RadialGradient(
+                    colors: [Color(hex: 0x2B2219), Color(hex: 0x14100C)],
+                    center: UnitPoint(x: 0.55, y: 0.3),
+                    startRadius: 0,
+                    endRadius: metrics.keySide * 0.8
+                )
+            )
+            content
+                .offset(visualOffset)
         }
-        .frame(width: diameter, height: diameter)
+        .frame(width: metrics.keySide, height: metrics.keySide)
         .overlay {
             // The key's machined edge, the same metal as the rim.
-            Circle()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [Color(hex: 0xE6DCCD).opacity(0.38), Color(hex: 0xE6DCCD).opacity(0.06)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 0.75
-                )
+            shape.stroke(
+                LinearGradient(
+                    colors: [CommandWell.metal.opacity(0.30), CommandWell.metal.opacity(0.04)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                lineWidth: 0.75
+            )
         }
-        .overlay(alignment: .topTrailing) {
-            if hasDraft, role == .mic {
-                Circle()
-                    .fill(Design.Color.pernambuco)
-                    .frame(width: 9, height: 9)
-                    .overlay(Circle().stroke(Design.Color.canvas, lineWidth: 2))
-                    .offset(x: -3, y: 3)
-                    .transition(.scale(scale: 0.4).combined(with: .opacity))
-            }
-        }
-        .shadow(color: .black.opacity(isPressed ? 0.2 : 0.55), radius: isPressed ? 1 : 5, y: isPressed ? 0 : 2)
-        .scaleEffect(isPressed && !reduceMotion ? 0.94 : 1)
-        .brightness(isPressed ? -0.06 : 0)
+        .shadow(color: .black.opacity(isPressed ? 0.15 : 0.5), radius: isPressed ? 0.5 : 3, y: isPressed ? 0 : 1.5)
+        .scaleEffect(isPressed && !reduceMotion ? 0.965 : 1)
+        .brightness(isPressed ? -0.05 : 0)
         .animation(Design.Motion.snap, value: isPressed)
         .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: role)
         .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: hasDraft)
-        .contentShape(Circle())
+        .contentShape(shape)
     }
 
-    private var face: some View {
-        ZStack {
-            Circle().fill(Design.Color.emberFill)
-            if role == .working {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(Design.Color.onEmber)
-            } else {
-                Image(systemName: role.symbol)
-                    .font(.custom(Design.Typeface.faceName(.bold), fixedSize: diameter * 0.36))
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Design.Color.onEmber)
-                    .contentTransition(.symbolEffect(.replace))
+    @ViewBuilder
+    private var content: some View {
+        switch role {
+        case .mic:
+            CoachAvatar(size: metrics.keySide * 0.66, showsDisc: false)
+                .overlay(alignment: .topTrailing) {
+                    if hasDraft {
+                        Circle()
+                            .fill(Design.Color.pernambuco)
+                            .frame(width: 8, height: 8)
+                            .offset(x: 9, y: -9)
+                            .transition(.scale(scale: 0.4).combined(with: .opacity))
+                    }
+                }
+                .transition(.opacity)
+        default:
+            // Live: a Pernambuco disc on the walnut — send, a spinner while
+            // it transcribes, retry after a failed upload.
+            ZStack {
+                Circle()
+                    .fill(Design.Color.emberFill)
+                    .shadow(color: Design.Color.heartwood.opacity(0.55), radius: 6, y: 1)
+                if role == .working {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Design.Color.onEmber)
+                } else {
+                    Image(systemName: role.symbol)
+                        .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 19))
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Design.Color.onEmber)
+                        .contentTransition(.symbolEffect(.replace))
+                }
             }
+            .frame(width: 46, height: 46)
+            .transition(.scale(scale: 0.7).combined(with: .opacity))
         }
     }
 }

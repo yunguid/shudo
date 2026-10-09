@@ -31,7 +31,8 @@ struct ShellTabBar: View {
         }
         .padding(4)
         .frame(height: CommandBandMetrics.barHeight)
-        .chromeGlass(in: Capsule(), tint: CommandBandMetrics.barTint)
+        // A flat walnut track: the well's rim is the band's one metal edge.
+        .background(Design.Color.surface1, in: Capsule())
         // Like the system tab bar: labels stay put at large sizes and the
         // large content viewer shows them instead.
         .dynamicTypeSize(...DynamicTypeSize.large)
@@ -72,7 +73,7 @@ struct ShellTabBar: View {
             .background {
                 if selected {
                     Capsule()
-                        .fill(Design.Color.hinoki.opacity(0.09))
+                        .fill(Design.Color.hinoki.opacity(0.08))
                         .matchedGeometryEffect(id: "lens", in: lens)
                 }
             }
