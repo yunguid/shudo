@@ -369,6 +369,15 @@ enum TrainPreviewFixtures {
                         plans: TrainingPlanState(active: activePlan), activities: Array(activities.dropLast()) + [completedToday]),
                     onAskCoach: { _ in })
             }
+        case "unsent":
+            // Today's log never reached the server: the history keeps its card.
+            NavigationStack {
+                TrainScreen(
+                    viewModel: viewModel(
+                        plans: TrainingPlanState(active: activePlan), activities: Array(activities.dropLast()) + [unsentToday]),
+                    onAskCoach: { _ in },
+                    previewScrollAnchor: "recent")
+            }
         case "landing":
             // Today's session is being read, then lands with a PR ~3.5 s in.
             NavigationStack {

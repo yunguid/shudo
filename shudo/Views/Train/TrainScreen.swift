@@ -280,10 +280,13 @@ struct TrainScreen: View {
                             .foregroundStyle(Design.Color.textTertiary)
                             .padding(.top, 10)
                     }
-                    ForEach(Array(group.activities.enumerated()), id: \.element.id) { index, activity in
+                    // The day is written on the group's first diary line (an
+                    // unsent card spans the full width and carries no column).
+                    let labelled = group.activities.first { !$0.isLocalOnly }?.id
+                    ForEach(group.activities) { activity in
                         activityRow(
                             activity,
-                            dayLabel: diary && index == 0
+                            dayLabel: diary && activity.id == labelled
                                 ? ActivityLedgerRow.dayLabel(
                                     localDay: group.localDay, today: today, timezone: viewModel.timezone)
                                 : nil,

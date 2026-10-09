@@ -2,11 +2,14 @@ import SwiftUI
 
 // MARK: - ActivityCard
 //
-// One workout, minimal: kind tile, title (+ PR badge), one stat line —
-// "Bench press 185×8 · 61 min" or "32 min · 3.1 mi". While it's being
-// read the stat line is the session itself, shimmering. Reused by the
-// Today thread (fixed to `Design.Layout.threadCardWidth` there) and the
-// Train tab's history list.
+// One workout in a state that needs a card: sending, being read, couldn't
+// be read, or not sent (with Retry / Discard). Shaped like the thread's
+// `WorkoutReceiptCard` — kind glyph and title, one line beneath, the same
+// warm receipt surface — so when a log settles in the Today thread the
+// receipt takes its place without the card changing shape. While it's read
+// the line is the session itself, shimmering. Used by the Today thread
+// (fixed to `Design.Layout.threadCardWidth` there) and, for unsent logs,
+// the Train history.
 
 struct ActivityCard: View {
     let activity: Activity
@@ -27,42 +30,44 @@ struct ActivityCard: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ActivityKindTile(kind: activity.kind, isProcessing: activity.isProcessing, size: 40)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(activity.title)
-                        .font(Design.Typeface.text(.subheadline, weight: .semibold))
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .lineLimit(1)
-                    if !activity.prs.isEmpty {
-                        TrainPRBadge(count: activity.prs.count)
-                    }
-                }
-                statusLine
-                if activity.isNotSent, onRetry != nil || onDiscard != nil {
-                    HStack(spacing: 8) {
-                        if let onRetry {
-                            Button("Retry", action: onRetry)
-                                .buttonStyle(TrainCapsuleButtonStyle(prominent: true))
-                        }
-                        if let onDiscard {
-                            Button("Discard", action: onDiscard)
-                                .buttonStyle(TrainCapsuleButtonStyle(prominent: false))
-                        }
-                    }
-                    .padding(.top, 5)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: activity.kind.symbolName)
+                    .font(Design.Typeface.text(.caption, weight: .bold))
+                    .foregroundStyle(ActivityKindTile.tint(for: activity.kind))
+                    .symbolEffect(.pulse, options: .repeating, isActive: activity.isProcessing)
+                    .accessibilityHidden(true)
+                Text(activity.title)
+                    .font(Design.Typeface.text(.subheadline, weight: .medium))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .lineLimit(1)
+                if !activity.prs.isEmpty {
+                    TrainPRBadge(count: activity.prs.count)
                 }
             }
-            Spacer(minLength: 0)
+            statusLine
+            if activity.isNotSent, onRetry != nil || onDiscard != nil {
+                HStack(spacing: 8) {
+                    if let onRetry {
+                        Button("Retry", action: onRetry)
+                            .buttonStyle(TrainCapsuleButtonStyle(prominent: true))
+                    }
+                    if let onDiscard {
+                        Button("Discard", action: onDiscard)
+                            .buttonStyle(TrainCapsuleButtonStyle(prominent: false))
+                    }
+                }
+                .padding(.top, 6)
+            }
         }
-        .padding(12)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
+        .receiptSurface()
         .overlay {
             if activity.isNotSent {
                 RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                    .stroke(Design.Color.danger.opacity(0.45), lineWidth: 1)
+                    .strokeBorder(Design.Color.danger.opacity(0.45), lineWidth: 1)
             }
         }
         .accessibilityElement(children: .combine)
@@ -72,22 +77,22 @@ struct ActivityCard: View {
     private var statusLine: some View {
         if activity.isNotSent {
             Text("Not sent")
-                .font(Design.Typeface.text(.footnote, weight: .medium))
+                .font(Design.Typeface.text(.caption, weight: .medium))
                 .foregroundStyle(Design.Color.danger)
         } else if activity.isProcessing {
             Text(ActivityCard.readingLine(for: activity))
-                .font(Design.Typeface.text(.footnote))
+                .font(Design.Typeface.text(.caption))
                 .foregroundStyle(Design.Color.textSecondary)
-                .lineLimit(1)
+                .lineLimit(2)
                 .contentTransition(.opacity)
                 .shimmering()
         } else if activity.status == .failed {
             Text("Couldn’t read this one")
-                .font(Design.Typeface.text(.footnote))
+                .font(Design.Typeface.text(.caption))
                 .foregroundStyle(Design.Color.danger)
         } else if let line = ActivitySummaryFormatter.statLine(for: activity, units: units) {
             Text(line)
-                .font(Design.Typeface.numeral(.footnote, weight: .medium))
+                .font(Design.Typeface.numeral(.caption))
                 .foregroundStyle(Design.Color.textSecondary)
                 .lineLimit(2)
         }
@@ -108,12 +113,9 @@ private extension String {
 
 // MARK: - Building blocks (shared by the Train views)
 
-/// Tinted icon pad by activity kind.
-struct ActivityKindTile: View {
-    let kind: ActivityKind
-    var isProcessing = false
-    var size: CGFloat = 44
-
+/// The kind glyph's tint (the old icon tile is gone; cards and receipts
+/// now show the bare glyph).
+enum ActivityKindTile {
     static func tint(for kind: ActivityKind) -> Color {
         switch kind {
         case .strength, .hiit: return Design.Color.ember
@@ -121,20 +123,6 @@ struct ActivityKindTile: View {
         case .walk, .mobility: return Design.Color.macroFat
         case .sport, .other: return Design.Color.honey
         }
-    }
-
-    var body: some View {
-        let tint = Self.tint(for: kind)
-        RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-            .fill(tint.opacity(0.13))
-            .overlay {
-                Image(systemName: kind.symbolName)
-                    .font(.custom(Design.Typeface.faceName(.semibold), fixedSize: size * 0.42))
-                    .foregroundStyle(tint)
-                    .symbolEffect(.pulse, options: .repeating, isActive: isProcessing)
-            }
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
     }
 }
 
