@@ -118,7 +118,7 @@ struct BodyScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) {
+                        withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
                             revealed.toggle()
                         }
                     } label: {
@@ -507,7 +507,7 @@ struct BodyScreen: View {
     }
 
     private func reveal() {
-        withAnimation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion)) {
+        withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
             revealed = true
         }
     }
@@ -577,7 +577,9 @@ struct BodyScreen: View {
             VStack(alignment: .leading, spacing: Design.Space.xs + 2) {
                 BodyPhotoImage(path: checkIn.progressPhotoPath, loader: model.photos, maxPixel: BodyPhotoSize.thumb)
                     .physiqueVeil(revealed: revealed, iconSize: nil)
-                    .frame(width: 66, height: 88)
+                    // Veiled, the log sits small like a contact sheet; revealed,
+                    // each frame opens to its full size as the blur clears.
+                    .frame(width: revealed ? 66 : 45, height: revealed ? 88 : 60)
                     .clipShape(RoundedRectangle(cornerRadius: Design.Radius.chip, style: .continuous))
                     .matchedTransitionSource(id: source, in: zoom)
                 Text(thumbnailLabel(checkIn))
