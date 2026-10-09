@@ -254,6 +254,16 @@ provider policy changes. The initial app should remain within the Free plan for
 a small friend group, but usage and Anthropic spend still need monitoring (`private.ai_provider_calls`
 records every call's tokens and cost).
 
+## Testing philosophy
+
+Unit tests are kept to a minimum. Add one only for a high-impact invariant:
+data or money loss, correction idempotency, or a guard that once broke
+production. Don't add tests that pin copy, layout or colors, and delete ones
+that do when the design deliberately changes. UI is verified with a
+warnings-as-errors build plus simulator screenshots of the
+`-shudoPolishPreview` screens; run a single targeted UI test only when a
+gesture changed, not the whole suite.
+
 ## Release verification
 
 Run the complete gate from the repository root:
