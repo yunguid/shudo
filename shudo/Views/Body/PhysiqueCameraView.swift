@@ -59,7 +59,8 @@ struct PhysiqueCameraView: View {
         .onChange(of: voiceOn) { _, enabled in voice.isEnabled = enabled }
         .onChange(of: libraryItem) { _, item in importFromLibrary(item) }
         .onAppear { voice.isEnabled = voiceOn }
-        .sensoryFeedback(.impact(weight: .light), trigger: countdown) { _, new in new != nil }
+        // No countdown haptics: the phone is propped across the room, and
+        // the voice counts down.
     }
 
     // MARK: Chrome
@@ -108,7 +109,6 @@ struct PhysiqueCameraView: View {
         }
         .buttonStyle(.plain)
         .disabled(countdown != nil)
-        .sensoryFeedback(.selection, trigger: timerSeconds)
         .accessibilityLabel("Timer, \(timer.rawValue) seconds")
         .accessibilityHint("Changes the countdown")
     }
@@ -117,7 +117,7 @@ struct PhysiqueCameraView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(Design.Typeface.text(.body, weight: .semibold))
-                .foregroundStyle(active ? Design.Color.ember : Design.Color.textPrimary)
+                .foregroundStyle(active ? Design.Color.textPrimary : Design.Color.textTertiary)
                 .frame(width: 40, height: 40)
                 .chromeGlass(in: Circle(), tint: Design.Color.canvas.opacity(0.4), interactive: true)
         }
@@ -146,10 +146,10 @@ struct PhysiqueCameraView: View {
             if let countdown {
                 Text("\(countdown)")
                     .font(BodyType.fixed(120, weight: .light))
-                    .foregroundStyle(Design.Color.cream)
-                    .shadow(color: .black.opacity(0.5), radius: 12)
+                    .foregroundStyle(Design.Color.hinoki)
+                    .shadow(color: .black.opacity(0.45), radius: 16)
                     .contentTransition(.numericText(countsDown: true))
-                    .transition(.scale.combined(with: .opacity))
+                    .transition(.ink(reduceMotion: reduceMotion))
                     .accessibilityLabel("\(countdown) seconds")
             }
         }
@@ -157,7 +157,7 @@ struct PhysiqueCameraView: View {
         .clipShape(RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
-                .stroke(camera.poseHint == .aligned ? Design.Color.positive : Design.Color.hairline, lineWidth: camera.poseHint == .aligned ? 2 : 0.5)
+                .stroke(camera.poseHint == .aligned ? Design.Color.positive : Design.Color.hairline, lineWidth: camera.poseHint == .aligned ? 1.5 : 0.5)
         )
     }
 
@@ -246,7 +246,7 @@ struct PhysiqueCameraView: View {
                         .font(Design.Typeface.text(.title3, weight: .semibold))
                         .foregroundStyle(Design.Color.textPrimary)
                         .frame(width: 52, height: 52)
-                        .background(Design.Color.surface2, in: Circle())
+                        .chromeGlass(in: Circle(), tint: Design.Color.canvas.opacity(0.4), interactive: true)
                 }
                 .accessibilityLabel("Choose from library")
                 .disabled(countdown != nil || isCapturing)
@@ -265,11 +265,15 @@ struct PhysiqueCameraView: View {
             if countdown != nil { cancelCountdown() } else { startCountdown() }
         } label: {
             ZStack {
-                Circle().stroke(Design.Color.cream, lineWidth: 4).frame(width: 78, height: 78)
+                Circle().stroke(Design.Color.hinoki, lineWidth: 3).frame(width: 78, height: 78)
                 if countdown != nil {
-                    RoundedRectangle(cornerRadius: 6).fill(Design.Color.danger).frame(width: 28, height: 28)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Design.Color.hinoki)
+                        .frame(width: 26, height: 26)
+                        .transition(.opacity)
                 } else {
                     Circle().fill(Design.Color.emberFill).frame(width: 64, height: 64)
+                        .transition(.opacity)
                 }
             }
             .contentShape(Circle())

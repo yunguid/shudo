@@ -17,6 +17,8 @@ struct PhysiqueCompareView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var sideNamespace
     @State private var mode: Mode = .wipe
     @State private var beforeID: UUID?
     @State private var afterID: UUID?
@@ -44,28 +46,30 @@ struct PhysiqueCompareView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 14) {
-                Group {
+            VStack(spacing: Design.Space.xl) {
+                ZStack {
                     switch mode {
-                    case .wipe: wipeView
-                    case .sideBySide: sideBySide
+                    case .wipe: wipeView.transition(.ink(reduceMotion: reduceMotion))
+                    case .sideBySide: sideBySide.transition(.ink(reduceMotion: reduceMotion))
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Design.Space.l)
 
                 summary
                 picker
                 Spacer(minLength: 0)
             }
-            .padding(.top, 8)
-            .background(Design.Color.canvas.ignoresSafeArea())
+            .padding(.top, Design.Space.s)
+            .background(AppBackground())
             .blur(radius: scenePhase == .active ? 0 : 30)
             .navigationTitle("Compare")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        mode = mode == .wipe ? .sideBySide : .wipe
+                        withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                            mode = mode == .wipe ? .sideBySide : .wipe
+                        }
                     } label: {
                         Image(systemName: mode == .wipe ? "square.split.2x1" : "rectangle.split.2x1")
                             .contentTransition(.symbolEffect(.replace))
@@ -91,18 +95,18 @@ struct PhysiqueCompareView: View {
                     .mask(alignment: .leading) {
                         Rectangle().frame(width: width * wipe)
                     }
+                // The seam: a hinoki hairline and a small glass knob on it.
                 Rectangle()
-                    .fill(Design.Color.cream)
-                    .frame(width: 2)
-                    .shadow(color: .black.opacity(0.4), radius: 4)
-                    .offset(x: width * wipe - 1)
+                    .fill(Design.Color.hinoki.opacity(0.9))
+                    .frame(width: 1.5)
+                    .shadow(color: .black.opacity(0.35), radius: 3)
+                    .offset(x: width * wipe - 0.75)
                 Image(systemName: "arrow.left.and.right")
-                    .font(Design.Typeface.text(.footnote, weight: .bold))
-                    .foregroundStyle(Design.Color.onEmber)
-                    .frame(width: 36, height: 36)
-                    .background(Design.Color.emberFill, in: Circle())
-                    .shadow(color: .black.opacity(0.35), radius: 6)
-                    .offset(x: width * wipe - 18)
+                    .font(Design.Typeface.text(.caption, weight: .semibold))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .frame(width: 34, height: 34)
+                    .chromeGlass(in: Circle(), tint: Design.Color.canvas.opacity(0.35))
+                    .offset(x: width * wipe - 17)
             }
             .overlay(alignment: .topLeading) { cornerLabel(before).padding(10) }
             .overlay(alignment: .topTrailing) { cornerLabel(after).padding(10) }
@@ -146,7 +150,7 @@ struct PhysiqueCompareView: View {
     private func cornerLabel(_ checkIn: WeightCheckIn?) -> some View {
         if let checkIn {
             Text(BodyDayLabel.short(checkIn.localDay))
-                .font(Design.Typeface.numeral(.caption, weight: .bold))
+                .font(Design.Typeface.numeral(.caption, weight: .medium))
                 .foregroundStyle(Design.Color.textPrimary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -159,17 +163,20 @@ struct PhysiqueCompareView: View {
     /// "11 days · +1.2 lb": the gap, and the change when either the scale
     /// or the trend knows both ends.
     private var summary: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 16) {
+        HStack(alignment: .firstTextBaseline, spacing: Design.Space.xl) {
             if let before, let after {
                 let days = abs(LocalDayMath.days(from: before.localDay, to: after.localDay) ?? 0)
-                stat("\(days)", caption: days == 1 ? "day" : "days")
+                stat("\(days)", caption: days == 1 ? "day apart" : "days apart")
                 if let change = weightChange(before, after) {
                     stat(BodyUnits.signed(BodyUnits.display(change, units: units)), caption: BodyUnits.label(units))
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, Design.Space.gutter)
+        .contentTransition(.numericText())
+        .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: beforeID)
+        .animation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion), value: afterID)
     }
 
     private func weightChange(_ before: WeightCheckIn, _ after: WeightCheckIn) -> Double? {
@@ -190,71 +197,84 @@ struct PhysiqueCompareView: View {
     }
 
     private func stat(_ value: String, caption: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             Text(value)
-                .font(Design.Typeface.numeral(.title2, weight: .bold))
+                .font(Design.Typeface.figure(.title2))
                 .foregroundStyle(Design.Color.textPrimary)
-                .monospacedDigit()
-            Text(caption).font(Design.Typeface.meta).foregroundStyle(Design.Color.textTertiary)
+            Text(caption)
+                .font(Design.Typeface.text(.caption))
+                .foregroundStyle(Design.Color.textTertiary)
         }
     }
 
+    /// Which side you're choosing (two quiet words on a sliding walnut step),
+    /// then the log to choose from; the chosen photo wears a Pernambuco ring.
     private var picker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: Design.Space.m) {
+            HStack(spacing: Design.Space.xxs) {
                 sideChip("Before", side: .before)
                 sideChip("After", side: .after)
                 Spacer()
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, Design.Space.l)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 6) {
+                LazyHStack(spacing: Design.Space.s) {
                     ForEach(checkIns) { checkIn in
                         let selected = checkIn.id == (picking == .before ? beforeID : afterID)
                         Button {
-                            if picking == .before { beforeID = checkIn.id } else { afterID = checkIn.id }
+                            withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) {
+                                if picking == .before { beforeID = checkIn.id } else { afterID = checkIn.id }
+                            }
                         } label: {
-                            Color.clear
-                                .frame(width: 54, height: 72)
-                                .overlay { photo(checkIn, maxPixel: BodyPhotoSize.thumb) }
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .strokeBorder(selected ? Design.Color.ember : Design.Color.hairline, lineWidth: selected ? 2 : 0.5)
-                                }
-                                .overlay(alignment: .bottom) {
-                                    Text(BodyDayLabel.short(checkIn.localDay))
-                                        .font(BodyType.fixed(9, weight: .semibold))
-                                        .foregroundStyle(Design.Color.textPrimary)
-                                        .padding(.bottom, 3)
-                                        .shadow(color: .black.opacity(0.6), radius: 2)
-                                }
+                            VStack(spacing: Design.Space.xs) {
+                                Color.clear
+                                    .frame(width: 52, height: 69)
+                                    .overlay { photo(checkIn, maxPixel: BodyPhotoSize.thumb) }
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .padding(2.5)
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(selected ? Design.Color.pernambuco : .clear, lineWidth: 1.25)
+                                    }
+                                Text(BodyDayLabel.short(checkIn.localDay))
+                                    .font(BodyType.fixed(9.5))
+                                    .foregroundStyle(selected ? Design.Color.textSecondary : Design.Color.textTertiary)
+                            }
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(picking == .before ? "Before" : "After"): \(BodyDayLabel.short(checkIn.localDay))")
                         .accessibilityAddTraits(selected ? .isSelected : [])
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Design.Space.l - 2.5)
             }
-            .frame(height: 76)
+            .frame(height: 94)
         }
-        .sensoryFeedback(.selection, trigger: beforeID)
-        .sensoryFeedback(.selection, trigger: afterID)
     }
 
     private func sideChip(_ title: String, side: Side) -> some View {
-        Button {
-            picking = side
+        let selected = picking == side
+        return Button {
+            withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) {
+                picking = side
+            }
         } label: {
             Text(title)
-                .font(Design.Typeface.text(.footnote, weight: .semibold))
-                .foregroundStyle(picking == side ? Design.Color.onEmber : Design.Color.textPrimary)
-                .padding(.horizontal, 12)
+                .font(Design.Typeface.text(.footnote, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Design.Color.textPrimary : Design.Color.textTertiary)
+                .padding(.horizontal, Design.Space.m)
                 .frame(height: 30)
-                .background(picking == side ? AnyShapeStyle(Design.Color.ember) : AnyShapeStyle(Design.Color.surface3), in: Capsule())
+                .background {
+                    if selected {
+                        Capsule()
+                            .fill(Design.Color.surface3)
+                            .matchedGeometryEffect(id: "side", in: sideNamespace)
+                    }
+                }
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -286,7 +306,7 @@ struct PhysiquePhotoViewer: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .background(Design.Color.canvas.ignoresSafeArea())
+            .background(AppBackground())
             .blur(radius: scenePhase == .active ? 0 : 30)
             .navigationTitle(checkIns.first { $0.id == selection }.map { BodyDayLabel.short($0.localDay) } ?? "")
             .navigationBarTitleDisplayMode(.inline)
@@ -298,16 +318,16 @@ struct PhysiquePhotoViewer: View {
     }
 
     private func details(_ checkIn: WeightCheckIn) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.m) {
                 if let weight = checkIn.weightKG {
                     Text("\(BodyUnits.format(BodyUnits.display(weight, units: units))) \(BodyUnits.label(units))")
-                        .font(Design.Typeface.numeral(.title3, weight: .bold))
+                        .font(Design.Typeface.figure(.title2))
                         .foregroundStyle(Design.Color.textPrimary)
                 }
                 if let captured = checkIn.photoCapturedAt {
                     Text(BodyDayLabel.time(captured, timezone: timezone))
-                        .font(Design.Typeface.meta)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.textTertiary)
                 }
             }
