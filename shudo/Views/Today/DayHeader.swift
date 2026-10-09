@@ -71,11 +71,17 @@ struct DayHeader<Account: View, DayPicker: View>: View {
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(title)
-                            .font(Design.Typeface.display(.title2))
-                            .foregroundStyle(Design.Color.textPrimary)
-                            .lineLimit(1)
-                            .contentTransition(.opacity)
+                        // A new day's name settles in like ink; the old one
+                        // simply fades, overlapping rather than shoving.
+                        ZStack(alignment: .leading) {
+                            Text(title)
+                                .font(Design.Typeface.display(.title2))
+                                .foregroundStyle(Design.Color.textPrimary)
+                                .lineLimit(1)
+                                .id(title)
+                                .transition(.asymmetric(insertion: .ink(reduceMotion: reduceMotion), removal: .opacity))
+                        }
+                        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: title)
                         Image(systemName: "chevron.down")
                             .font(Design.Typeface.text(.caption2, weight: .semibold))
                             .foregroundStyle(Design.Color.textTertiary)
@@ -149,10 +155,10 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                         .font(Design.Typeface.numeral(.footnote))
                         .monospacedDigit()
                         .foregroundStyle(Design.Color.textTertiary)
-                        .transition(.opacity)
+                        .transition(.asymmetric(insertion: .ink(reduceMotion: reduceMotion), removal: .opacity))
                 } else {
                     macroSummary
-                        .transition(.opacity)
+                        .transition(.asymmetric(insertion: .ink(reduceMotion: reduceMotion), removal: .opacity))
                 }
             }
             .accessibilityHidden(true)
