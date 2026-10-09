@@ -106,11 +106,11 @@ struct CorrectionRetryBanner: View {
     private var failureText: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(EntryCorrectionPresentation.failureHeadline)
-                .font(.caption.weight(.semibold))
+                .font(Design.Typeface.text(.caption, weight: .semibold))
                 .foregroundStyle(Design.Color.danger)
                 .fixedSize(horizontal: false, vertical: true)
             Text(message)
-                .font(.caption2)
+                .font(Design.Typeface.text(.caption2))
                 .foregroundStyle(Design.Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -122,7 +122,7 @@ struct CorrectionRetryBanner: View {
     private var actions: some View {
         Button(action: onRetry) {
             Label("Retry", systemImage: "arrow.clockwise")
-                .font(.caption2.weight(.semibold))
+                .font(Design.Typeface.text(.caption2, weight: .semibold))
                 .foregroundStyle(Design.Color.honey)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 10)
@@ -135,7 +135,7 @@ struct CorrectionRetryBanner: View {
 
         Button(action: onDismiss) {
             Image(systemName: "xmark")
-                .font(.caption2.weight(.bold))
+                .font(Design.Typeface.text(.caption2, weight: .bold))
                 .foregroundStyle(Design.Color.textSecondary)
                 .frame(width: 30, height: 30)
                 .background(Design.Color.surface3, in: Circle())

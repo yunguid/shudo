@@ -440,7 +440,7 @@ struct TodayScreen: View {
             }
         case .systemEvent:
             Text(message.body)
-                .font(.caption)
+                .font(Design.Typeface.text(.caption))
                 .foregroundStyle(Design.Color.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
@@ -554,18 +554,18 @@ struct TodayScreen: View {
                 if case .failed(let message, let retryable) = pending.state {
                     HStack(spacing: 10) {
                         Text(message)
-                            .font(.caption2)
+                            .font(Design.Typeface.text(.caption2))
                             .foregroundStyle(Design.Color.danger)
                             .lineLimit(2)
                             .multilineTextAlignment(.trailing)
                         if retryable {
                             Button("Retry") { coach.retry(pending.clientRequestId) }
-                                .font(.caption.weight(.semibold))
+                                .font(Design.Typeface.text(.caption, weight: .semibold))
                                 .foregroundStyle(Design.Color.ember)
                                 .accessibilityLabel("Retry message")
                         }
                         Button("Delete") { coach.discardPending(pending.clientRequestId) }
-                            .font(.caption.weight(.semibold))
+                            .font(Design.Typeface.text(.caption, weight: .semibold))
                             .foregroundStyle(Design.Color.textSecondary)
                             .accessibilityLabel("Delete unsent message")
                     }
@@ -577,11 +577,11 @@ struct TodayScreen: View {
     private func interruptionLine(_ interruption: CoachTurnInterruption) -> some View {
         HStack(spacing: 8) {
             Text("Shudo got cut off")
-                .font(.caption2)
+                .font(Design.Typeface.text(.caption2))
                 .foregroundStyle(Design.Color.textTertiary)
             if interruption.retryable {
                 Button("Ask again") { coach.retry(interruption.clientRequestId) }
-                    .font(.caption.weight(.semibold))
+                    .font(Design.Typeface.text(.caption, weight: .semibold))
                     .foregroundStyle(Design.Color.ember)
             }
         }
@@ -725,7 +725,7 @@ struct TodayScreen: View {
         VStack(spacing: 8) {
             if let coachNotice {
                 Text(coachNotice)
-                    .font(.footnote.weight(.medium))
+                    .font(Design.Typeface.text(.footnote, weight: .medium))
                     .foregroundStyle(Design.Color.textPrimary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
@@ -735,11 +735,11 @@ struct TodayScreen: View {
             if let pendingDeletion {
                 HStack(spacing: 12) {
                     Text("Deleted “\(pendingDeletion.summary)”")
-                        .font(.footnote.weight(.medium))
+                        .font(Design.Typeface.text(.footnote, weight: .medium))
                         .foregroundStyle(Design.Color.textPrimary)
                         .lineLimit(1)
                     Button("Undo") { undoDeletion() }
-                        .font(.footnote.weight(.bold))
+                        .font(Design.Typeface.text(.footnote, weight: .bold))
                         .foregroundStyle(Design.Color.ember)
                         .accessibilityIdentifier("today.undoDelete")
                 }
@@ -752,7 +752,7 @@ struct TodayScreen: View {
                     select(day: todayDay)
                 } label: {
                     Label("Back to today", systemImage: "arrow.down.to.line")
-                        .font(.footnote.weight(.semibold))
+                        .font(Design.Typeface.text(.footnote, weight: .semibold))
                         .foregroundStyle(Design.Color.textPrimary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)

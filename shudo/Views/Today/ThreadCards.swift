@@ -85,7 +85,7 @@ struct CardButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.semibold))
+            .font(Design.Typeface.text(.subheadline, weight: .semibold))
             .foregroundStyle(prominent ? Design.Color.onEmber : Design.Color.textPrimary)
             .multilineTextAlignment(.center)
             .padding(.vertical, 8)
@@ -117,7 +117,7 @@ private struct DoneLabel: View {
 
     var body: some View {
         Label(text, systemImage: "checkmark.circle.fill")
-            .font(.footnote.weight(.semibold))
+            .font(Design.Typeface.text(.footnote, weight: .semibold))
             .foregroundStyle(Design.Color.positive)
     }
 }
@@ -130,7 +130,7 @@ private struct CardLink: View {
 
     var body: some View {
         Button(title, action: action)
-            .font(.footnote.weight(.semibold))
+            .font(Design.Typeface.text(.footnote, weight: .semibold))
             .foregroundStyle(color)
             .buttonStyle(.plain)
             .contentShape(Rectangle().inset(by: -10))
@@ -152,12 +152,12 @@ struct GamePlanCardView: View {
                     ForEach(Array(card.actions.enumerated()), id: \.offset) { _, action in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Image(systemName: ThreadCardCopy.planSymbol(for: action))
-                                .font(.caption)
+                                .font(Design.Typeface.text(.caption))
                                 .foregroundStyle(Design.Color.honey.opacity(0.8))
                                 .frame(width: 16)
                                 .accessibilityHidden(true)
                             Text(action)
-                                .font(.subheadline)
+                                .font(Design.Typeface.text(.subheadline))
                                 .foregroundStyle(Design.Color.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -241,7 +241,7 @@ struct RecapCardView: View {
                 .monospacedDigit()
                 .foregroundStyle(Design.Color.textPrimary)
             Text(label)
-                .font(.caption)
+                .font(Design.Typeface.text(.caption))
                 .foregroundStyle(Design.Color.textTertiary)
         }
         .accessibilityElement(children: .combine)
@@ -271,12 +271,12 @@ struct SnackRecCardView: View {
         ThreadCard(eyebrow: ThreadCardCopy.snackEyebrow(option)) {
             if card.verdict == .noSnackNeeded || option == nil {
                 Text(card.headline.isEmpty ? "You're covered. No snack needed." : card.headline)
-                    .font(.headline)
+                    .font(Design.Typeface.text(.headline))
                     .foregroundStyle(Design.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let option {
                 Text(ThreadCardCopy.snackTitle(option))
-                    .font(.headline)
+                    .font(Design.Typeface.text(.headline))
                     .foregroundStyle(Design.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
@@ -289,7 +289,7 @@ struct SnackRecCardView: View {
                 )
                 if !isLogged {
                     Text(ThreadCardCopy.snackPayoff(remainingAfter: option.remainingAfter, beforeLift: liftLater))
-                        .font(.footnote.weight(.medium))
+                        .font(Design.Typeface.text(.footnote, weight: .medium))
                         .foregroundStyle(Design.Color.honey)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -377,11 +377,11 @@ struct TrainingPlanCardView: View {
                     ForEach(Array(card.sessions.prefix(5).enumerated()), id: \.element.id) { _, session in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(session.name)
-                                .font(.subheadline.weight(.semibold))
+                                .font(Design.Typeface.text(.subheadline, weight: .semibold))
                                 .foregroundStyle(Design.Color.textPrimary)
                             Spacer(minLength: 6)
                             Text(session.topExercises.prefix(2).joined(separator: ", "))
-                                .font(.caption)
+                                .font(Design.Typeface.text(.caption))
                                 .foregroundStyle(Design.Color.textTertiary)
                                 .lineLimit(1)
                         }
@@ -416,7 +416,7 @@ struct TrainingPlanCardView: View {
                 }
             case .superseded, .rejected:
                 Text(card.status == .rejected ? "Passed on this one" : "Replaced by a newer plan")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
@@ -447,12 +447,12 @@ struct GoalChangeCardView: View {
             }
             if let date = card.projectedGoalDate ?? card.after.goalDate {
                 Text("On pace for \(prettyDate(date))")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textSecondary)
             }
             ForEach(card.warnings, id: \.self) { warning in
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.honey)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -491,7 +491,7 @@ struct GoalChangeCardView: View {
                 }
             case .undone, .discarded, .rejected:
                 Text("Kept your current targets")
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
@@ -503,14 +503,14 @@ struct GoalChangeCardView: View {
         if let after, before.map({ Int($0.rounded()) != Int(after.rounded()) }) ?? true {
             HStack(alignment: .firstTextBaseline) {
                 Text(label)
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textSecondary)
                 Spacer()
                 if let before {
                     Text(Int(before.rounded()).formatted())
                         .foregroundStyle(Design.Color.textTertiary)
                     Image(systemName: "arrow.right")
-                        .font(.caption2.weight(.bold))
+                        .font(Design.Typeface.text(.caption2, weight: .bold))
                         .foregroundStyle(Design.Color.textTertiary)
                         .accessibilityLabel("to")
                 }
@@ -527,20 +527,20 @@ struct GoalChangeCardView: View {
     private func textRow(_ label: String, _ before: String?, _ after: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.subheadline)
+                .font(Design.Typeface.text(.subheadline))
                 .foregroundStyle(Design.Color.textSecondary)
             Spacer()
             if let before {
                 Text(before)
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textTertiary)
                 Image(systemName: "arrow.right")
-                    .font(.caption2.weight(.bold))
+                    .font(Design.Typeface.text(.caption2, weight: .bold))
                     .foregroundStyle(Design.Color.textTertiary)
                     .accessibilityLabel("to")
             }
             Text(after)
-                .font(.subheadline.weight(.semibold))
+                .font(Design.Typeface.text(.subheadline, weight: .semibold))
                 .foregroundStyle(Design.Color.textPrimary)
         }
         .padding(.vertical, 5)
@@ -577,12 +577,12 @@ struct ProfileUpdateCardView: View {
                 ForEach(card.changes) { change in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Image(systemName: symbol(change.op))
-                            .font(.caption.weight(.bold))
+                            .font(Design.Typeface.text(.caption, weight: .bold))
                             .foregroundStyle(Design.Color.honey)
                             .frame(width: 14)
                             .accessibilityHidden(true)
                         Text(change.summary)
-                            .font(.subheadline)
+                            .font(Design.Typeface.text(.subheadline))
                             .foregroundStyle(card.isUndone ? Design.Color.textTertiary : Design.Color.textPrimary)
                             .strikethrough(card.isUndone, color: Design.Color.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -592,7 +592,7 @@ struct ProfileUpdateCardView: View {
             HStack {
                 if card.isUndone {
                     Text("Undone")
-                        .font(.footnote)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.textTertiary)
                 } else if card.undoVersion != nil {
                     CardLink(title: "Undo") {
@@ -606,10 +606,10 @@ struct ProfileUpdateCardView: View {
                 } label: {
                     HStack(spacing: 3) {
                         Text("Your bio")
-                        Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                        Image(systemName: "chevron.right").font(Design.Typeface.text(.caption2, weight: .bold))
                     }
                 }
-                .font(.footnote.weight(.semibold))
+                .font(Design.Typeface.text(.footnote, weight: .semibold))
                 .foregroundStyle(Design.Color.textSecondary)
                 .buttonStyle(.plain)
             }
@@ -643,7 +643,7 @@ struct WorkoutAckCardView: View {
                     ForEach(card.prs) { record in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(record.exercise)
-                                .font(.subheadline)
+                                .font(Design.Typeface.text(.subheadline))
                                 .foregroundStyle(Design.Color.textPrimary)
                                 .lineLimit(1)
                             Spacer(minLength: 6)
@@ -684,7 +684,7 @@ struct PhysiqueReviewCardView: View {
                     Circle().fill(Design.Color.honey).frame(width: 4, height: 4)
                         .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 4 }
                     Text(observation)
-                        .font(.subheadline)
+                        .font(Design.Typeface.text(.subheadline))
                         .foregroundStyle(Design.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

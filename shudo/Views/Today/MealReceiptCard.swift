@@ -30,7 +30,7 @@ struct MealReceiptCard: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(entry.summary)
-                    .font(.subheadline.weight(.medium))
+                    .font(Design.Typeface.text(.subheadline, weight: .medium))
                     .foregroundStyle(isSettled ? Design.Color.textPrimary : Design.Color.textSecondary)
                     .lineLimit(stacked ? 4 : 2)
                     .multilineTextAlignment(.leading)
@@ -73,13 +73,13 @@ struct MealReceiptCard: View {
         } else if entry.status == .failed {
             HStack(spacing: 10) {
                 Text(entry.displayStatusMessage)
-                    .font(.caption)
+                    .font(Design.Typeface.text(.caption))
                     .foregroundStyle(Design.Color.danger)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 if entry.canRetry, let onRetry {
                     Button("Retry", action: onRetry)
-                        .font(.caption.weight(.semibold))
+                        .font(Design.Typeface.text(.caption, weight: .semibold))
                         .foregroundStyle(Design.Color.ember)
                         .buttonStyle(.plain)
                         .contentShape(Rectangle().inset(by: -10))
@@ -88,7 +88,7 @@ struct MealReceiptCard: View {
             }
         } else {
             Text(entry.displayStatusMessage)
-                .font(.caption)
+                .font(Design.Typeface.text(.caption))
                 .foregroundStyle(Design.Color.textTertiary)
                 .lineLimit(1)
         }
@@ -204,12 +204,12 @@ struct WorkoutReceiptCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label {
                     Text(activity.title)
-                        .font(.subheadline.weight(.medium))
+                        .font(Design.Typeface.text(.subheadline, weight: .medium))
                         .foregroundStyle(Design.Color.textPrimary)
                         .lineLimit(1)
                 } icon: {
                     Image(systemName: activity.kind.symbolName)
-                        .font(.caption.weight(.bold))
+                        .font(Design.Typeface.text(.caption, weight: .bold))
                         .foregroundStyle(ActivityKindTile.tint(for: activity.kind))
                 }
                 .labelStyle(TightLabelStyle())
@@ -262,7 +262,7 @@ struct CheckInThreadCard: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Check-in")
-                    .font(.subheadline.weight(.medium))
+                    .font(Design.Typeface.text(.subheadline, weight: .medium))
                     .foregroundStyle(Design.Color.textPrimary)
                 if let detail {
                     Text(detail)
@@ -310,7 +310,7 @@ struct CheckInThreadCard: View {
             }
             if !revealed {
                 Image(systemName: "eye.slash.fill")
-                    .font(.caption2.weight(.semibold))
+                    .font(Design.Typeface.text(.caption2, weight: .semibold))
                     .foregroundStyle(Design.Color.textPrimary.opacity(0.7))
             }
         }

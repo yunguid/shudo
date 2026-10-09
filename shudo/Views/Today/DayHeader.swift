@@ -78,13 +78,13 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                             .lineLimit(1)
                             .contentTransition(.opacity)
                         Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.semibold))
+                            .font(Design.Typeface.text(.caption2, weight: .semibold))
                             .foregroundStyle(Design.Color.textTertiary)
                             .accessibilityHidden(true)
                     }
                     if let subtitle {
                         Text(subtitle)
-                            .font(.caption)
+                            .font(Design.Typeface.text(.caption))
                             .foregroundStyle(subtitleIsLive ? Design.Color.ember : Design.Color.textTertiary)
                             .lineLimit(1)
                             .contentTransition(.opacity)
@@ -163,7 +163,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                 .lineLimit(1)
                 .fixedSize()
             Text(DayHeaderMath.remainingLabel(numbers, isPast: isPast))
-                .font(.subheadline)
+                .font(Design.Typeface.text(.subheadline))
                 .foregroundStyle(numbers.isOver ? Design.Color.honey : Design.Color.textSecondary)
                 .lineLimit(1)
                 .fixedSize()
@@ -184,7 +184,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                     .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
                     .foregroundStyle(Design.Color.macroProtein)
                 Text("g protein")
-                    .font(.caption)
+                    .font(Design.Typeface.text(.caption))
                     .foregroundStyle(Design.Color.textTertiary)
             }
             Text("\(Int(totals.carbsG.rounded())) C  ·  \(Int(totals.fatG.rounded())) F")
@@ -327,7 +327,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                     .fixedSize()
                     .frame(minWidth: 34, alignment: .leading)
                 Text(meal.summary)
-                    .font(.subheadline)
+                    .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(meal.status == .complete ? Design.Color.textPrimary : Design.Color.textSecondary)
                     .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 Spacer(minLength: Design.Space.s)
@@ -360,7 +360,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
             .fixedSize()
         case .failed:
             Text("Not logged")
-                .font(.caption)
+                .font(Design.Typeface.text(.caption))
                 .foregroundStyle(Design.Color.danger)
                 .fixedSize()
         default:
@@ -372,11 +372,11 @@ struct DayHeader<Account: View, DayPicker: View>: View {
         Button(action: onOpenInsights) {
             HStack(spacing: 6) {
                 Text("This week")
-                    .font(.footnote.weight(.medium))
+                    .font(Design.Typeface.text(.footnote, weight: .medium))
                     .foregroundStyle(Design.Color.textSecondary)
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
+                    .font(Design.Typeface.text(.caption2, weight: .semibold))
                     .foregroundStyle(Design.Color.textTertiary)
             }
             .padding(.vertical, 12)
@@ -430,7 +430,7 @@ struct LedgerSwipeRow<Content: View>: View {
                     onDelete()
                 } label: {
                     Image(systemName: "trash.fill")
-                        .font(.body.weight(.semibold))
+                        .font(Design.Typeface.text(.body, weight: .semibold))
                         .foregroundStyle(Design.Color.textPrimary)
                         .frame(width: max(revealWidth, -offset))
                         .frame(maxHeight: .infinity)
@@ -491,7 +491,7 @@ struct WeekStrip: View {
                 } label: {
                     VStack(spacing: 7) {
                         Text(day.letter)
-                            .font(.caption2.weight(day.isSelected ? .semibold : .medium))
+                            .font(Design.Typeface.text(.caption2, weight: day.isSelected ? .semibold : .medium))
                             .foregroundStyle(letterColor(day))
                         MacroRings(kcal: day.kcalProgress, protein: day.proteinProgress, size: 24, lineWidth: 2.5)
                             .opacity(day.isFuture ? 0.25 : (day.hasLog || day.isSelected ? 1 : 0.5))

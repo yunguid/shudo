@@ -221,7 +221,7 @@ struct ThreadTimestamp: View {
                 Text(time)
             }
         }
-        .font(.caption2)
+        .font(Design.Typeface.text(.caption2))
         .monospacedDigit()
         .foregroundStyle(Design.Color.textTertiary)
         .frame(maxWidth: .infinity)
@@ -292,7 +292,7 @@ struct MacroBar: View {
     var body: some View {
         HStack(spacing: Design.Space.m) {
             Text(label)
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textSecondary)
                 .lineLimit(1)
                 .fixedSize()
