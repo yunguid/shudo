@@ -99,7 +99,7 @@ struct BodyScreen: View {
                         }
                     }
                     .padding(.horizontal, Design.Space.gutter)
-                    .padding(.top, Design.Space.s)
+                    .padding(.top, Self.heroTopGap)
                     .padding(.bottom, Design.Space.xxxl)
                     // Loads, saves and deletes settle into place (the figure
                     // rolls, sections ink in) instead of popping.
@@ -113,22 +113,11 @@ struct BodyScreen: View {
                 }
             }
             .background(AppBackground())
-            .navigationTitle("Body")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
-                            revealed.toggle()
-                        }
-                    } label: {
-                        Image(systemName: revealed ? "eye" : "eye.slash")
-                            .foregroundStyle(revealed ? Design.Color.pernambuco : Design.Color.textSecondary)
-                            .contentTransition(.symbolEffect(.replace))
-                    }
-                    .accessibilityLabel(revealed ? "Hide physique photos" : "Show physique photos")
-                }
-            }
+            // The tab's own top, the same as Today's and Train's: the title
+            // set left, the bulk under it, the privacy seal at the corner.
+            // Pinned, so the seal stays in reach over the physique log.
+            .safeAreaBar(edge: .top, spacing: 0) { header }
+            .toolbar(.hidden, for: .navigationBar)
             .refreshable { await model.load() }
         }
         // App-switcher snapshot + glances: nothing physique-shaped leaves the
@@ -203,18 +192,67 @@ struct BodyScreen: View {
         #endif
     }
 
+    // MARK: Header
+
+    /// Space between the header and the figure's frame: Today puts its figure
+    /// 16 pt under the title row (8 of it the header's own bottom padding);
+    /// this figure is set larger, so its frame starts higher to land its
+    /// numerals at the same distance under the subtitle.
+    private static let heroTopGap: CGFloat = 2
+
+    private var header: some View {
+        TabPageHeader(title: "Body", subtitle: headerSubtitle) {
+            HeaderSealButton(
+                systemImage: revealed ? "eye" : "eye.slash",
+                accessibilityLabel: revealed ? "Hide physique photos" : "Show physique photos",
+                isOn: revealed
+            ) {
+                withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                    revealed.toggle()
+                }
+            }
+        }
+        .background(alignment: .top) { headerBackdrop }
+    }
+
+    /// Like Today's header: the lamplit canvas behind the title, dissolving
+    /// into the page over a short fade so content scrolls away under it.
+    private var headerBackdrop: some View {
+        AppBackground()
+            .mask {
+                VStack(spacing: 0) {
+                    Color.black
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 26)
+                }
+                .ignoresSafeArea(edges: .top)
+            }
+            .padding(.bottom, -26)
+            .allowsHitTesting(false)
+    }
+
+    /// "Lean bulk · Day 35": where the goal is, said once, under the title.
+    private var headerSubtitle: String? {
+        let phase: String? = switch snapshot.goal?.phase {
+        case .bulk?: "Lean bulk"
+        case .cut?: "Cut"
+        default: nil
+        }
+        guard let phase else { return nil }
+        guard let day = snapshot.dayNumber else { return phase }
+        return "\(phase) · Day \(day)"
+    }
+
     // MARK: Hero — where the bulk is
 
     /// The trend weight as the screen's one figure, how fast it's moving,
     /// how much of the bulk is loaded on the bar, and the line underneath.
-    /// Nothing is said twice.
+    /// Nothing is said twice (the phase and day live in the header).
     @ViewBuilder
     private var hero: some View {
         if let currentKG = snapshot.meterCurrentKG ?? snapshot.trajectory.currentKG {
             VStack(alignment: .leading, spacing: 0) {
-                Text(heroEyebrow).eyebrowStyle()
                 heroFigure(currentKG)
-                    .padding(.top, Design.Space.xs)
                 paceLine
                 if let meter = meter(currentKG) {
                     VStack(spacing: Design.Space.s) {
@@ -238,16 +276,6 @@ struct BodyScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private var heroEyebrow: String {
-        let phase = switch snapshot.goal?.phase {
-        case .bulk?: "Lean bulk"
-        case .cut?: "Cut"
-        default: "Weight"
-        }
-        guard let day = snapshot.dayNumber, snapshot.goal?.phase != .maintain else { return phase }
-        return "\(phase) · Day \(day)"
     }
 
     private func heroFigure(_ kilograms: Double) -> some View {

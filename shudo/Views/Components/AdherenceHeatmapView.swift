@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// "Fuel": twelve weeks of daily adherence as a weekday-aligned calendar
-/// grid of small pads in the wood ramp (bare walnut → heartwood →
-/// Pernambuco → oak), drawn straight on the page with no card: columns are real
+/// grid of small pads in one deepening wood (bare walnut → heartwood →
+/// Pernambuco), drawn straight on the page with no card: columns are real
 /// weeks, rows are weekdays, with month and weekday anchors so any pad can be
 /// traced to an actual day. Five discrete levels (nothing logged + four
 /// adherence buckets), and tapping a day shows its logged numbers against
@@ -26,7 +26,6 @@ struct AdherenceHeatmapView: View {
     private static let weekdayGutterWidth: CGFloat = 12
     /// How much of its cell a pad fills.
     private static let padScale: CGFloat = 0.66
-    private static let litOpacity: Double = 0.82
 
     var body: some View {
         // One cells pass and one DateFormatter per render.
@@ -237,9 +236,6 @@ struct AdherenceHeatmapView: View {
         return ZStack {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(Self.fillColor(level: level))
-                // Lit pads sit a step back into the walnut so twelve weeks of
-                // good days read as a texture, not a light board.
-                .opacity(level >= 3 ? Self.litOpacity : 1)
                 .frame(width: pad, height: pad)
             if isSelected {
                 RoundedRectangle(cornerRadius: ringRadius, style: .continuous)
