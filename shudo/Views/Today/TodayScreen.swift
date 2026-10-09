@@ -976,6 +976,25 @@ struct TodayScreen: View {
                 isShowingDatePicker = true
             }
         }
+        // `-shudoTodayMotion header|day`: play the unfold or a day switch
+        // (and back) on a timer, for frame-by-frame motion review.
+        if let flag = arguments.firstIndex(of: "-shudoTodayMotion"), arguments.indices.contains(flag + 1) {
+            let kind = arguments[flag + 1]
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2.5))
+                if kind == "header" {
+                    withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) { headerExpanded = true }
+                } else {
+                    shift(by: -1)
+                }
+                try? await Task.sleep(for: .seconds(2.5))
+                if kind == "header" {
+                    withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) { headerExpanded = false }
+                } else {
+                    select(day: todayDay)
+                }
+            }
+        }
         guard let flag = arguments.firstIndex(of: "-shudoTodayScrollRow"),
               arguments.indices.contains(flag + 1),
               let index = Int(arguments[flag + 1]) else { return }

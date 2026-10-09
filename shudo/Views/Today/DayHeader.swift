@@ -58,7 +58,6 @@ struct DayHeader<Account: View, DayPicker: View>: View {
         .padding(.top, Design.Space.xs)
         .padding(.bottom, Design.Space.s)
         .background(alignment: .top) { backdrop }
-        .simultaneousGesture(pull)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today.header")
     }
@@ -110,19 +109,29 @@ struct DayHeader<Account: View, DayPicker: View>: View {
 
     private var day: some View {
         VStack(alignment: .leading, spacing: 0) {
-            figureRow
-                .padding(.top, Design.Space.l)
-            meter
-                .padding(.top, Design.Space.m)
-            if expanded {
-                unfolded
-                    .transition(unfold)
+            VStack(alignment: .leading, spacing: 0) {
+                figureRow
+                    .padding(.top, Design.Space.l)
+                meter
+                    .padding(.top, Design.Space.m)
             }
+            .contentShape(Rectangle())
+            // Pull on the figure, not the ledger, so scrolling a long day
+            // never folds the panel; large text scrolls instead.
+            .simultaneousGesture(pull, including: typeSize.isAccessibilitySize ? .subviews : .all)
+            // The panel has its own clipped well, so it slides out from
+            // under the strokes and never passes over the figure.
+            VStack(spacing: 0) {
+                if expanded {
+                    unfolded
+                        .transition(unfold)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+            .clipped()
         }
         .contentShape(Rectangle())
         .onTapGesture { toggle() }
-        // The panel slides out from under the strokes, never over them.
-        .clipped()
     }
 
     /// "855 kcal left" with the macros at the trailing edge; open, the

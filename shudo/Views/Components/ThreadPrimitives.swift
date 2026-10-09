@@ -288,28 +288,53 @@ struct MacroBar: View {
 
     @ScaledMetric(relativeTo: .footnote) private var labelWidth: CGFloat = 56
     @ScaledMetric(relativeTo: .caption) private var valueWidth: CGFloat = 76
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        HStack(spacing: Design.Space.m) {
-            Text(label)
-                .font(Design.Typeface.text(.footnote))
-                .foregroundStyle(Design.Color.textSecondary)
-                .lineLimit(1)
-                .fixedSize()
-                .frame(minWidth: labelWidth, alignment: .leading)
-            DayStroke(progress: min(value / target, 1), color: color)
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text("\(Int(value.rounded()))").foregroundStyle(Design.Color.textPrimary)
-                Text(" / \(Int(target.rounded())) g").foregroundStyle(Design.Color.textTertiary)
+        Group {
+            if typeSize.isAccessibilitySize {
+                // Large text: words and numbers on one line, the stroke
+                // full width beneath, so the bar never shrinks to a dash.
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        name
+                        Spacer(minLength: Design.Space.s)
+                        amount
+                    }
+                    stroke
+                }
+            } else {
+                HStack(spacing: Design.Space.m) {
+                    name.frame(minWidth: labelWidth, alignment: .leading)
+                    stroke
+                    amount.frame(minWidth: valueWidth, alignment: .trailing)
+                }
             }
-            .font(Design.Typeface.numeral(.caption))
-            .monospacedDigit()
-            .lineLimit(1)
-            .fixedSize()
-            .frame(minWidth: valueWidth, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label), \(Int(value.rounded())) of \(Int(target.rounded())) grams")
+    }
+
+    private var name: some View {
+        Text(label)
+            .font(Design.Typeface.text(.footnote))
+            .foregroundStyle(Design.Color.textSecondary)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    private var stroke: some View {
+        DayStroke(progress: min(value / target, 1), color: color)
+    }
+
+    private var amount: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            Text("\(Int(value.rounded()))").foregroundStyle(Design.Color.textPrimary)
+            Text(" / \(Int(target.rounded())) g").foregroundStyle(Design.Color.textTertiary)
+        }
+        .font(Design.Typeface.numeral(.caption))
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 
