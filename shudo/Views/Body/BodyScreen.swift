@@ -14,6 +14,9 @@ struct BodyScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let heroSize: CGFloat = 60
+    /// The weight-only sheet grows with Dynamic Type so Save never covers
+    /// the caption at large sizes.
+    @ScaledMetric(relativeTo: .body) private var weightSheetHeight: CGFloat = 272
     @Namespace private var zoom
     @State private var revealed: Bool
     @State private var showsCamera = false
@@ -152,7 +155,7 @@ struct BodyScreen: View {
         }
         .sheet(isPresented: $showsWeightEntry) {
             checkInFlow(start: .weight)
-                .presentationDetents([.height(272)])
+                .presentationDetents([.height(weightSheetHeight)])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(Design.Radius.sheet)
                 .presentationBackground(Design.Color.surface1)
