@@ -74,6 +74,7 @@ struct BodyScreen: View {
                         checkInLine.id(BodySection.hero)
                         if !snapshot.photoCheckIns.isEmpty {
                             physiqueStrip.id(BodySection.log)
+                                .transition(.ink(reduceMotion: reduceMotion))
                         }
                         AdherenceHeatmapView(
                             totals: model.nutrition.totals,
@@ -97,7 +98,9 @@ struct BodyScreen: View {
                     .padding(.horizontal, Design.Space.gutter)
                     .padding(.top, Design.Space.s)
                     .padding(.bottom, Design.Space.xxxl)
-                    .animation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion), value: snapshot.todayCheckIn)
+                    // Loads, saves and deletes settle into place (the figure
+                    // rolls, sections ink in) instead of popping.
+                    .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: snapshot)
                 }
                 .task {
                     guard let section = scrollTarget else { return }
