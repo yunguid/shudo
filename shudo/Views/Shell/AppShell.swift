@@ -46,6 +46,8 @@ struct AppShell: View {
     /// band aside while they're up.
     @State private var bandSuppressions = 0
     @State private var isKeyboardUp = false
+    /// The tab fading in after a tap on the tab bar.
+    @State private var fadingTab: AppTab?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -76,6 +78,9 @@ struct AppShell: View {
 
     private var chrome: some View {
         ZStack(alignment: .bottom) {
+            // The room behind the tabs: a tab hand-off passes through walnut,
+            // never black.
+            Design.Color.canvas.ignoresSafeArea()
             tabs
             // The command band replaces the system tab bar and its
             // accessory: the well owns the bottom-left corner, the tabs sit
@@ -100,13 +105,14 @@ struct AppShell: View {
     private var tabs: some View {
         TabView(selection: $tab) {
             Tab("Today", systemImage: "bubble.left.and.text.bubble.right.fill", value: AppTab.today) {
-                banded(todayScreen)
+                banded(todayScreen, tab: .today)
             }
 
             Tab("Body", systemImage: "figure.arms.open", value: AppTab.body) {
                 banded(
                     dependencies.makeBodyScreen(currentProfile) { saved in checkInSaved(saved) }
-                        .id(bodyRefreshToken)
+                        .id(bodyRefreshToken),
+                    tab: .body
                 )
             }
 
@@ -119,7 +125,8 @@ struct AppShell: View {
                             // One mic: "Log session" records in the bottom-left well.
                             onLogByVoice: { CaptureController.shared.startRecording(context: .train) }
                         )
-                    }
+                    },
+                    tab: .train
                 )
             }
         }
@@ -182,8 +189,9 @@ extension AppShell {
     /// safe area ends above it.
     private var bandInset: CGFloat { bandHidden ? 0 : bandMetrics.safeAreaInset }
 
-    private func banded(_ content: some View) -> some View {
+    private func banded(_ content: some View, tab: AppTab) -> some View {
         content
+            .opacity(fadingTab == tab ? 0 : 1)
             .toolbarVisibility(.hidden, for: .tabBar)
             // SwiftUI safe-area modifiers stop at the tab's UIKit
             // navigation stacks; the tab controller's own inset reaches
@@ -204,7 +212,7 @@ extension AppShell {
                 context: capture.context,
                 actions: captureActions,
                 fan: fanHolder.value,
-                tab: $tab,
+                tab: Binding(get: { tab }, set: { switchTab(to: $0) }),
                 todayBadge: tab == .today ? 0 : coach.unreadCount,
                 metrics: bandMetrics
             )
@@ -212,6 +220,29 @@ extension AppShell {
             .ignoresSafeArea(.container, edges: .bottom)
             .ignoresSafeArea(.keyboard)
             .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// A tap on the tab bar (or a card that opens a tab) is a hand-off,
+    /// never a blend. UIKit's own tab crossfade (both screens at half
+    /// opacity) is suppressed for the swap, so the outgoing tab is simply
+    /// gone; the incoming one fades up from the canvas over ~0.18 s, no
+    /// movement. Reduce Motion: an instant swap. Jumps that happen while a
+    /// sheet is closing (a send, a logged meal) set `tab` directly, so the
+    /// sheet's own dismissal animation is never switched off.
+    private func switchTab(to new: AppTab) {
+        guard new != tab else { return }
+        var quiet = Transaction()
+        quiet.disablesAnimations = true
+        UIView.setAnimationsEnabled(false)
+        withTransaction(quiet) {
+            fadingTab = reduceMotion ? nil : new
+            tab = new
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            UIView.setAnimationsEnabled(true)
+            guard !reduceMotion else { return }
+            withAnimation(.easeOut(duration: 0.18)) { fadingTab = nil }
         }
     }
 
@@ -245,7 +276,7 @@ extension AppShell {
             actions: TodayScreenActions(
                 openSettings: { sheet = .account(scrollToCoach: false) },
                 openBio: { sheet = .bio },
-                switchTab: { tab = $0 },
+                switchTab: { switchTab(to: $0) },
                 sendToCoach: { sendToCoach($0, mode: .typed, engine: nil) },
                 refreshProfile: refreshProfile
             ),
@@ -441,6 +472,7 @@ extension AppShell {
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Done") { self.sheet = nil }
+                            .tint(Design.Color.textPrimary)
                     }
                 }
             }
@@ -535,6 +567,18 @@ extension AppShell {
     private func launch() {
         guard !didLaunch else { return }
         didLaunch = true
+        #if DEBUG
+        // `-shudoPreviewTabSwitch body|train|today`: tap that tab after 2 s
+        // (frame review of the tab hand-off).
+        let arguments = ProcessInfo.processInfo.arguments
+        if let flag = arguments.firstIndex(of: "-shudoPreviewTabSwitch"), arguments.indices.contains(flag + 1),
+           let target = AppTab(rawValue: arguments[flag + 1]) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                switchTab(to: target)
+            }
+        }
+        #endif
         mealTracker = MealCompletionTracker()
         _ = mealTracker.observe(today.entries)
         logging.onActivityAccepted = { _ in dependencies.recordEvent(.activityLogged) }

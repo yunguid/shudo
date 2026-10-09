@@ -9,6 +9,9 @@ struct ShellTabBar: View {
     var todayBadge: Int = 0
 
     @Namespace private var lens
+    /// Where the lens rests; follows `tab` on its own spring, since the
+    /// shell switches tabs in a transaction with animations off.
+    @State private var lensTab: AppTab?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private struct Item {
@@ -30,6 +33,11 @@ struct ShellTabBar: View {
             }
         }
         .padding(4)
+        // The lens slides to the chosen tab; the screens hand off in the shell.
+        .onAppear { lensTab = tab }
+        .onChange(of: tab) { _, new in
+            withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) { lensTab = new }
+        }
         .frame(height: CommandBandMetrics.barHeight)
         // A flat walnut track: the well's rim is the band's one metal edge.
         .background(Design.Color.surface1, in: Capsule())
@@ -41,12 +49,12 @@ struct ShellTabBar: View {
     }
 
     private func button(_ item: Item) -> some View {
-        let selected = tab == item.tab
+        let selected = (lensTab ?? tab) == item.tab
         return Button {
             guard tab != item.tab else { return }
-            withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
-                tab = item.tab
-            }
+            // The lens moves with the finger; the screens hand off in the shell.
+            withAnimation(Design.Motion.calm(Design.Motion.snap, reduceMotion: reduceMotion)) { lensTab = item.tab }
+            tab = item.tab
         } label: {
             VStack(spacing: 3) {
                 Image(systemName: item.symbol)

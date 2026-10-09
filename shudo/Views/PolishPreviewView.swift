@@ -175,7 +175,7 @@ struct PolishPreviewView: View {
                     onTalkToUpdate: {}
                 )
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { Button("Done") {} }
+                    ToolbarItem(placement: .topBarTrailing) { Button("Done") {}.tint(Design.Color.textPrimary) }
                 }
             }
         case .insights:

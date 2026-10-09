@@ -506,7 +506,9 @@ struct CaptureComposer: View {
             TextField(
                 "",
                 text: $draft.text,
-                prompt: Text(placeholder).foregroundStyle(Design.Color.textTertiary),
+                prompt: Text(placeholder)
+                    .font(Design.Typeface.text(.body))
+                    .foregroundStyle(Design.Color.textTertiary),
                 axis: .vertical
             )
             .lineLimit(1...6)

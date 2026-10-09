@@ -116,7 +116,9 @@ struct BarcodeScannerSheet: View {
                 TextField(
                     "",
                     text: $manualCode,
-                    prompt: Text("0 00000 00000 0").foregroundStyle(Design.Color.textDisabled)
+                    prompt: Text("0 00000 00000 0")
+                        .font(Design.Typeface.numeral(.title, weight: .regular))
+                        .foregroundStyle(Design.Color.textDisabled)
                 )
                 .keyboardType(.numberPad)
                 .font(Design.Typeface.numeral(.title, weight: .regular))

@@ -75,10 +75,13 @@ struct EntryComposerView: View {
     @State private var localError: String?
     @State private var didAutoStart = false
     @State private var clientRequestId = UUID()
-    /// Half height with nothing attached (one question, the bar under the
-    /// thumb); the full sheet once there's a photo or a label to look at.
-    @State private var detent: PresentationDetent
+    /// Fitted to its content with nothing attached (one question, the
+    /// chips, the bar under the thumb); the full sheet once there's a photo
+    /// or a label to look at.
+    @State private var isExpanded: Bool
     @State private var headingIn = false
+    /// Header, a breath, chips and bar — scaled with the text size.
+    @ScaledMetric(relativeTo: .title) private var compactHeight: CGFloat = 262
 
     let selectedDay: Date
     let timezone: String
@@ -108,7 +111,7 @@ struct EntryComposerView: View {
         self.opensBarcodeScannerOnAppear = opensBarcodeScannerOnAppear
         self.voice = voice
         _images = State(initialValue: initialImages)
-        _detent = State(initialValue: initialImages.isEmpty ? .medium : .large)
+        _isExpanded = State(initialValue: !initialImages.isEmpty)
         self.onSubmit = onSubmit
         dayText = Self.dayLabelText(selectedDay: selectedDay, timezone: timezone)
     }
@@ -144,12 +147,12 @@ struct EntryComposerView: View {
                 .scrollBounceBehavior(.basedOnSize)
             }
         }
-        .safeAreaInset(edge: .bottom) { bottomControls }
-        .presentationDetents([.medium, .large], selection: $detent)
+        .safeAreaInset(edge: .bottom, spacing: 0) { bottomControls }
+        .presentationDetents([compactDetent, .large], selection: detentSelection)
         .presentationBackgroundInteraction(.disabled)
         .onChange(of: hasAttachments || isPreparingImage) { _, attached in
-            guard attached, detent != .large else { return }
-            withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) { detent = .large }
+            guard attached, !isExpanded else { return }
+            withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) { isExpanded = true }
         }
         .preferredColorScheme(.dark)
         .fullScreenCover(isPresented: $isShowingCamera) {
@@ -214,6 +217,15 @@ struct EntryComposerView: View {
             await voice.start()
         }
         .interactiveDismissDisabled(isSubmitting)
+    }
+
+    private var compactDetent: PresentationDetent { .height(min(compactHeight, 420)) }
+
+    private var detentSelection: Binding<PresentationDetent> {
+        Binding(
+            get: { isExpanded ? .large : compactDetent },
+            set: { isExpanded = $0 == .large }
+        )
     }
 
     // MARK: Header

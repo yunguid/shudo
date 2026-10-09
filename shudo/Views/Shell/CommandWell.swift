@@ -286,6 +286,13 @@ struct CommandKey: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var shape: CommandKeyShape { CommandKeyShape(outerCorner: metrics.keyOuterCorner) }
+    /// Pernambuco deepening toward heartwood: the live key reads as the same
+    /// slab, lacquered, rather than a bright flood.
+    private static let lacquer = LinearGradient(
+        colors: [Color(hex: 0xD66F4A), Color(hex: 0xB0502F)],
+        startPoint: .top,
+        endPoint: .bottom
+    )
     /// The slab's visual center sits a little up and in from its box center,
     /// away from the big outer corner.
     private var visualOffset: CGSize { CGSize(width: 2, height: -2) }
@@ -300,6 +307,11 @@ struct CommandKey: View {
                     endRadius: metrics.keySide * 0.8
                 )
             )
+            // Live: the same key, lacquered in Pernambuco.
+            if role != .mic {
+                shape.fill(Self.lacquer)
+                    .transition(.opacity)
+            }
             content
                 .offset(visualOffset)
         }
@@ -339,27 +351,20 @@ struct CommandKey: View {
                     }
                 }
                 .transition(.opacity)
+        case .working:
+            ProgressView()
+                .controlSize(.regular)
+                .tint(Design.Color.onEmber)
+                .transition(.opacity)
         default:
-            // Live: a Pernambuco disc on the walnut — send, a spinner while
-            // it transcribes, retry after a failed upload.
-            ZStack {
-                Circle()
-                    .fill(Design.Color.emberFill)
-                    .shadow(color: Design.Color.heartwood.opacity(0.55), radius: 6, y: 1)
-                if role == .working {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(Design.Color.onEmber)
-                } else {
-                    Image(systemName: role.symbol)
-                        .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 19))
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Design.Color.onEmber)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-            }
-            .frame(width: 46, height: 46)
-            .transition(.scale(scale: 0.7).combined(with: .opacity))
+            // Send, or retry after a failed upload — the glyph sits on the
+            // lacquer where the pads were.
+            Image(systemName: role.symbol)
+                .font(.custom(Design.Typeface.faceName(.bold), fixedSize: 24))
+                .fontWeight(.semibold)
+                .foregroundStyle(Design.Color.onEmber)
+                .contentTransition(.symbolEffect(.replace))
+                .transition(.opacity)
         }
     }
 }
