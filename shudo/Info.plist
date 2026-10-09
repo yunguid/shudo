@@ -68,6 +68,10 @@
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Merriweather.ttf</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

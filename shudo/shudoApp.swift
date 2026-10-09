@@ -19,6 +19,7 @@ struct shudoApp: App {
         // download) before any mic tap. `.current` is SpeechAssetPreparer.shared
         // in production and the scripted assets under DEBUG UI-test launch args.
         VoiceEnvironment.current.assets.prepare()
+        Design.Typeface.installAppearance()
         // Meal photos are served from stable signed URLs; a right-sized URL
         // cache lets repeat visits render them without any network work.
         URLCache.shared = URLCache(
@@ -33,6 +34,7 @@ struct shudoApp: App {
                 AppBackground()
                 RootView()
             }
+            .font(Design.Typeface.text(.body))
             .tint(Design.Color.accentPrimary)
             .preferredColorScheme(.dark)
             .onOpenURL { url in

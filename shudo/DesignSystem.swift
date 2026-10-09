@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Shudo design system: "Sumi · Hinoki · Pernambuco"
 //
@@ -12,8 +13,8 @@ import SwiftUI
 //   own words); everything else is cream, oak or ink.
 // - Space before lines. Group with spacing first, a surface second, a rule
 //   last. Cards carry no border, only a faint top-lit edge.
-// - Calm type. Serif (New York) for display and hero figures, SF for
-//   reading, small quiet eyebrows — and fewer of them.
+// - One typeface. Merriweather for everything, sentence case only — no
+//   uppercase labels. Small quiet eyebrows, and fewer of them.
 // - Motion slides home like a shoji door: weighted springs, no bounce,
 //   opacity-only under Reduce Motion.
 
@@ -121,28 +122,90 @@ enum Design {
         static var ringFat: SwiftUI.Color { macroFat }
     }
 
+    /// One typeface for the whole app: Merriweather (bundled, SIL OFL —
+    /// shudo/Fonts). Every piece of text goes through here so the app reads
+    /// in a single voice. Sentence case everywhere: no uppercase labels.
     enum Typeface {
-        /// Screen and hero headlines: New York, quiet weight.
+        static let family = "Merriweather"
+
+        /// The base text API. Sizes sit a touch under SF's because
+        /// Merriweather's tall x-height reads larger; `relativeTo` keeps
+        /// Dynamic Type scaling.
+        static func text(_ style: SwiftUI.Font.TextStyle = .body, weight: SwiftUI.Font.Weight = .regular) -> SwiftUI.Font {
+            .custom(faceName(weight), size: pointSize(style), relativeTo: style)
+        }
+        /// Screen and hero headlines.
         static func display(_ style: SwiftUI.Font.TextStyle = .largeTitle, weight: SwiftUI.Font.Weight = .regular) -> SwiftUI.Font {
-            .system(style, design: .serif, weight: weight)
+            text(style, weight: weight)
         }
-        /// The one big number on a screen (kcal left, body weight): serif
-        /// figures read crafted rather than dashboard. Add `.monospacedDigit()`.
+        /// The one big number on a screen (kcal left, body weight).
         static func figure(_ style: SwiftUI.Font.TextStyle = .largeTitle, weight: SwiftUI.Font.Weight = .regular) -> SwiftUI.Font {
-            .system(style, design: .serif, weight: weight)
+            text(style, weight: weight).monospacedDigit()
         }
-        /// Every other number: SF Pro; add `.monospacedDigit()` at the call site.
+        /// Every other number, with tabular figures so columns line up.
         static func numeral(_ style: SwiftUI.Font.TextStyle, weight: SwiftUI.Font.Weight = .medium) -> SwiftUI.Font {
-            .system(style, weight: weight)
+            text(style, weight: weight).monospacedDigit()
         }
-        /// Small section labels. Use `eyebrowStyle()`, and only when spacing
-        /// alone can't say where a section starts.
-        static let eyebrow = SwiftUI.Font.system(.caption2, weight: .semibold)
-        static let stamp = SwiftUI.Font.system(.subheadline, weight: .semibold)
-        static let screenTitle = SwiftUI.Font.system(.title2, design: .serif, weight: .medium)
-        static let bubble = SwiftUI.Font.body
-        static let cardTitle = SwiftUI.Font.headline
-        static let meta = SwiftUI.Font.caption2.weight(.medium)
+        /// Small section labels, sentence case. Use `eyebrowStyle()`, and only
+        /// when spacing alone can't say where a section starts.
+        static let eyebrow = text(.caption, weight: .semibold)
+        static let stamp = text(.subheadline, weight: .semibold)
+        static let screenTitle = text(.title2, weight: .medium)
+        static let bubble = text(.body)
+        static let cardTitle = text(.headline, weight: .semibold)
+        static let meta = text(.caption2, weight: .medium)
+
+        /// The PostScript name of the variable font's named instance.
+        static func faceName(_ weight: SwiftUI.Font.Weight) -> String {
+            switch weight {
+            case .ultraLight, .thin, .light: "Merriweather-Light"
+            case .medium: "Merriweather-Medium"
+            case .semibold: "Merriweather-SemiBold"
+            case .bold: "Merriweather-Bold"
+            case .heavy: "Merriweather-ExtraBold"
+            case .black: "Merriweather-Black"
+            default: "Merriweather-Regular"
+            }
+        }
+
+        static func pointSize(_ style: SwiftUI.Font.TextStyle) -> CGFloat {
+            switch style {
+            case .largeTitle: 32
+            case .title: 26
+            case .title2: 21
+            case .title3: 19
+            case .headline: 16
+            case .callout: 15
+            case .subheadline: 14
+            case .footnote: 12.5
+            case .caption: 11.5
+            case .caption2: 10.5
+            default: 16
+            }
+        }
+
+        /// The same face for UIKit chrome (navigation titles, bar buttons).
+        static func uiFont(_ style: UIFont.TextStyle, weight: SwiftUI.Font.Weight = .regular, size: CGFloat) -> UIFont {
+            let base = UIFont(name: faceName(weight), size: size) ?? .systemFont(ofSize: size)
+            return UIFontMetrics(forTextStyle: style).scaledFont(for: base)
+        }
+
+        /// Points UIKit-drawn chrome at Merriweather. Call once at launch.
+        static func installAppearance() {
+            let navigation = UINavigationBar.appearance()
+            navigation.titleTextAttributes = [.font: uiFont(.headline, weight: .semibold, size: 16)]
+            navigation.largeTitleTextAttributes = [.font: uiFont(.largeTitle, size: 32)]
+            let barButton = UIBarButtonItem.appearance()
+            for state: UIControl.State in [.normal, .highlighted, .disabled] {
+                barButton.setTitleTextAttributes([.font: uiFont(.body, weight: .medium, size: 16)], for: state)
+            }
+            UITabBarItem.appearance().setTitleTextAttributes(
+                [.font: uiFont(.caption2, weight: .medium, size: 10)], for: .normal
+            )
+            UISegmentedControl.appearance().setTitleTextAttributes(
+                [.font: uiFont(.subheadline, weight: .medium, size: 13)], for: .normal
+            )
+        }
     }
 
     enum Space {
@@ -283,10 +346,9 @@ extension View {
         )
     }
 
+    /// A quiet sentence-case label. Luke wants no uppercase anywhere.
     func eyebrowStyle(_ color: Color = Design.Color.textTertiary) -> some View {
         font(Design.Typeface.eyebrow)
-            .tracking(1.4)
-            .textCase(.uppercase)
             .foregroundStyle(color)
     }
 }
@@ -346,7 +408,7 @@ struct PrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.semibold))
+            .font(Design.Typeface.text(.subheadline, weight: .semibold))
             .foregroundStyle(Design.Color.onCream)
             .padding(.horizontal, 20)
             .padding(.vertical, 13)
@@ -365,7 +427,7 @@ struct SecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.semibold))
+            .font(Design.Typeface.text(.subheadline, weight: .semibold))
             .foregroundStyle(Design.Color.textPrimary)
             .padding(.horizontal, 18)
             .padding(.vertical, 13)
