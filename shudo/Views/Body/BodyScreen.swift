@@ -339,14 +339,17 @@ struct BodyScreen: View {
     /// done, and the one thing left to do.
     @ViewBuilder
     private var checkInLine: some View {
-        Group {
+        // One state hands off to the other in place: the old line is gone
+        // quickly, the new one inks in a beat later (never both at half).
+        ZStack(alignment: .leading) {
             if let checkIn = snapshot.todayCheckIn, checkIn.hasPhoto {
                 checkedInLine(checkIn)
+                    .transition(.inkHandoff(reduceMotion: reduceMotion))
             } else {
                 checkInPrompt(snapshot.todayCheckIn)
+                    .transition(.inkHandoff(reduceMotion: reduceMotion))
             }
         }
-        .transition(.ink(reduceMotion: reduceMotion))
     }
 
     private func checkInPrompt(_ checkIn: WeightCheckIn?) -> some View {

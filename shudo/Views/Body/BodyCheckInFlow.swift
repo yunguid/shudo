@@ -108,10 +108,12 @@ struct BodyCheckInFlow: View {
                         if capture != nil { go(to: .review) } else { dismiss() }
                     }
                 )
-                .transition(.opacity)
+                // The camera lives to the left of the review: each panel slides
+                // off toward its own side and the next slides home a beat later.
+                .transition(.shojiPage(.leading, reduceMotion: reduceMotion))
             case .review, .weight:
                 entryScreen
-                    .transition(.shoji(.trailing, reduceMotion: reduceMotion))
+                    .transition(.shojiPage(.trailing, reduceMotion: reduceMotion))
             }
         }
         .background {

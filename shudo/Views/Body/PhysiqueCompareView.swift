@@ -49,8 +49,8 @@ struct PhysiqueCompareView: View {
             VStack(spacing: Design.Space.xl) {
                 ZStack {
                     switch mode {
-                    case .wipe: wipeView.transition(.ink(reduceMotion: reduceMotion))
-                    case .sideBySide: sideBySide.transition(.ink(reduceMotion: reduceMotion))
+                    case .wipe: wipeView.transition(.inkHandoff(reduceMotion: reduceMotion))
+                    case .sideBySide: sideBySide.transition(.inkHandoff(reduceMotion: reduceMotion))
                     }
                 }
                 .padding(.horizontal, Design.Space.l)

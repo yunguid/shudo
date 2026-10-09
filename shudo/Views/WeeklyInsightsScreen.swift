@@ -88,8 +88,16 @@ struct WeeklyInsightsScreen: View {
 
     // MARK: The week
 
-    @ViewBuilder
+    /// Loading, loaded, empty and error hand off in place (the old state is
+    /// gone quickly, the new one inks in a beat later), never stacked or blended.
     private var week: some View {
+        ZStack(alignment: .topLeading) { weekState }
+    }
+
+    private var handoff: AnyTransition { .inkHandoff(reduceMotion: reduceMotion) }
+
+    @ViewBuilder
+    private var weekState: some View {
         if let errorMessage {
             VStack(alignment: .leading, spacing: Design.Space.s) {
                 Text("Last 7 days").eyebrowStyle()
@@ -97,6 +105,7 @@ struct WeeklyInsightsScreen: View {
                     .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textSecondary)
             }
+            .transition(handoff)
         } else if isLoading {
             VStack(alignment: .leading, spacing: Design.Space.l) {
                 Capsule().fill(Design.Color.surface2).frame(width: 90, height: 10)
@@ -107,6 +116,7 @@ struct WeeklyInsightsScreen: View {
             .shimmering()
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Loading this week")
+            .transition(handoff)
         } else if let window, window.loggedDayCount > 0, let average = window.average {
             let target = window.averageTarget ?? NutrientTrendValues(
                 caloriesKcal: profile.dailyMacroTarget.caloriesKcal,
@@ -115,9 +125,9 @@ struct WeeklyInsightsScreen: View {
                 fatG: profile.dailyMacroTarget.fatG)
             VStack(alignment: .leading, spacing: Design.Space.section) {
                 calorieHero(average: average, target: target, logged: window.loggedDayCount)
-                    .transition(.ink(reduceMotion: reduceMotion))
                 protein(average: average, target: target)
             }
+            .transition(handoff)
         } else {
             VStack(alignment: .leading, spacing: Design.Space.s) {
                 Text("Last 7 days").eyebrowStyle()
@@ -125,6 +135,7 @@ struct WeeklyInsightsScreen: View {
                     .font(Design.Typeface.text(.subheadline))
                     .foregroundStyle(Design.Color.textSecondary)
             }
+            .transition(handoff)
         }
     }
 
