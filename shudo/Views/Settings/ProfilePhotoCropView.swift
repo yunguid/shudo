@@ -46,7 +46,7 @@ struct ProfilePhotoCropView: View {
                             .accessibilityLabel("Photo zoom")
                         Image(systemName: "plus.magnifyingglass")
                     }
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.textTertiary)
                     .padding(.horizontal, Design.Space.xxl)
                     Spacer(minLength: 8)

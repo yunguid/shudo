@@ -19,6 +19,8 @@ struct CoachSettingsSection: View {
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var locationDenied = false
     @State private var quietSaveTask: Task<Void, Never>?
+    /// Which quiet-hours edge has its wheel open under the row.
+    @State private var editingQuietEdge: QuietEdge?
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -63,18 +65,23 @@ struct CoachSettingsSection: View {
                 SettingsGroup {
                     notificationsRow
                     quietHoursRow
+                    if let edge = editingQuietEdge {
+                        quietWheel(edge)
+                            .transition(.opacity)
+                    }
                 }
                 .transition(.shoji(.top, reduceMotion: reduceMotion))
             }
 
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(Design.Color.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: settings.enabled)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: editingQuietEdge)
         .task { await load() }
         .onChange(of: scenePhase) { _, phase in
             // Back from iOS Settings: reflect what changed there.
@@ -90,7 +97,7 @@ struct CoachSettingsSection: View {
             HStack(spacing: Design.Space.m) {
                 CoachAvatar(size: 26)
                 Text("Shudo texts you")
-                    .font(.body)
+                    .font(Design.Typeface.text(.body))
                     .foregroundStyle(Design.Color.textPrimary)
             }
         }
@@ -110,13 +117,7 @@ struct CoachSettingsSection: View {
         options: [Option],
         title: KeyPath<Option, String>
     ) -> some View {
-        Picker(label, selection: selection) {
-            ForEach(options, id: \.self) { Text($0[keyPath: title]).tag($0) }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .tint(Design.Color.textSecondary)
-        .fixedSize()
+        SettingsMenuPicker(label: label, selection: selection, options: options) { $0[keyPath: title] }
     }
 
     /// iOS permission for Shudo's texts: on, off (fix it in Settings), or not
@@ -142,34 +143,68 @@ struct CoachSettingsSection: View {
         .accessibilityIdentifier("settings.notifications")
     }
 
+    private enum QuietEdge: Hashable {
+        case start, end
+
+        var keyPath: WritableKeyPath<CoachSettings, CoachClockTime> {
+            self == .start ? \.quietHoursStart : \.quietHoursEnd
+        }
+
+        var label: String { self == .start ? "Quiet from" : "Quiet until" }
+    }
+
+    /// Two times set in the app's typeface; tapping one opens a wheel under
+    /// the row (tap it again, or the other time, to move on).
     private var quietHoursRow: some View {
         SettingsRow(title: "Quiet hours") {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) {
-                    quietFrom
+                    quietChip(.start)
                     Text("–")
                         .foregroundStyle(Design.Color.textTertiary)
                         .accessibilityHidden(true)
-                    quietUntil
+                    quietChip(.end)
                 }
                 .fixedSize()
                 VStack(alignment: .leading, spacing: 6) {
-                    quietFrom
-                    quietUntil
+                    quietChip(.start)
+                    quietChip(.end)
                 }
             }
-            .tint(Design.Color.pernambuco)
         }
     }
 
-    private var quietFrom: some View {
-        DatePicker("Quiet from", selection: clockBinding(\.quietHoursStart), displayedComponents: .hourAndMinute)
-            .labelsHidden()
+    private func quietChip(_ edge: QuietEdge) -> some View {
+        let isEditing = editingQuietEdge == edge
+        return Button {
+            editingQuietEdge = isEditing ? nil : edge
+        } label: {
+            Text(clockText(settings[keyPath: edge.keyPath]))
+                .font(Design.Typeface.numeral(.body, weight: .regular))
+                .foregroundStyle(isEditing ? Design.Color.pernambuco : Design.Color.textPrimary)
+                .padding(.horizontal, Design.Space.m)
+                .padding(.vertical, 7)
+                .background(Design.Color.surface2, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(edge.label)
+        .accessibilityValue(clockText(settings[keyPath: edge.keyPath]))
+        .accessibilityHint(isEditing ? "Closes the time wheel" : "Opens a time wheel")
     }
 
-    private var quietUntil: some View {
-        DatePicker("Quiet until", selection: clockBinding(\.quietHoursEnd), displayedComponents: .hourAndMinute)
+    private func quietWheel(_ edge: QuietEdge) -> some View {
+        DatePicker(edge.label, selection: clockBinding(edge.keyPath), displayedComponents: .hourAndMinute)
+            .datePickerStyle(.wheel)
             .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, Design.Space.s)
+            .id(edge)
+    }
+
+    private func clockText(_ time: CoachClockTime) -> String {
+        let date = Calendar.current.date(bySettingHour: time.hour, minute: time.minute, second: 0, of: Date()) ?? Date()
+        return date.formatted(date: .omitted, time: .shortened)
     }
 
     private func openSettingsRow(_ title: String) -> some View {

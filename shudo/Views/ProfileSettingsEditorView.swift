@@ -84,27 +84,31 @@ struct ProfileSettingsEditorView: View {
 
                     SettingsGroup {
                         SettingsRow(title: "Goal") {
-                            menu("Goal", selection: $goalType) {
-                                Text("Bulk").tag(NutritionGoalType.gain)
-                                Text("Cut").tag(NutritionGoalType.lose)
-                                Text("Maintain").tag(NutritionGoalType.maintain)
-                            }
+                            SettingsMenuPicker(
+                                label: "Goal",
+                                selection: $goalType,
+                                options: [.gain, .lose, .maintain],
+                                title: Self.goalLabel
+                            )
                         }
                         SettingsRow(title: "Activity") {
-                            menu("Activity", selection: $activityLevel) {
-                                ForEach(ProfileActivityLevel.allCases, id: \.self) { level in
-                                    Text(activityLabel(level)).tag(level)
-                                }
-                            }
+                            SettingsMenuPicker(
+                                label: "Activity",
+                                selection: $activityLevel,
+                                options: ProfileActivityLevel.allCases,
+                                title: Self.activityLabel
+                            )
                         }
                     }
 
                     SettingsGroup {
                         SettingsRow(title: "Units") {
-                            menu("Units", selection: $units) {
-                                Text("Pounds & feet").tag("imperial")
-                                Text("Kilograms & cm").tag("metric")
-                            }
+                            SettingsMenuPicker(
+                                label: "Units",
+                                selection: $units,
+                                options: ["imperial", "metric"],
+                                title: { $0 == "metric" ? "Kilograms & cm" : "Pounds & feet" }
+                            )
                         }
                         .onChange(of: units) { previous, updated in
                             convertMeasurements(from: previous, to: updated)
@@ -114,7 +118,7 @@ struct ProfileSettingsEditorView: View {
                                 Button("Use \(Self.cityName(TimeZone.autoupdatingCurrent.identifier))") {
                                     timezone = TimeZone.autoupdatingCurrent.identifier
                                 }
-                                .font(.subheadline.weight(.semibold))
+                                .font(Design.Typeface.text(.subheadline, weight: .semibold))
                                 .foregroundStyle(Design.Color.pernambuco)
                                 .buttonStyle(.plain)
                             }
@@ -123,7 +127,7 @@ struct ProfileSettingsEditorView: View {
 
                     if let errorMessage {
                         Text(errorMessage)
-                            .font(.footnote)
+                            .font(Design.Typeface.text(.footnote))
                             .foregroundStyle(Design.Color.danger)
                             .fixedSize(horizontal: false, vertical: true)
                             .transition(.opacity)
@@ -151,7 +155,6 @@ struct ProfileSettingsEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Saving…" : "Save") { save() }
-                        .fontWeight(.semibold)
                         .disabled(isSaving)
                 }
             }
@@ -211,21 +214,9 @@ struct ProfileSettingsEditorView: View {
 
     private func unitLabel(_ unit: String) -> some View {
         Text(unit)
-            .font(.footnote)
+            .font(Design.Typeface.text(.footnote))
             .foregroundStyle(Design.Color.textTertiary)
             .frame(width: 22, alignment: .leading)
-    }
-
-    private func menu<Selection: Hashable, Content: View>(
-        _ label: String,
-        selection: Binding<Selection>,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        Picker(label, selection: selection, content: content)
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .tint(Design.Color.textSecondary)
-            .fixedSize()
     }
 
     /// "America/New_York" → "New York".
@@ -330,7 +321,15 @@ struct ProfileSettingsEditorView: View {
         return parsed
     }
 
-    private func activityLabel(_ level: ProfileActivityLevel) -> String {
+    private static func goalLabel(_ goal: NutritionGoalType) -> String {
+        switch goal {
+        case .gain: return "Bulk"
+        case .lose: return "Cut"
+        case .maintain: return "Maintain"
+        }
+    }
+
+    private static func activityLabel(_ level: ProfileActivityLevel) -> String {
         switch level {
         case .sedentary: return "Sedentary"
         case .light: return "Light"

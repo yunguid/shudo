@@ -54,12 +54,14 @@ extension SettingsGroup where Accessory == EmptyView {
     }
 }
 
+/// A section heading, set like the Bio page's: small, in oak, sentence case.
 struct SettingsSectionLabel: View {
     let text: String
 
     var body: some View {
         Text(text)
-            .eyebrowStyle()
+            .font(Design.Typeface.display(.title3))
+            .foregroundStyle(Design.Color.textSecondary)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -101,11 +103,11 @@ struct SettingsRowTitle: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.body)
+                .font(Design.Typeface.text(.body))
                 .foregroundStyle(Design.Color.textPrimary)
             if let subtitle {
                 Text(subtitle)
-                    .font(.footnote)
+                    .font(Design.Typeface.text(.footnote))
                     .foregroundStyle(subtitleColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -123,6 +125,39 @@ struct SettingsToggleRow<Label: View>: View {
             .tint(SettingsStyle.toggleTint)
             .padding(.vertical, Design.Space.s)
             .frame(minHeight: SettingsStyle.rowHeight)
+    }
+}
+
+/// A menu picker whose closed state is set in the app's typeface: the
+/// current value in oak and a small up-down mark. (A plain `.menu` Picker
+/// draws its label in the system font.)
+struct SettingsMenuPicker<Option: Hashable>: View {
+    let label: String
+    @Binding var selection: Option
+    let options: [Option]
+    let title: (Option) -> String
+
+    var body: some View {
+        Menu {
+            Picker(label, selection: $selection) {
+                ForEach(options, id: \.self) { Text(title($0)).tag($0) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title(selection))
+                    .font(Design.Typeface.text(.body))
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(Design.Typeface.text(.caption, weight: .semibold))
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .fixedSize()
+        .accessibilityLabel(label)
+        .accessibilityValue(title(selection))
     }
 }
 
@@ -148,7 +183,7 @@ struct SettingsValueLabel: View {
                 valueText
             }
             Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
+                .font(Design.Typeface.text(.caption, weight: .semibold))
                 .foregroundStyle(Design.Color.textTertiary)
                 .accessibilityHidden(true)
         }
@@ -159,7 +194,7 @@ struct SettingsValueLabel: View {
 
     private var titleText: some View {
         Text(title)
-            .font(.body)
+            .font(Design.Typeface.text(.body))
             .foregroundStyle(Design.Color.textPrimary)
     }
 
@@ -167,7 +202,7 @@ struct SettingsValueLabel: View {
     private var valueText: some View {
         if let value {
             Text(value)
-                .font(.body)
+                .font(Design.Typeface.text(.body))
                 .foregroundStyle(valueColor)
                 .lineLimit(1)
         }

@@ -123,7 +123,7 @@ struct AccountView: View {
                 header
                 if let error {
                     Text(error)
-                        .font(.footnote)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.danger)
                         .fixedSize(horizontal: false, vertical: true)
                         .transition(.opacity)
@@ -140,7 +140,7 @@ struct AccountView: View {
                 accountGroup
                     .id("settings.account")
                 Text(BuildIdentity.current.displayText)
-                    .font(.caption2.monospaced())
+                    .font(Design.Typeface.text(.caption2))
                     .foregroundStyle(Design.Color.textTertiary)
                     .accessibilityIdentifier("Build identity")
             }
@@ -237,7 +237,7 @@ struct AccountView: View {
                     .lineLimit(1)
                 if let email, email != displayName {
                     Text(email)
-                        .font(.subheadline)
+                        .font(Design.Typeface.text(.subheadline))
                         .foregroundStyle(Design.Color.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -267,7 +267,7 @@ struct AccountView: View {
                     .allowsHitTesting(false)
             } else {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 22))
+                    .font(Design.Typeface.text(.title2))
                     .foregroundStyle(Design.Color.textTertiary)
             }
             if isLoadingProfilePhoto || isSavingProfilePhoto {
@@ -329,7 +329,7 @@ struct AccountView: View {
             } accessory: {
                 if showsSavedTargets {
                     Label("Saved", systemImage: "checkmark")
-                        .font(.caption.weight(.semibold))
+                        .font(Design.Typeface.text(.caption, weight: .semibold))
                         .foregroundStyle(Design.Color.textSecondary)
                         .transition(.opacity)
                 }
@@ -339,7 +339,7 @@ struct AccountView: View {
                 Group {
                     if targetDraft.validatedTarget == nil {
                         Text("500–10,000 kcal, and at least 1 g of each macro.")
-                            .font(.footnote)
+                            .font(Design.Typeface.text(.footnote))
                             .foregroundStyle(Design.Color.warning)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -381,7 +381,7 @@ struct AccountView: View {
                 .frame(width: 5, height: 5)
                 .accessibilityHidden(true)
             Text(label)
-                .font(.body)
+                .font(Design.Typeface.text(.body))
                 .foregroundStyle(Design.Color.textPrimary)
             Spacer(minLength: 8)
             TextField("0", text: text)
@@ -399,7 +399,7 @@ struct AccountView: View {
                     if filtered != updated { text.wrappedValue = filtered }
                 }
             Text(unit)
-                .font(.footnote)
+                .font(Design.Typeface.text(.footnote))
                 .foregroundStyle(Design.Color.textTertiary)
                 .fixedSize()
                 .frame(minWidth: 28, alignment: .leading)
@@ -429,7 +429,7 @@ struct AccountView: View {
 
     private func accountActionLabel(_ title: String) -> some View {
         Text(title)
-            .font(.body)
+            .font(Design.Typeface.text(.body))
             .foregroundStyle(Design.Color.danger)
             .frame(maxWidth: .infinity, minHeight: SettingsStyle.rowHeight, alignment: .leading)
             .contentShape(Rectangle())

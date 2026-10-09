@@ -21,7 +21,7 @@ struct AccountDeletionSheet: View {
                         .foregroundStyle(Design.Color.textPrimary)
                         .accessibilityAddTraits(.isHeader)
                     Text("Your meals, photos, bio and sign-in are erased for good.")
-                        .font(.body)
+                        .font(Design.Typeface.text(.body))
                         .foregroundStyle(Design.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -31,17 +31,16 @@ struct AccountDeletionSheet: View {
                     TextField(
                         "",
                         text: $confirmation,
-                        prompt: Text("Type DELETE to confirm").foregroundStyle(Design.Color.textTertiary)
+                        prompt: Text("Type “delete” to confirm").foregroundStyle(Design.Color.textTertiary)
                     )
-                    .textInputAutocapitalization(.characters)
+                    .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .font(.body.weight(.medium))
-                    .tracking(1)
+                    .font(Design.Typeface.text(.body, weight: .medium))
                     .foregroundStyle(Design.Color.textPrimary)
                     .tint(Design.Color.danger)
                     .focused($fieldFocused)
                     .disabled(isDeleting)
-                    .accessibilityLabel("Type DELETE to confirm")
+                    .accessibilityLabel("Type delete to confirm")
                     Rectangle()
                         .fill(canDelete ? Design.Color.danger.opacity(0.7) : Design.Color.strokeStrong)
                         .frame(height: 1)
@@ -50,7 +49,7 @@ struct AccountDeletionSheet: View {
 
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.footnote)
+                        .font(Design.Typeface.text(.footnote))
                         .foregroundStyle(Design.Color.danger)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -64,7 +63,7 @@ struct AccountDeletionSheet: View {
                         }
                         Text(isDeleting ? "Deleting…" : "Delete account")
                     }
-                    .font(.subheadline.weight(.semibold))
+                    .font(Design.Typeface.text(.subheadline, weight: .semibold))
                     .foregroundStyle(isArmed ? Design.Color.sumi : Design.Color.textTertiary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 15)
@@ -96,8 +95,11 @@ struct AccountDeletionSheet: View {
         }
     }
 
+    /// Sentence case on screen (no shouting): "delete" in any case arms it,
+    /// still exactly the word, no spaces; the server gets the policy's own
+    /// confirmation token either way.
     private var canDelete: Bool {
-        !isDeleting && AccountDeletionPolicy.isConfirmed(confirmation)
+        !isDeleting && AccountDeletionPolicy.isConfirmed(confirmation.uppercased())
     }
 
     private var isArmed: Bool { canDelete || isDeleting }
