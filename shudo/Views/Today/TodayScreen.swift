@@ -360,8 +360,9 @@ struct TodayScreen: View {
             }
             // The bottom margin *is* the scroll target, so scrolling to the
             // newest row keeps the same breathing room above the capture bar
-            // as opening the day does.
-            Color.clear.frame(height: 18).id("thread.bottom")
+            // as opening the day does. A past day leaves room for the
+            // "Back to today" pill so it never sits on the last card.
+            Color.clear.frame(height: isToday ? 18 : 66).id("thread.bottom")
         }
         .animation(
             settledDay == selectedDay ? Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion) : nil,
