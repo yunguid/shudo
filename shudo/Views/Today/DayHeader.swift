@@ -100,8 +100,8 @@ struct DayHeader<Account: View, DayPicker: View>: View {
             .buttonStyle(.plain)
             .popover(isPresented: $isPickingDay, arrowEdge: .top) { dayPicker }
             .animation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion), value: subtitle)
-            .accessibilityLabel(title)
-            .accessibilityValue(subtitle ?? "")
+            // "Today, Day 35 of the bulk" / "Today, typing…" in one label.
+            .accessibilityLabel(subtitle.map { "\(title), \($0)" } ?? title)
             .accessibilityHint("Pick a day")
             .accessibilityIdentifier("today.day")
 
