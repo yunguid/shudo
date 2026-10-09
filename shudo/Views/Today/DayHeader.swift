@@ -187,7 +187,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
 
     /// Protein is the one accented metric; carbs and fat recede.
     private var macroSummary: some View {
-        VStack(alignment: .trailing, spacing: 2) {
+        VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(Int(totals.proteinG.rounded()).formatted())
                     .font(Design.Typeface.numeral(.subheadline, weight: .semibold))

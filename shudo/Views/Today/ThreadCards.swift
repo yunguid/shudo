@@ -501,11 +501,10 @@ struct GoalChangeCardView: View {
     @ViewBuilder
     private func row(_ label: String, _ before: Double?, _ after: Double?, unit: String) -> some View {
         if let after, before.map({ Int($0.rounded()) != Int(after.rounded()) }) ?? true {
-            HStack(alignment: .firstTextBaseline) {
-                Text(label)
-                    .font(Design.Typeface.text(.subheadline))
-                    .foregroundStyle(Design.Color.textSecondary)
-                Spacer()
+            let name = Text(label)
+                .font(Design.Typeface.text(.subheadline))
+                .foregroundStyle(Design.Color.textSecondary)
+            let values = HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let before {
                     Text(Int(before.rounded()).formatted())
                         .foregroundStyle(Design.Color.textTertiary)
@@ -518,7 +517,20 @@ struct GoalChangeCardView: View {
                     .foregroundStyle(Design.Color.textPrimary)
             }
             .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
-            .monospacedDigit()
+            .lineLimit(1)
+            // Large text: the name above its numbers instead of truncating both.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    name
+                    Spacer(minLength: Design.Space.s)
+                    values
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    name
+                    values
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             .padding(.vertical, 5)
             .accessibilityElement(children: .combine)
         }
