@@ -258,10 +258,28 @@ struct AdherenceHeatmapView: View {
 
     // MARK: - Day readout
 
-    @ViewBuilder
+    /// One line — the day, its verdict, its numbers — that folds the numbers
+    /// under the verdict when they no longer fit (large text sizes).
     private func dayReadout(_ cell: AdherenceHeatmapCell?, formatter: DateFormatter, todayLocalDay: String?) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            if let cell {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.s) {
+                readoutLead(cell, formatter: formatter, todayLocalDay: todayLocalDay)
+                Spacer(minLength: Design.Space.s)
+                readoutFigures(cell)
+            }
+            VStack(alignment: .leading, spacing: Design.Space.xxs) {
+                readoutLead(cell, formatter: formatter, todayLocalDay: todayLocalDay)
+                readoutFigures(cell)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 16, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func readoutLead(_ cell: AdherenceHeatmapCell?, formatter: DateFormatter, todayLocalDay: String?) -> some View {
+        if let cell {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.s) {
                 Text(formatter.string(from: cell.date))
                     .font(Design.Typeface.text(.caption, weight: .medium))
                     .foregroundStyle(Design.Color.textPrimary)
@@ -270,28 +288,28 @@ struct AdherenceHeatmapView: View {
                         .font(Design.Typeface.text(.caption))
                         .foregroundStyle(Design.Color.oak)
                         .monospacedDigit()
-                    Spacer(minLength: 4)
-                    Text(readoutNumbers(total: total, target: cell.effectiveTarget))
-                        .font(Design.Typeface.numeral(.caption2, weight: .regular))
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
                 } else {
                     Text("Nothing logged")
                         .font(Design.Typeface.text(.caption))
                         .foregroundStyle(Design.Color.textSecondary)
-                    Spacer(minLength: 4)
                 }
-            } else {
-                Text("Tap a day to check its numbers")
-                    .font(Design.Typeface.text(.caption))
-                    .foregroundStyle(Design.Color.textSecondary)
-                Spacer(minLength: 4)
             }
+        } else {
+            Text("Tap a day to check its numbers")
+                .font(Design.Typeface.text(.caption))
+                .foregroundStyle(Design.Color.textSecondary)
         }
-        .frame(minHeight: 16)
-        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func readoutFigures(_ cell: AdherenceHeatmapCell?) -> some View {
+        if let cell, let total = cell.total, total.entryCount > 0 {
+            Text(readoutNumbers(total: total, target: cell.effectiveTarget))
+                .font(Design.Typeface.numeral(.caption2, weight: .regular))
+                .foregroundStyle(Design.Color.textTertiary)
+                .monospacedDigit()
+                .lineLimit(1)
+        }
     }
 
     private func verdict(for cell: AdherenceHeatmapCell, isToday: Bool = false) -> String {

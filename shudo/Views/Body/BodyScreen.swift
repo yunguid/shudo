@@ -306,14 +306,21 @@ struct BodyScreen: View {
     }
 
     /// "+2.1 of 12.5 lb", centred under the bar like the number on a plate.
+    /// Nothing loaded yet reads as what's left, not as a Pernambuco "+0.0".
     private func meterCaption(_ meter: Meter) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
-            Text(BodyUnits.signed(meter.gainedDisplay))
-                .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
-                .foregroundStyle(Design.Color.pernambuco)
-            Text("of \(BodyUnits.format(meter.goalDisplay)) \(BodyUnits.label(units))")
-                .font(Design.Typeface.text(.footnote))
-                .foregroundStyle(Design.Color.textTertiary)
+            if meter.gainedDisplay >= 0.05 {
+                Text(BodyUnits.signed(meter.gainedDisplay))
+                    .font(Design.Typeface.numeral(.subheadline, weight: .semibold))
+                    .foregroundStyle(Design.Color.pernambuco)
+                Text("of \(BodyUnits.format(meter.goalDisplay)) \(BodyUnits.label(units))")
+                    .font(Design.Typeface.text(.footnote))
+                    .foregroundStyle(Design.Color.textTertiary)
+            } else {
+                Text("\(BodyUnits.format(meter.goalDisplay - meter.gainedDisplay)) \(BodyUnits.label(units)) to go")
+                    .font(Design.Typeface.text(.footnote))
+                    .foregroundStyle(Design.Color.textTertiary)
+            }
         }
         .monospacedDigit()
         .frame(maxWidth: .infinity)

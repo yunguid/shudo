@@ -179,9 +179,13 @@ struct BarbellMeter: View {
     private static let plateWidth: CGFloat = 8
     private static let plateSpacing: CGFloat = 3
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The plates load once when the meter first appears.
+    @State private var loaded = false
+
     var body: some View {
         let slots = Self.slots(goalPounds: goalPounds)
-        let filled = Self.filled(gainedPounds: gainedPounds, goalPounds: goalPounds)
+        let filled = Self.filled(gainedPounds: gainedPounds, goalPounds: goalPounds) * (loaded || reduceMotion ? 1 : 0)
         GeometryReader { geo in
             let height = geo.size.height
             ZStack {
@@ -200,9 +204,15 @@ struct BarbellMeter: View {
             }
             .frame(maxHeight: .infinity)
         }
+        .onAppear {
+            guard !loaded else { return }
+            withAnimation(Design.Motion.gated(Design.Motion.ring.delay(0.15), reduceMotion: reduceMotion)) {
+                loaded = true
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "Barbell meter: \(BodyUnits.format(max(gainedPounds, 0))) of \(BodyUnits.format(abs(goalPounds))) pounds, \(Int(filled)) of \(slots) plates loaded"
+            "Barbell meter: \(BodyUnits.format(max(gainedPounds, 0))) of \(BodyUnits.format(abs(goalPounds))) pounds, \(Int(Self.filled(gainedPounds: gainedPounds, goalPounds: goalPounds))) of \(slots) plates loaded"
         )
     }
 
