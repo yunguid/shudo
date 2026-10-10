@@ -1,4 +1,3 @@
-import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -6,8 +5,8 @@ import UIKit
 /// band — Shudo's key carved into the bottom-left corner, the tab bar beside
 /// it (the system tab bar is hidden). The shell owns the long-lived state the
 /// tabs share — the day's meals, the coach thread, the workout logger — and
-/// every capture flow, so talking to Shudo, the meal composer, the camera and
-/// check-ins work from any tab.
+/// every capture flow, so talking to Shudo, typing and the food logger work
+/// from any tab.
 struct AppShell: View {
     let profile: Profile
     private let dependencies: ShellDependencies
@@ -34,12 +33,8 @@ struct AppShell: View {
     /// it mid-press doesn't rebuild the shell (which cancels the press).
     @StateObject private var fanHolder = UnobservedHolder(CaptureFan())
     @State private var sheet: ShellSheet?
-    @State private var cover: ShellCover?
     @State private var composerSeed = ComposerSeed()
-    @State private var isPickingMealPhoto = false
-    @State private var mealPhotoItem: PhotosPickerItem?
     @State private var mealTracker = MealCompletionTracker()
-    @State private var bodyRefreshToken = UUID()
     @State private var didLaunch = false
     @State private var bandMetrics = CommandBandMetrics.fallback
     /// Pushed screens with their own bottom bar (the meal page) step the
@@ -70,7 +65,6 @@ struct AppShell: View {
     }
 
     private var currentProfile: Profile { today.profile ?? profile }
-    private var todayLocalDay: String { LocalDayMath.today(in: currentProfile.timezone, now: dependencies.now()) }
 
     var body: some View {
         presentations(chrome)
@@ -110,8 +104,7 @@ struct AppShell: View {
 
             Tab("Body", systemImage: "figure.arms.open", value: AppTab.body) {
                 banded(
-                    dependencies.makeBodyScreen(currentProfile) { saved in checkInSaved(saved) }
-                        .id(bodyRefreshToken),
+                    dependencies.makeBodyScreen(currentProfile) { saved in checkInSaved(saved) },
                     tab: .body
                 )
             }
@@ -135,15 +128,12 @@ struct AppShell: View {
 }
 
 extension AppShell {
-    /// The shell's sheets, covers and event wiring (split out of `body` to
+    /// The shell's sheets and event wiring (split out of `body` to
     /// keep the type checker fast).
     fileprivate func presentations(_ content: some View) -> some View {
         content
         .sheet(isPresented: $today.isPresentingComposer, onDismiss: composerDismissed) { composer }
         .sheet(item: $sheet) { sheet in sheetContent(sheet) }
-        .fullScreenCover(item: $cover) { cover in coverContent(cover) }
-        .photosPicker(isPresented: $isPickingMealPhoto, selection: $mealPhotoItem, matching: .images)
-        .onChange(of: mealPhotoItem) { _, item in loadPickedMealPhoto(item) }
         .onAppear(perform: launch)
         .onChange(of: today.entries) { _, entries in
             for id in mealTracker.observe(entries) {
@@ -168,7 +158,6 @@ extension AppShell {
         }
         .onChange(of: capture.request) { _, request in handle(captureControllerRequest: request) }
         .onChange(of: sheet?.id) { _, _ in updatePresence() }
-        .onChange(of: cover?.id) { _, _ in updatePresence() }
         .onChange(of: today.isPresentingComposer) { _, _ in updatePresence() }
         .onChange(of: router.coachRequest) { _, request in handle(coachRequest: request) }
         .onChange(of: router.captureRequest) { _, request in handle(captureRequest: request) }
@@ -307,23 +296,6 @@ extension AppShell {
                 sendToCoach(text, mode: mode, engine: engine, hint: capture.context.contextHint)
             },
             logMeal: { openComposer(autoStartRecording: false) },
-            logWorkout: { sheet = .workoutLog(WorkoutLogContext()) },
-            mealPhoto: {
-                if CameraAvailability.hasCamera {
-                    cover = .camera(.meal)
-                } else {
-                    isPickingMealPhoto = true
-                }
-            },
-            scanBarcode: { openComposer(autoStartRecording: false, opensScanner: true) },
-            workoutPhoto: {
-                if CameraAvailability.hasCamera {
-                    cover = .camera(.workout)
-                } else {
-                    sheet = .workoutLog(WorkoutLogContext(initialKind: .strength))
-                }
-            },
-            checkIn: { cover = .checkIn },
             beginTyping: {
                 warmLocation()
                 isTyping = true
@@ -396,15 +368,14 @@ extension AppShell {
 
     /// The classic composer. A voice start begins the microphone warm-up at
     /// the tap so session activation overlaps the sheet animation.
-    private func openComposer(autoStartRecording: Bool, images: [UIImage] = [], opensScanner: Bool = false) {
+    private func openComposer(autoStartRecording: Bool) {
         Perf.mark(autoStartRecording ? "mic.tap" : "compose.tap")
         composerSeed = ComposerSeed(
             autoStartRecording: autoStartRecording,
-            images: images.isEmpty ? dependencies.composerSeedImages : images,
-            opensScanner: opensScanner
+            images: dependencies.composerSeedImages
         )
         if coachVoice.value.isBusy { coachVoice.value.cancel() }
-        if autoStartRecording, sheet == nil, cover == nil {
+        if autoStartRecording, sheet == nil {
             let voice = composerVoice.value
             Task { await voice.start() }
         }
@@ -419,8 +390,7 @@ extension AppShell {
             timezone: currentProfile.timezone,
             autoStartRecording: composerSeed.autoStartRecording,
             voice: composerVoice.value,
-            initialImages: composerSeed.images,
-            opensBarcodeScannerOnAppear: composerSeed.opensScanner
+            initialImages: composerSeed.images
         ) { draft in
             today.acceptEntrySubmission(
                 text: draft.text,
@@ -442,12 +412,7 @@ extension AppShell {
         voice.cancel()
     }
 
-    private func submitWorkout(_ draft: WorkoutLogDraft, sessionName: String?) {
-        logging.submit(draft, localDay: todayLocalDay, timezone: currentProfile.timezone, sessionName: sessionName)
-        tab = .today
-    }
-
-    // MARK: Sheets and covers
+    // MARK: Sheets
 
     @ViewBuilder
     private func sheetContent(_ sheet: ShellSheet) -> some View {
@@ -478,56 +443,6 @@ extension AppShell {
             }
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(Design.Radius.sheet)
-        case .workoutLog(let context):
-            WorkoutLogSheet(
-                session: context.session,
-                targets: context.targets,
-                initialKind: context.initialKind,
-                initialImage: context.initialImage
-            ) { draft in
-                submitWorkout(draft, sessionName: context.session?.name)
-            }
-            .presentationDragIndicator(.visible)
-            .presentationCornerRadius(Design.Radius.sheet)
-        }
-    }
-
-    @ViewBuilder
-    private func coverContent(_ cover: ShellCover) -> some View {
-        switch cover {
-        case .camera(let purpose):
-            CameraPicker { image in
-                Task { @MainActor in
-                    // Let the camera dismiss before the next presentation.
-                    try? await Task.sleep(for: .milliseconds(450))
-                    switch purpose {
-                    case .meal: openComposer(autoStartRecording: false, images: [image])
-                    case .workout: sheet = .workoutLog(WorkoutLogContext(initialKind: .strength, initialImage: image))
-                    }
-                }
-            }
-            .ignoresSafeArea()
-        case .checkIn:
-            BodyCheckInFlow(
-                localDay: todayLocalDay,
-                units: currentProfile.units,
-                existing: dayContext.checkIns.first { $0.localDay == todayLocalDay },
-                start: .camera,
-                service: dependencies.bodyService
-            ) { saved in
-                checkInSaved(saved)
-                bodyRefreshToken = UUID()
-            }
-        }
-    }
-
-    private func loadPickedMealPhoto(_ item: PhotosPickerItem?) {
-        guard let item else { return }
-        Task {
-            let data = try? await item.loadTransferable(type: Data.self)
-            mealPhotoItem = nil
-            guard let data, let image = UIImage(data: data) else { return }
-            openComposer(autoStartRecording: false, images: [image])
         }
     }
 
@@ -618,7 +533,7 @@ extension AppShell {
         CoachPresence.shared.isThreadVisible = CoachPresencePolicy.isThreadVisible(
             tab: tab,
             sceneActive: scenePhase == .active,
-            isPresentingOverThread: sheet != nil || cover != nil || today.isPresentingComposer
+            isPresentingOverThread: sheet != nil || today.isPresentingComposer
         )
     }
 
@@ -628,11 +543,9 @@ extension AppShell {
         switch request.destination {
         case .settings:
             today.isPresentingComposer = false
-            cover = nil
             sheet = .account(scrollToCoach: true)
         case .thread(let messageId, let localDay):
             sheet = nil
-            cover = nil
             today.isPresentingComposer = false
             tab = .today
             Task { await coach.focus(messageId: messageId, day: localDay) }
@@ -658,9 +571,8 @@ extension AppShell {
     private func handle(captureControllerRequest request: CaptureController.Request?) {
         guard let request else { return }
         capture.consume(request)
-        let wasCovered = sheet != nil || cover != nil || today.isPresentingComposer
+        let wasCovered = sheet != nil || today.isPresentingComposer
         sheet = nil
-        cover = nil
         today.isPresentingComposer = false
         if tab != request.context.tab { tab = request.context.tab }
         let voice = coachVoice.value
@@ -687,36 +599,16 @@ extension AppShell {
 struct ComposerSeed {
     var autoStartRecording = false
     var images: [UIImage] = []
-    var opensScanner = false
 }
 
 enum ShellSheet: Identifiable {
     case account(scrollToCoach: Bool)
     case bio
-    case workoutLog(WorkoutLogContext)
 
     var id: String {
         switch self {
         case .account: return "account"
         case .bio: return "bio"
-        case .workoutLog(let context): return "workout-\(context.id.uuidString)"
         }
     }
-}
-
-enum ShellCover: Identifiable {
-    enum CameraPurpose: String { case meal, workout }
-    case camera(CameraPurpose)
-    case checkIn
-
-    var id: String {
-        switch self {
-        case .camera(let purpose): return "camera-\(purpose.rawValue)"
-        case .checkIn: return "check-in"
-        }
-    }
-}
-
-enum CameraAvailability {
-    @MainActor static var hasCamera: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
 }

@@ -5,14 +5,8 @@ import UIKit
 struct CaptureBarActions {
     /// Send a message to Shudo (the coach routes meals/workouts via tools).
     var send: (_ text: String, _ mode: CoachInputMode, _ speechEngine: String?) -> Void
-    /// The meal logger (photo, barcode, typed or spoken meal).
+    /// The food logger: camera, photos, barcode, or the meal said or typed.
     var logMeal: () -> Void = {}
-    /// The typed workout logger.
-    var logWorkout: () -> Void = {}
-    var mealPhoto: () -> Void
-    var scanBarcode: () -> Void
-    var workoutPhoto: () -> Void
-    var checkIn: () -> Void
     /// Open the keyboard composer (the band sits under the
     /// keyboard, so typing happens in a field docked above it).
     var beginTyping: () -> Void
@@ -62,9 +56,9 @@ struct CaptureDraft: Equatable {
 /// Bottom-left, carved into the screen's corner under Luke's left thumb:
 /// Shudo's key. Tap it to record (the tab bar gives way to a timer and a
 /// meter, no live words), tap the same spot to send (it transcribes, then
-/// goes to Shudo). Touch and hold it and the cream dial fans out — Type,
-/// Log food, Photo (the tab's own kinds on Train and Body) — slide onto one
-/// and let go. A failed transcription keeps the recording and the same spot
+/// goes to Shudo). Touch and hold it and the cream dial fans out — Type
+/// straight up, Log food straight right, the same on every tab — slide onto
+/// one and let go. A failed transcription keeps the recording and the same spot
 /// retries; ✕ on the far right discards. A draft kept from the keyboard
 /// composer shows as a Pernambuco dot on the key; Type reopens it.
 struct CaptureBar: View {
@@ -125,7 +119,7 @@ struct CaptureBar: View {
             try? await Task.sleep(for: .milliseconds(1_500))
             guard !Task.isCancelled else { return }
             openFan()
-            fan.track(CaptureFanLayout.offset(index: 1, count: 3))
+            fan.track(CaptureFanLayout.offset(index: 1, count: 2))
         }
         #endif
         .onChange(of: voice.phase) { _, phase in
@@ -333,34 +327,18 @@ struct CaptureBar: View {
         let action: () -> Void
     }
 
-    /// Tapping the key already talks, so the dial holds everything else:
-    /// Type straight up from the thumb, then the tab's own logging.
+    /// Tapping the key already talks (workouts, check-ins, anything said
+    /// to Shudo), so the dial holds the two other ways in, the same on every
+    /// tab: Type straight up from the thumb, Log food straight right — one
+    /// door to every way of logging a meal (camera, photos, scan, words).
     private var fanItems: [FanItem] {
-        let type = FanItem(
-            option: .init(id: "type", title: draft.isEmpty ? "Type" : "Draft", symbol: "keyboard"),
-            action: actions.beginTyping
-        )
-        let food = FanItem(option: .init(id: "food", title: "Log food", symbol: "fork.knife"), action: actions.logMeal)
-        switch context {
-        case .train:
-            return [
-                type,
-                FanItem(option: .init(id: "workout", title: "Log workout", symbol: "dumbbell.fill"), action: actions.logWorkout),
-                FanItem(option: .init(id: "photo", title: "Photo", symbol: "camera.fill"), action: actions.workoutPhoto),
-            ]
-        case .body:
-            return [
-                type,
-                FanItem(option: .init(id: "checkin", title: "Check-in", symbol: "figure.arms.open"), action: actions.checkIn),
-                food,
-            ]
-        case .today, .bio:
-            return [
-                type,
-                food,
-                FanItem(option: .init(id: "photo", title: "Photo", symbol: "camera.fill"), action: actions.mealPhoto),
-            ]
-        }
+        [
+            FanItem(
+                option: .init(id: "type", title: draft.isEmpty ? "Type" : "Draft", symbol: "keyboard"),
+                action: actions.beginTyping
+            ),
+            FanItem(option: .init(id: "food", title: "Log food", symbol: "fork.knife"), action: actions.logMeal),
+        ]
     }
 
     private func openFan() {

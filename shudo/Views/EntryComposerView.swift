@@ -75,20 +75,17 @@ struct EntryComposerView: View {
     @State private var localError: String?
     @State private var didAutoStart = false
     @State private var clientRequestId = UUID()
-    /// Fitted to its content with nothing attached (one question, the
-    /// chips, the bar under the thumb); the full sheet once there's a photo
-    /// or a label to look at.
+    /// Fitted to its content with nothing attached (one question, the ways
+    /// in, the bar under the thumb); the full sheet once there's a photo or a
+    /// label to look at.
     @State private var isExpanded: Bool
     @State private var headingIn = false
-    /// Header, a breath, chips and bar — scaled with the text size.
-    @ScaledMetric(relativeTo: .title) private var compactHeight: CGFloat = 262
+    /// Header, a breath, the ways in and the bar — scaled with the text size.
+    @ScaledMetric(relativeTo: .title) private var compactHeight: CGFloat = 300
 
     let selectedDay: Date
     let timezone: String
     let autoStartRecording: Bool
-    /// The capture bar's "Scan barcode": open the scanner once the sheet is up.
-    let opensBarcodeScannerOnAppear: Bool
-    @State private var didOpenScanner = false
     /// Hands the composed meal to the owner and returns immediately — the
     /// upload runs on the Today screen's card, so this sheet never holds the
     /// user through the network round trip.
@@ -102,13 +99,11 @@ struct EntryComposerView: View {
         autoStartRecording: Bool = false,
         voice: VoiceTranscriber,
         initialImages: [UIImage] = [],
-        opensBarcodeScannerOnAppear: Bool = false,
         onSubmit: @escaping (EntryCaptureDraft) -> Void
     ) {
         self.selectedDay = selectedDay
         self.timezone = timezone
         self.autoStartRecording = autoStartRecording
-        self.opensBarcodeScannerOnAppear = opensBarcodeScannerOnAppear
         self.voice = voice
         _images = State(initialValue: initialImages)
         _isExpanded = State(initialValue: !initialImages.isEmpty)
@@ -196,14 +191,6 @@ struct EntryComposerView: View {
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(400))
                 CameraPrewarmer.prewarm()
-            }
-            if opensBarcodeScannerOnAppear, !didOpenScanner {
-                didOpenScanner = true
-                Task { @MainActor in
-                    // Present over the settled sheet, not mid-animation.
-                    try? await Task.sleep(for: .milliseconds(450))
-                    isShowingBarcodeScanner = true
-                }
             }
         }
         .task {
@@ -304,25 +291,28 @@ struct EntryComposerView: View {
         .padding(.top, 8)
     }
 
-    /// Left-aligned under the thumb, each sized to its word.
+    /// The ways in, side by side under the thumb: equal tiles, each a mark
+    /// over its word — take a photo, pick one already taken, scan a label.
+    /// Talking or typing is the bar beneath.
     private var attachRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                attachButton("Camera", systemImage: "camera.fill", enabled: canAddPhoto) {
+                attachTile("Camera", systemImage: "camera", id: "camera", enabled: canAddPhoto) {
                     Perf.mark("camera.tap")
                     settleVoiceCapture()
                     isShowingCamera = true
                 }
             }
-            attachButton("Photos", systemImage: "photo.on.rectangle", enabled: canAddPhoto) {
+            attachTile("Photos", systemImage: "photo.on.rectangle", id: "photos", enabled: canAddPhoto) {
                 settleVoiceCapture()
                 CaptureDiagnostics.record(.photoPickerPresented, state: voice.controlState)
                 isShowingPhotoPicker = true
             }
             // A scan adds a removable label card; it doesn't use a photo slot.
-            attachButton(
+            attachTile(
                 "Scan",
                 systemImage: "barcode.viewfinder",
+                id: "scan",
                 enabled: !isSubmitting && scannedPortions.count < EntryComposerPolicy.maximumScannedItems
             ) {
                 settleVoiceCapture()
@@ -335,24 +325,36 @@ struct EntryComposerView: View {
         !isSubmitting && !isPreparingImage && images.count < ImageProcessor.maximumPhotoCount
     }
 
-    private func attachButton(
+    private func attachTile(
         _ title: String,
         systemImage: String,
+        id: String,
         enabled: Bool,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(Design.Typeface.text(.subheadline, weight: .medium))
-                .foregroundStyle(enabled ? Design.Color.textSecondary : Design.Color.textDisabled)
-                .lineLimit(1)
-                .padding(.horizontal, 14)
-                .frame(minHeight: 38)
-                .background(Design.Color.hinoki.opacity(0.06), in: Capsule())
-                .contentShape(Capsule())
+            VStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.custom(Design.Typeface.faceName(.regular), fixedSize: 21))
+                    .frame(height: 24)
+                Text(title)
+                    .font(Design.Typeface.text(.subheadline, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(enabled ? Design.Color.textPrimary : Design.Color.textDisabled)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                Design.Color.hinoki.opacity(0.06),
+                in: RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: Design.Radius.card, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ComposerTileStyle())
         .disabled(!enabled)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier("meal.\(id)")
     }
 
     // MARK: Content
@@ -869,6 +871,17 @@ private struct ScannedFoodCard: View {
             parts.append("fat \(BarcodeNutrition.compactAmount(fat)) grams")
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+private struct ComposerTileStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(Design.Motion.snap, value: configuration.isPressed)
     }
 }
 

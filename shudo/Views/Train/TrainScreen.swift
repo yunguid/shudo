@@ -28,8 +28,8 @@ struct WorkoutLogContext: Identifiable {
 ///
 /// `onAskCoach` receives a complete sentence for the coach ("Build me a
 /// training plan…") — send it, or prefill the capture bar with it.
-/// Logging lives in the command well in the corner (tap to say it, hold for
-/// "Log workout" or a photo), so the tab has no "+" and no big Log button —
+/// Logging lives in the command well in the corner (tap and say it, or hold
+/// for Type), so the tab has no "+" and no big Log button —
 /// the session panel offers only the quiet typed way. `onLogByVoice` (the
 /// shell binds it to the well's recorder in the Train context) backs the
 /// panel's VoiceOver "Log by voice" action; unbound, that opens the typed

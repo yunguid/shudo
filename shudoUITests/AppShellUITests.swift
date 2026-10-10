@@ -81,14 +81,16 @@ final class AppShellUITests: XCTestCase {
         XCTAssertTrue(app.buttons["capture.mic"].waitForExistence(timeout: 3))
     }
 
-    /// Hold the Shudo mark, slide right to Log food, let go: the meal
-    /// logger opens.
+    /// Hold the Shudo mark, slide straight right to Log food, let go: the
+    /// food logger opens with its ways in.
     @MainActor
     func testHoldingShudoFansOutToLogFood() throws {
         let app = launch()
         let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 68, dy: -68)))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 96, dy: 0)))
         XCTAssertTrue(app.staticTexts["meal.heading"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["meal.photos"].exists)
+        XCTAssertTrue(app.buttons["meal.scan"].exists)
     }
 
     /// The trailing ✕ throws a recording away without sending anything.

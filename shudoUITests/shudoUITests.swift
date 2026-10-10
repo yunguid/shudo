@@ -20,8 +20,8 @@ final class shudoUITests: XCTestCase {
         }
     }
 
-    /// The meal composer is the photo path: the bar's camera (a photo
-    /// picker on the Simulator) opens it with the photo attached. The
+    /// The meal composer is the photo path: Log food → Photos opens the
+    /// picker and the photo lands attached. The
     /// note, the photos and a recording all survive leaving the app; the
     /// bottom-left mic records and the same spot logs the meal.
     @MainActor
@@ -278,11 +278,12 @@ final class shudoUITests: XCTestCase {
         return app
     }
 
-    /// Hold the Shudo mark → slide to Photo (the Simulator has no camera,
-    /// so it's the photo picker) opens the composer with it.
+    /// Hold the Shudo mark → Log food → Photos: the picked photo lands in
+    /// the composer.
     @MainActor
     private func openComposerWithPhoto(in app: XCUIApplication) {
-        chooseFanOption(2, in: app)
+        openComposerFromFan(in: app)
+        app.buttons["meal.photos"].tap()
         let photos = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'"))
         XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 8))
         photos.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -301,9 +302,10 @@ final class shudoUITests: XCTestCase {
     }
 
     /// Press and hold the Shudo mark, slide toward option `index` on the
-    /// quarter dial (straight up, up-right, right; 96 pt out) and let go.
+    /// quarter dial (Type straight up, Log food straight right; 96 pt out)
+    /// and let go.
     private static func fanOffset(_ index: Int) -> CGVector {
-        let radians = Double(index) * 45 * .pi / 180
+        let radians = Double(index) * 90 * .pi / 180
         return CGVector(dx: sin(radians) * 96, dy: -cos(radians) * 96)
     }
 
