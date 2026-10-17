@@ -205,9 +205,18 @@ enum Design {
             UITabBarItem.appearance().setTitleTextAttributes(
                 [.font: uiFont(.caption2, weight: .medium, size: 10)], for: .normal
             )
-            UISegmentedControl.appearance().setTitleTextAttributes(
-                [.font: uiFont(.subheadline, weight: .medium, size: 13)], for: .normal
+            // Segments in wood, not the system's grey glass: a walnut track,
+            // the chosen one a hinoki slab with sumi ink (the house chip).
+            let segmented = UISegmentedControl.appearance()
+            let segmentFont = uiFont(.subheadline, weight: .medium, size: 13)
+            segmented.setTitleTextAttributes(
+                [.font: segmentFont, .foregroundColor: UIColor(Design.Color.textSecondary)], for: .normal
             )
+            segmented.setTitleTextAttributes(
+                [.font: segmentFont, .foregroundColor: UIColor(Design.Color.sumi)], for: .selected
+            )
+            segmented.backgroundColor = UIColor(Design.Color.surface2)
+            segmented.selectedSegmentTintColor = UIColor(Design.Color.hinoki)
         }
     }
 
