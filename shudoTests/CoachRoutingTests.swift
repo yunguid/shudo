@@ -115,7 +115,7 @@ struct CoachRoutingTests {
 
     @Test func bannersAreSuppressedOnlyWhileTheThreadIsVisible() {
         #expect(CoachNotificationRouting.presentationOptions(isCoach: true, threadVisible: true) == [])
-        #expect(CoachNotificationRouting.presentationOptions(isCoach: true, threadVisible: false) == [.banner, .list, .sound])
+        #expect(CoachNotificationRouting.presentationOptions(isCoach: true, threadVisible: false) == [.banner, .list])
         #expect(CoachNotificationRouting.presentationOptions(isCoach: false, threadVisible: true) == [.banner, .list, .sound])
     }
 
