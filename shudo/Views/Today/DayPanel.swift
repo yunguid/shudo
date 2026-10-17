@@ -32,13 +32,19 @@ struct DayPanelSheet<Content: View>: View, Animatable {
         // and the parts ink in on it (PanelInk), so the thread and the day
         // never show through each other.
         let reveal = reduceMotion ? 1 : min(max(progress, 0), 1)
-        content
-            .mask(alignment: .top) { ink(reveal: reveal) }
-            .modifier(Overpull(progress: reduceMotion ? 1 : progress))
-            .background(alignment: .top) {
-                paper(reveal: reveal)
-                    .opacity(reduceMotion ? Double(min(max(progress * 2, 0), 1)) : 1)
-            }
+        // Shut, the day isn't there at all. Masked in place it would still
+        // lie over the thread for touch, VoiceOver and UI tests, so nothing
+        // in the thread below the header could be reached. Keyed to the
+        // animated progress, the fold still plays out to the last frame.
+        if progress > 0 {
+            content
+                .mask(alignment: .top) { ink(reveal: reveal) }
+                .modifier(Overpull(progress: reduceMotion ? 1 : progress))
+                .background(alignment: .top) {
+                    paper(reveal: reveal)
+                        .opacity(reduceMotion ? Double(min(max(progress * 2, 0), 1)) : 1)
+                }
+        }
     }
 
     /// The ink: fully there above the edge, cleared `lead` points before it.

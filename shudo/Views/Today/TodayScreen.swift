@@ -1111,9 +1111,21 @@ struct TodayScreen: View {
 
     private func focus(on id: UUID, proxy: ScrollViewProxy) {
         let rowId = DayThreadPolicy.rowId(forMessage: id)
+        // Reading back through the day, as if Luke had scrolled there: the
+        // thread stops sticking to its newest row, so rows still settling
+        // below don't pull it back down.
+        isPinnedToBottom = false
         Task { @MainActor in
             // Let a day switch settle so the row exists before scrolling.
             try? await Task.sleep(for: .milliseconds(350))
+            // A cold launch from a notification is still gliding to the
+            // newest row; a scroll started mid-glide is dropped, so wait
+            // for the thread to come to rest (briefly) before moving it.
+            for _ in 0..<15 where scrollPhase != .idle && !scrollPhase.isUserDriven {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            // Landing at the bottom on the way may have re-pinned it.
+            isPinnedToBottom = false
             withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
                 proxy.scrollTo(rowId, anchor: .center)
                 highlightedRowId = rowId

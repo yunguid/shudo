@@ -331,10 +331,28 @@ final class CoachViewModel: ObservableObject {
         await refreshUnreadCount()
     }
 
-    /// Jump to a message from a deep link / notification tap.
+    /// Jump to a message from a deep link / notification tap. A text the
+    /// coach rewrote after the phone scheduled it (the 5 am plan replacing
+    /// last night's wake text) is gone from the thread; the text holding
+    /// its slot that day now stands in for it.
     func focus(messageId: UUID?, day: String?) async {
         await refresh(day: day ?? localDay)
-        focusedMessageId = messageId
+        guard let messageId else { return }
+        if messages.contains(where: { $0.id == messageId }) {
+            focusedMessageId = messageId
+        } else {
+            focusedMessageId = await replacement(for: messageId)
+        }
+    }
+
+    /// The visible coach text in the same slot on the same day as `id`.
+    private func replacement(for id: UUID) async -> UUID? {
+        guard let original = try? await service.fetchMessage(id),
+              let slot = original.slotKey else { return nil }
+        if original.localDay != localDay { await refresh(day: original.localDay) }
+        return messages.last { message in
+            message.role == .coach && message.slotKey == slot && message.localDay == original.localDay
+        }?.id
     }
 
     func consumeFocus() {

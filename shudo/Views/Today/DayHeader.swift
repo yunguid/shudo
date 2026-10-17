@@ -303,7 +303,8 @@ struct DayHeader<Account: View, DayPicker: View>: View {
     private var unfolded: some View {
         let progress = self.progress
         return ZStack(alignment: .top) {
-            veil(progress)
+            // Shut, the 2,000-point veil would sit over the whole thread.
+            if progress > 0 { veil(progress) }
             DayPanelSheet(progress: progress, top: headerBottom, reduceMotion: reduceMotion) {
                 sheet(progress)
             }
@@ -568,7 +569,14 @@ struct DayHeader<Account: View, DayPicker: View>: View {
             holdSlack = rise
         }
         guard holdAxis == .vertical else { return }
-        held = holdBase + (rise - holdSlack) / max(sheetHeight, 1)
+        held = holdBase + (rise - holdSlack) / pullHeight
+    }
+
+    /// What a pull is measured against: the sheet's height. Shut, the sheet
+    /// isn't laid out, so until it has opened once a pull uses the room it
+    /// will open into.
+    private var pullHeight: CGFloat {
+        sheetHeight > 0 ? sheetHeight : min(max(room, 240), 480)
     }
 
     /// Let go: a flick goes where it was flung, a slow release to the
@@ -577,7 +585,7 @@ struct DayHeader<Account: View, DayPicker: View>: View {
         let axis = holdAxis
         holdAxis = .undecided
         guard axis == .vertical, held != nil else { return }
-        let velocity = value.velocity.height / max(sheetHeight, 1)
+        let velocity = value.velocity.height / pullHeight
         setExpanded(DayPanelMotion.opens(at: progress, velocity: velocity), velocity: velocity)
     }
 

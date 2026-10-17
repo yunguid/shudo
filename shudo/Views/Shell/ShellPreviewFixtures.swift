@@ -367,12 +367,25 @@ enum ShellPreviewFixtures {
 
     // MARK: Services
 
+    /// Last night's wake text, rewritten by this morning's plan: the phone
+    /// may still ring with it, and its link lands on the game plan.
+    private static let supersededWakeId = UUID(uuidString: "C0000000-0000-4000-8000-0000000000A1")!
+
+    private static var supersededWakeText: CoachMessage {
+        CoachMessage(
+            id: supersededWakeId,
+            role: .coach, kind: "plan", body: "Morning. Big upper day, so breakfast is a real one.",
+            localDay: today, deliverAt: at(6, 58), status: .superseded, notify: true, slotKey: "wake",
+            createdAt: calendar.date(byAdding: .day, value: -1, to: at(21, 40))
+        )
+    }
+
     static func coachService(cards: Bool, settings: CoachSettings = .defaults) -> FakeCoachService {
         // A send gets a canned answer at the real pace: Shudo takes the turn
         // after a beat, thinks (typing dots), then the words stream in — so
         // the whole loop can be judged on screen.
         let service = FakeCoachService(
-            messages: cards ? cardMessages() : messages(),
+            messages: cards ? cardMessages() : messages() + [supersededWakeText],
             memory: memory,
             settings: settings,
             stepDelayMilliseconds: 90,

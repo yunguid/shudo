@@ -14,6 +14,10 @@ protocol CoachServing: Sendable {
     func act(on action: CoachCardAction) async throws -> [CoachMessage]
     /// Visible rows for one local day (`status <> superseded`, delivered).
     func fetchDay(_ localDay: String) async throws -> [CoachMessage]
+    /// One row by id in any status (a superseded text included); nil when
+    /// there is none. A tapped text the coach has since rewritten finds its
+    /// slot, and so the text that replaced it.
+    func fetchMessage(_ id: UUID) async throws -> CoachMessage?
     /// Rows changed after `cursor` (`updated_at > cursor`), oldest first. A nil
     /// cursor returns the recent window (last 48 h of deliveries + future).
     func fetchChanges(since cursor: Date?) async throws -> [CoachMessage]
@@ -369,6 +373,20 @@ struct CoachService: CoachServing {
         let request = try await restRequest("coach_messages", query: query)
         let data = try await perform(request, fallback: "Couldn’t load the thread.")
         return try Self.parseMessages(data)
+    }
+
+    func fetchMessage(_ id: UUID) async throws -> CoachMessage? {
+        var query = [
+            URLQueryItem(name: "select", value: "*"),
+            URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+            URLQueryItem(name: "limit", value: "1"),
+        ]
+        if let userId = userIdProvider() {
+            query.append(URLQueryItem(name: "user_id", value: "eq.\(userId)"))
+        }
+        let request = try await restRequest("coach_messages", query: query)
+        let data = try await perform(request, fallback: "Couldn’t load the message.")
+        return try Self.parseMessages(data).first
     }
 
     func fetchChanges(since cursor: Date?) async throws -> [CoachMessage] {
@@ -937,6 +955,10 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
                 stored.values.filter { $0.localDay == localDay && $0.isVisible(at: now) }
             )
         }
+    }
+
+    func fetchMessage(_ id: UUID) async throws -> CoachMessage? {
+        lock.withLock { stored[id] }
     }
 
     func fetchChanges(since cursor: Date?) async throws -> [CoachMessage] {

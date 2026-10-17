@@ -174,7 +174,9 @@ final class AppShellUITests: XCTestCase {
     }
 
     /// `shudo://coach?message=…&day=…` (a notification tap) lands on the
-    /// message in the thread.
+    /// message in the thread. The link is last night's wake text, which this
+    /// morning's plan rewrote: the phone can still ring with it, and it lands
+    /// on the game plan that replaced it.
     @MainActor
     func testCoachDeepLinkScrollsToTheMessage() throws {
         let app = launch()
@@ -187,7 +189,7 @@ final class AppShellUITests: XCTestCase {
         XCTAssertTrue(plan.waitForExistence(timeout: 5))
         XCTAssertFalse(plan.isHittable, "the thread opens at the bottom, far from the morning plan")
 
-        app.open(try XCTUnwrap(URL(string: "shudo://coach?message=c0000000-0000-4000-8000-000000000002&day=\(day)")))
+        app.open(try XCTUnwrap(URL(string: "shudo://coach?message=c0000000-0000-4000-8000-0000000000a1&day=\(day)")))
         let visible = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: plan)
         XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 6), .completed)
     }
