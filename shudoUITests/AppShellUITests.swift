@@ -147,13 +147,6 @@ final class AppShellUITests: XCTestCase {
     /// Tap the header open, swipe a meal away, watch the header move, undo.
     @MainActor
     func testLedgerSwipeDeleteMovesTheHeaderAndUndoes() throws {
-        // TODO(Today header ledger): the swipe deletes, Undo appears and the
-        // header visibly drops to 1,155 (verified by screenshot), but the
-        // header's accessibility label stays at the launch value ("855
-        // kilocalories left of 2900") — the AX tree of the glass
-        // safeAreaBar header doesn't refresh. Fix the stale label, then
-        // re-enable.
-        try XCTSkipIf(true, "TODO: Today header accessibility label goes stale in the safeAreaBar")
         let app = launch()
         let remaining = app.descendants(matching: .any)["today.header.remaining"]
         XCTAssertTrue(remaining.waitForExistence(timeout: 5))
