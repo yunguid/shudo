@@ -653,24 +653,8 @@ struct WorkoutAckCardView: View {
             ThreadCard(eyebrow: card.prs.count > 1 ? "\(card.prs.count) new PRs" : "New PR", accent: Design.Color.ember) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(card.prs) { record in
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(record.exercise)
-                                .font(Design.Typeface.text(.subheadline))
-                                .foregroundStyle(Design.Color.textPrimary)
-                                .lineLimit(1)
-                            Spacer(minLength: 6)
-                            Text(ThreadCardCopy.prValue(record))
-                                .font(Design.Typeface.numeral(.headline, weight: .semibold))
-                                .foregroundStyle(Design.Color.textPrimary)
-                                .monospacedDigit()
-                            if let delta = ThreadCardCopy.prDelta(record) {
-                                Text(delta)
-                                    .font(Design.Typeface.numeral(.caption, weight: .semibold))
-                                    .foregroundStyle(Design.Color.ember)
-                                    .monospacedDigit()
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
+                        prRow(record)
+                            .accessibilityElement(children: .combine)
                     }
                 }
             }
@@ -678,6 +662,39 @@ struct WorkoutAckCardView: View {
         .buttonStyle(.plain)
         .disabled(card.activityId == nil)
         .sensoryFeedback(.success, trigger: card.prs.count)
+    }
+
+    /// The lift and its number on one line; large text puts the number
+    /// under the whole lift name instead of cutting the name short.
+    private func prRow(_ record: WorkoutAckCard.PersonalRecord) -> some View {
+        let name = Text(record.exercise)
+            .font(Design.Typeface.text(.subheadline))
+            .foregroundStyle(Design.Color.textPrimary)
+        let value = HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(ThreadCardCopy.prValue(record))
+                .font(Design.Typeface.numeral(.headline, weight: .semibold))
+                .foregroundStyle(Design.Color.textPrimary)
+                .monospacedDigit()
+            if let delta = ThreadCardCopy.prDelta(record) {
+                Text(delta)
+                    .font(Design.Typeface.numeral(.caption, weight: .semibold))
+                    .foregroundStyle(Design.Color.ember)
+                    .monospacedDigit()
+            }
+        }
+        .lineLimit(1)
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                name.lineLimit(1)
+                Spacer(minLength: 6)
+                value
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                name.fixedSize(horizontal: false, vertical: true)
+                value
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
