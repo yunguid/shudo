@@ -142,11 +142,16 @@ struct DayHeader<Account: View, DayPicker: View>: View {
                             .accessibilityHidden(true)
                     }
                     if let subtitle {
-                        Text(subtitle)
-                            .font(Design.Typeface.text(.caption))
-                            .foregroundStyle(subtitleIsLive ? Design.Color.ember : Design.Color.textTertiary)
-                            .lineLimit(1)
-                            .contentTransition(.opacity)
+                        // "typing…" takes over from "Day 35 of the bulk" the
+                        // same way: a hand-off, never two lines blended.
+                        ZStack(alignment: .leading) {
+                            Text(subtitle)
+                                .font(Design.Typeface.text(.caption))
+                                .foregroundStyle(subtitleIsLive ? Design.Color.ember : Design.Color.textTertiary)
+                                .lineLimit(1)
+                                .id(subtitle)
+                                .transition(.inkHandoff(reduceMotion: reduceMotion))
+                        }
                     }
                 }
                 .frame(minHeight: 44)
