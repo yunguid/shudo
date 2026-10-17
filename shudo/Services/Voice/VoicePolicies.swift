@@ -13,7 +13,8 @@ enum SpeechEngineID: String, CaseIterable, Codable, Sendable {
     case dictationTranscriber = "apple.dictation_transcriber"
     case sfSpeechOnDevice = "apple.sf_speech_on_device"
     /// Record the take, then transcribe it on Shudo's `transcribe` function
-    /// (OpenAI gpt-4o-transcribe) once Luke taps send/stop.
+    /// (OpenAI) once Luke taps send/stop. The raw value is the wire id from
+    /// when that meant gpt-4o-transcribe; it stays put across model changes.
     case openAITranscribe = "openai.gpt-4o-transcribe"
 
     var diagnosticName: String {
@@ -70,6 +71,10 @@ struct VoiceProfile: Equatable, Sendable {
     /// How long a stop waits for the server transcription before offering a
     /// retry (the recording is kept).
     static let serverTranscriptionTimeout: TimeInterval = 45
+    /// A recording keeps listening this long after Luke taps send, so a
+    /// last word still being said (and the input's own latency, longest on
+    /// Bluetooth) isn't clipped off the end.
+    static let recordingTail: TimeInterval = 0.4
 
     var transcribesOnServer: Bool { transcriptionPurpose != nil }
 
@@ -471,7 +476,9 @@ enum VoiceCopy {
     static let speechDenied =
         "Speech recognition is off for Shudo — turn it on in Settings or type."
     static let unsupported = "Voice isn’t available on this device — type it instead."
-    static let keptWhatWasHeard = "Kept what I heard."
+    /// A call, Siri or a lost mic ended the take; tapping again records
+    /// more onto it.
+    static let keptWhatWasHeard = "Lost the mic there — kept what I heard. Tap to keep going."
     static let didNotCatchThat = "Didn’t catch that — try again or type it."
     static let reachedTimeLimit = "Recording stopped at the time limit."
     static let reachedLengthLimit = "That’s the max length."

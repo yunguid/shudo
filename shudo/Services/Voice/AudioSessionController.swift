@@ -6,6 +6,9 @@ import os
 enum AudioSessionEvent: Equatable, Sendable {
     /// A phone call, Siri, or another app's capture took the session.
     case interruptionBegan
+    /// The route the microphone was on went away (iOS reports a Bluetooth
+    /// headset dropping as an interruption): reopen on the new route.
+    case routeLost
     /// The media server crashed; every audio object is dead.
     case mediaServicesReset
     /// Another voice surface in Shudo claimed the session.
@@ -225,7 +228,10 @@ final class AudioSessionController {
                 queue: .main
             ) { [weak self] notification in
                 let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
-                MainActor.assumeIsolated { self?.handleInterruption(rawType: rawType) }
+                let rawReason = notification.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt
+                MainActor.assumeIsolated {
+                    self?.handleInterruption(rawType: rawType, rawReason: rawReason)
+                }
             },
             center.addObserver(
                 forName: AVAudioSession.mediaServicesWereResetNotification,
@@ -238,12 +244,13 @@ final class AudioSessionController {
                 forName: AVAudioSession.routeChangeNotification,
                 object: session,
                 queue: .main
-            ) { _ in
-                // A route change alone (AirPods connecting) never ends a take
-                // here; if it reconfigures the input, the capture engine's own
-                // configuration-change notification ends it honestly.
+            ) { notification in
+                // A route change never ends a take: when it reconfigures the
+                // input (AirPods switching to their mic), the capture reopens
+                // it on the new route and the recording carries on.
+                let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
                 MainActor.assumeIsolated {
-                    CaptureDiagnostics.record(.audioRouteChanged, state: "route")
+                    CaptureDiagnostics.record(.audioRouteChanged, state: Self.routeChangeName(rawReason))
                 }
             },
         ]
@@ -251,13 +258,38 @@ final class AudioSessionController {
 
     /// The system can end capture without any other callback — a phone
     /// call, Siri, or another capture session taking the input. The owner
-    /// finishes honestly and keeps the text heard so far.
-    private func handleInterruption(rawType: UInt?) {
+    /// finishes honestly and keeps the text heard so far. A route that
+    /// disconnected (a Bluetooth headset dying) is not that: the owner
+    /// reopens the input on the route the system falls back to.
+    private func handleInterruption(rawType: UInt?, rawReason: UInt?) {
         guard let rawType,
               AVAudioSession.InterruptionType(rawValue: rawType) == .began,
               let owner else { return }
+        if let rawReason, AVAudioSession.InterruptionReason(rawValue: rawReason) == .routeDisconnected {
+            CaptureDiagnostics.record(.audioRouteLost, state: "route_disconnected")
+            owner.onEvent(.routeLost)
+            return
+        }
         CaptureDiagnostics.record(.audioInterrupted, state: "interrupted")
         owner.onEvent(.interruptionBegan)
+    }
+
+    /// Static, privacy-safe names (never the route's device names).
+    nonisolated static func routeChangeName(_ rawReason: UInt?) -> String {
+        guard let rawReason, let reason = AVAudioSession.RouteChangeReason(rawValue: rawReason) else {
+            return "route"
+        }
+        switch reason {
+        case .newDeviceAvailable: return "new_device"
+        case .oldDeviceUnavailable: return "device_gone"
+        case .categoryChange: return "category_change"
+        case .override: return "override"
+        case .wakeFromSleep: return "wake"
+        case .noSuitableRouteForCategory: return "no_route"
+        case .routeConfigurationChange: return "route_config"
+        case .unknown: return "unknown"
+        @unknown default: return "route"
+        }
     }
 
     private func handleMediaServicesReset() {

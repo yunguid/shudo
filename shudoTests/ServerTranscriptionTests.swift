@@ -19,6 +19,7 @@ struct ServerTranscriptionClientTests {
             audio: audio,
             purpose: .coach,
             clientRequestId: requestId,
+            measurements: TakeMeasurements(audioSeconds: 12.5, voicedSeconds: 9.25),
             jwt: "session-jwt",
             boundary: "shudo-test-boundary"
         )
@@ -38,6 +39,9 @@ struct ServerTranscriptionClientTests {
             "Content-Disposition: form-data; name=\"client_request_id\"\r\n\r\na1b2c3d4-e5f6-4711-8899-aabbccddeeff\r\n"
         ))
         #expect(!text.contains("A1B2C3D4"), "the id must be lowercase")
+        // The server's completeness check reads these two by name.
+        #expect(text.contains("name=\"audio_seconds\"\r\n\r\n12.50\r\n"))
+        #expect(text.contains("name=\"voiced_seconds\"\r\n\r\n9.25\r\n"))
         #expect(text.contains(
             "Content-Disposition: form-data; name=\"audio\"; filename=\"voice.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n"
         ))
@@ -111,6 +115,7 @@ private final class FakeUploader: SpeechTranscriptionUploading, @unchecked Senda
         let audio: Data
         let purpose: TranscriptionPurpose
         let clientRequestId: UUID
+        let measurements: TakeMeasurements
     }
 
     private let lock = NSLock()
@@ -123,9 +128,19 @@ private final class FakeUploader: SpeechTranscriptionUploading, @unchecked Senda
 
     var calls: [Call] { lock.withLock { _calls } }
 
-    func transcribe(audio: Data, purpose: TranscriptionPurpose, clientRequestId: UUID) async throws -> String {
+    func transcribe(
+        audio: Data,
+        purpose: TranscriptionPurpose,
+        clientRequestId: UUID,
+        measurements: TakeMeasurements
+    ) async throws -> String {
         let result = lock.withLock { () -> Result<String, Error> in
-            _calls.append(Call(audio: audio, purpose: purpose, clientRequestId: clientRequestId))
+            _calls.append(Call(
+                audio: audio,
+                purpose: purpose,
+                clientRequestId: clientRequestId,
+                measurements: measurements
+            ))
             return _results.count > 1 ? _results.removeFirst() : _results[0]
         }
         return try result.get()
@@ -184,6 +199,31 @@ struct ServerTranscriptionEngineTests {
         // An MPEG-4 container ("ftyp" box) of AAC audio.
         #expect(String(decoding: call.audio.subdata(in: 4..<8), as: UTF8.self) == "ftyp")
         #expect(!FileManager.default.fileExists(atPath: file.path), "transcribed audio is not kept")
+    }
+
+    /// AirPods switching to their 16/24 kHz mic mid-take change the
+    /// microphone's format. Everything said after the switch must land in
+    /// the same recording — this is where takes used to end, sending only
+    /// what came before.
+    @Test func aMidTakeFormatChangeKeepsRecordingIntoTheSameFile() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let uploader = FakeUploader(results: [.success("Bench went up today.")])
+        let engine = ServerTranscriptionEngine(uploader: uploader, directory: directory)
+        _ = try await engine.start(locale: Locale(identifier: "en_US"), profile: .coach, vocabulary: [])
+        for rate in [48_000.0, 16_000, 24_000, 48_000] {
+            engine.append(try toneBuffer(sampleRate: rate, seconds: 1))
+        }
+
+        #expect(try await engine.transcribeRecording() == "Bench went up today.")
+        let call = try #require(uploader.calls.first)
+        #expect(abs(call.measurements.audioSeconds - 4) < 0.1)
+        #expect(abs(call.measurements.voicedSeconds - 4) < 0.01)
+        // The uploaded file itself plays all four seconds.
+        let played = directory.appendingPathComponent("uploaded.m4a")
+        try call.audio.write(to: played)
+        let file = try AVAudioFile(forReading: played)
+        #expect(abs(Double(file.length) / file.fileFormat.sampleRate - 4) < 0.1)
     }
 
     @Test func aRetryableFailureKeepsTheFileAndRetryReusesTheRequestId() async throws {

@@ -43,6 +43,8 @@ struct VoiceEnvironment {
     /// How long a server take may spend transcribing before the upload is
     /// cancelled and a retry offered.
     var serverTranscriptionTimeout: TimeInterval = VoiceProfile.serverTranscriptionTimeout
+    /// How long a recording keeps listening after Luke taps send.
+    var recordingTail: TimeInterval = VoiceProfile.recordingTail
 
     static var live: VoiceEnvironment {
         _ = staleRecordingSweep
@@ -94,11 +96,13 @@ struct VoiceEnvironment {
 /// - On-device (the weigh-in): live words while Luke speaks; audio never
 ///   leaves the phone.
 ///
-/// Lifecycle: `start()` → `.listening` as soon as the mic is live (the
+/// Lifecycle: `start()` → `.listening` once the mic actually hears (the
 /// recognizer warms up in parallel; the unbounded capture stream keeps the
-/// first words) → `stop()` returns the take. When a take ends by itself
-/// (interruption, time or length limit, auto-stop, `finishInBackground()`),
-/// it is parked and `phase` becomes `.ready`; collect it with `stop()` or
+/// first words) → `stop()` returns the take. A route change (AirPods, a
+/// car) never ends a take; the capture reopens the input and the recording
+/// carries on. When a take ends by itself (a call or Siri, time or length
+/// limit, auto-stop, `finishInBackground()`), it is parked with a notice
+/// saying why and `phase` becomes `.ready`; collect it with `stop()` or
 /// `collectReadyTake()`. Each take is handed out exactly once.
 @MainActor
 final class VoiceTranscriber: ObservableObject {
@@ -145,6 +149,10 @@ final class VoiceTranscriber: ObservableObject {
             }
         }
     }
+
+    /// How long a start waits for the microphone to hear before calling it
+    /// recording anyway (the meter then shows the silence honestly).
+    private static let hearingTimeout: TimeInterval = 1.5
 
     private enum FinishReason {
         case user
@@ -382,6 +390,13 @@ final class VoiceTranscriber: ObservableObject {
             CaptureDiagnostics.record(.recorderStartFailed, state: controlState)
             return false
         }
+        // Recording only once the microphone hears: a Bluetooth headset sends
+        // silence while its mic link comes up, and words said into that are
+        // gone. The start cue (the haptic, the live meter) waits for it.
+        var hearing = false
+        if stillStarting(token) {
+            hearing = await capture.waitUntilHearing(timeout: Self.hearingTimeout)
+        }
         guard stillStarting(token) else {
             // Aborted or canceled while the microphone warmed up.
             capture.stop()
@@ -389,6 +404,7 @@ final class VoiceTranscriber: ObservableObject {
             Task { await primary.cancel() }
             return false
         }
+        CaptureDiagnostics.record(.recorderHearing, state: hearing ? "live" : "silent")
 
         startedAt = Date()
         activeEngine = engineID
@@ -660,13 +676,16 @@ final class VoiceTranscriber: ObservableObject {
         }
     }
 
+    /// Only the system taking the microphone (a call, Siri, another app) or
+    /// an input that couldn't be reopened ends a take this way; route and
+    /// format changes are absorbed by the capture.
     private func handleCaptureEvent(_ event: AudioCaptureEvent, token: Int) {
         guard generation == token else { return }
         switch phase {
         case .starting:
             abortStarting()
         case .listening:
-            CaptureDiagnostics.record(.audioInterrupted, state: controlState)
+            CaptureDiagnostics.record(.audioInterrupted, state: Self.diagnosticName(event))
             // After a media-server crash the recognizer is likely dead too;
             // don't wait long for a final pass that won't come.
             beginFinishing(
@@ -675,6 +694,15 @@ final class VoiceTranscriber: ObservableObject {
             )
         default:
             break
+        }
+    }
+
+    private static func diagnosticName(_ event: AudioCaptureEvent) -> String {
+        switch event {
+        case .interrupted: return "interrupted"
+        case .mediaServicesReset: return "media_reset"
+        case .preempted: return "preempted"
+        case .inputLost: return "input_lost"
         }
     }
 
@@ -689,15 +717,21 @@ final class VoiceTranscriber: ObservableObject {
         let duration = startedAt
             .map { min(profile.maximumDuration, Date().timeIntervalSince($0)) } ?? elapsedTime
         elapsedTime = duration
-        // Free the microphone right away; the recognizer finalizes from the
-        // audio it already has (the capture stream ends after its backlog).
-        capture?.stop()
-        capture = nil
-        CaptureDiagnostics.record(.recorderStopped, state: controlState)
 
         let attach = pipelineTask
         if let engineID = activeEngine, engineID.transcribesAfterRecording {
+            // Luke taps send on his last word: keep listening a beat so it
+            // lands in the recording. Anything else that ends a take (the
+            // camera needs the mic, a call took it, the time limit) frees
+            // the microphone at once.
+            let tail = reason == .user ? environment.recordingTail : 0
+            if tail <= 0 { releaseMicrophone() }
             finishTask = Task { [weak self] in
+                if tail > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(tail * 1_000_000_000))
+                    guard let self, self.generation == token else { return }
+                    self.releaseMicrophone()
+                }
                 // Every buffer heard is in the file before it is closed.
                 guard let pipeline = await attach?.value else {
                     guard let self, self.generation == token else { return }
@@ -717,6 +751,9 @@ final class VoiceTranscriber: ObservableObject {
             }
             return
         }
+        // Free the microphone right away; the recognizer finalizes from the
+        // audio it already has (the capture stream ends after its backlog).
+        releaseMicrophone()
         let limit = timeout ?? profile.finalizationTimeout
         finishTask = Task { [weak self] in
             let finalized = await VoiceTiming.race(timeout: limit) {
@@ -824,6 +861,16 @@ final class VoiceTranscriber: ObservableObject {
         phase = authorization == .denied
             ? .unavailable(.speechDenied)
             : .failed(VoiceCopy.recognizerFailed)
+    }
+
+    /// Ends live input for a finishing take; the capture stream then ends
+    /// after its backlog, so the recognizer or the file still gets every
+    /// buffer heard.
+    private func releaseMicrophone() {
+        guard let capture else { return }
+        capture.stop()
+        self.capture = nil
+        CaptureDiagnostics.record(.recorderStopped, state: controlState)
     }
 
     /// Releases the microphone and every recognizer from the current take.
