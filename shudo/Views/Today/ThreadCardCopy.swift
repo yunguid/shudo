@@ -4,29 +4,6 @@ import Foundation
 /// coach writes the words in bubbles; numbers on cards are formatted here
 /// from the card payloads the server computed.
 enum ThreadCardCopy {
-    // MARK: Game plan
-
-    /// An icon for a game-plan line, from its words.
-    static func planSymbol(for action: String) -> String {
-        let tokens = words(in: action)
-        func has(_ prefixes: [String]) -> Bool {
-            tokens.contains { token in prefixes.contains { token.hasPrefix($0) } }
-        }
-        if has(["sleep", "bed", "lights", "wind"]) { return "moon.zzz.fill" }
-        if has(["protein", "grams"]) { return "bolt.fill" }
-        if has(["lift", "upper", "lower", "push", "pull", "legs", "squat", "bench", "deadlift", "session", "gym", "train"]) {
-            return "dumbbell.fill"
-        }
-        if has(["bike", "cardio", "run", "row", "conditioning"]) { return "figure.outdoor.cycle" }
-        if has(["walk", "steps"]) { return "figure.walk" }
-        if has(["water", "hydrat"]) { return "drop.fill" }
-        if has(["photo", "check-in", "checkin", "weigh", "scale"]) { return "camera.fill" }
-        if has(["kcal", "calorie", "meal", "eat", "breakfast", "lunch", "dinner", "shake", "snack", "milk", "food"]) {
-            return "fork.knife"
-        }
-        return "checkmark.circle.fill"
-    }
-
     // MARK: Recap
 
     /// A day recap delivered in the morning is about yesterday ("Monday
@@ -119,13 +96,6 @@ enum ThreadCardCopy {
         guard value.isFinite else { return "0" }
         if abs(value - value.rounded()) < 0.05 { return Int(value.rounded()).formatted() }
         return String(format: "%.1f", value)
-    }
-
-    /// Lowercased word tokens (letters, digits, hyphens) for keyword matching.
-    static func words(in text: String) -> [String] {
-        text.lowercased()
-            .split { !($0.isLetter || $0.isNumber || $0 == "-") }
-            .map(String.init)
     }
 
     static func weekdayName(_ localDay: String, short: Bool) -> String? {

@@ -91,8 +91,10 @@ struct WorkoutLogSheet: View {
             .navigationTitle(session?.name ?? "Log a workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Hinoki like every sheet's way out; the accent is Log's.
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .tint(Design.Color.textPrimary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Log") { submit() }
@@ -139,7 +141,9 @@ struct WorkoutLogSheet: View {
         }
     }
 
-    /// Lift · Cardio · Walk — the chosen one becomes a hinoki slab.
+    /// Lift · Cardio · Walk as words — the chosen one becomes a hinoki slab;
+    /// the others sit on walnut a step up from the sheet, so they still read
+    /// as chips without a glyph.
     private var kindChips: some View {
         HStack(spacing: 8) {
             ForEach([ActivityKind.strength, .cardio, .walk], id: \.self) { option in
@@ -149,13 +153,13 @@ struct WorkoutLogSheet: View {
                         kind = selected ? nil : option
                     }
                 } label: {
-                    Label(option == .strength ? "Lift" : option.label, systemImage: option.symbolName)
+                    Text(option == .strength ? "Lift" : option.label)
                         .font(Design.Typeface.text(.subheadline, weight: .medium))
                         .foregroundStyle(selected ? Design.Color.onCream : Design.Color.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
                         .background(
-                            selected ? Design.Color.hinoki : Design.Color.surface1,
+                            selected ? Design.Color.hinoki : Design.Color.surface2,
                             in: Capsule())
                 }
                 .buttonStyle(.plain)

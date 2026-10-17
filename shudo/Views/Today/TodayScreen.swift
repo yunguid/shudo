@@ -1005,7 +1005,7 @@ struct TodayScreen: View {
                 }
             )
         } else {
-            ContentUnavailableView("Workout not found", systemImage: "dumbbell")
+            WorkoutGoneView()
         }
     }
 

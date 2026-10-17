@@ -116,7 +116,7 @@ struct AppShell: View {
                 )
             }
 
-            Tab("Train", systemImage: "dumbbell.fill", value: AppTab.train) {
+            Tab("Train", systemImage: "stairs", value: AppTab.train) {
                 banded(
                     NavigationStack {
                         TrainScreen(

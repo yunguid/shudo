@@ -7,14 +7,15 @@ import Foundation
 /// run SpeechTranscriber). Launch arguments:
 ///
 ///     -shudoScriptedSpeech "two scrambled eggs and toast"
-///     -shudoScriptedSpeechMode denied|unavailable|downloading|uploadFailsOnce
+///     -shudoScriptedSpeechMode denied|unavailable|downloading|uploadFailsOnce|interrupted
 ///
 /// The scripted capture never touches AVAudioSession, so tests don't depend
 /// on the simulator's microphone permission. Like the real stack, a server
 /// profile (meal, coach, …) shows no words while recording and gets the
 /// whole script only after stop, following a short "Transcribing…" beat;
 /// `uploadFailsOnce` fails that first upload (retryable) so the retry path
-/// can be driven. The on-device weigh-in engine streams the script word by
+/// can be driven; `interrupted` has a "call" take the microphone two
+/// seconds into each take. The on-device weigh-in engine streams the script word by
 /// word as volatile results and finalizes it on stop.
 struct ScriptedVoiceConfiguration: Equatable {
     enum Mode: String {
@@ -23,6 +24,7 @@ struct ScriptedVoiceConfiguration: Equatable {
         case unavailable
         case downloading
         case uploadFailsOnce
+        case interrupted
     }
 
     static let textFlag = "-shudoScriptedSpeech"
@@ -60,7 +62,7 @@ struct ScriptedVoiceConfiguration: Equatable {
         return VoiceEnvironment(
             permissions: ScriptedVoicePermissions(grantsMicrophone: mode != .denied),
             assets: ScriptedSpeechAssets(snapshot: Self.snapshot(for: mode)),
-            makeCapture: { ScriptedAudioCapture() },
+            makeCapture: { ScriptedAudioCapture(interruptsAfter: mode == .interrupted ? 2 : nil) },
             makeEngine: { id in ScriptedSpeechEngine(id: id, script: text, uploads: uploads) },
             vocabulary: { [] }
         )
@@ -68,7 +70,7 @@ struct ScriptedVoiceConfiguration: Equatable {
 
     static func snapshot(for mode: Mode) -> SpeechAssetSnapshot {
         switch mode {
-        case .normal, .denied, .uploadFailsOnce:
+        case .normal, .denied, .uploadFailsOnce, .interrupted:
             return SpeechAssetSnapshot(
                 transcriber: .installed,
                 dictation: .installed,
@@ -131,8 +133,14 @@ final class ScriptedSpeechAssets: SpeechAssetProviding {
 /// Synthetic meter levels, no AVAudioSession, no buffers.
 @MainActor
 final class ScriptedAudioCapture: AudioCapturing {
+    private let interruptsAfter: TimeInterval?
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+    private var interruption: Task<Void, Never>?
     private var startedAt = Date()
+
+    init(interruptsAfter: TimeInterval? = nil) {
+        self.interruptsAfter = interruptsAfter
+    }
 
     var currentPowerDecibels: Float {
         let phase = Date().timeIntervalSince(startedAt) * 7
@@ -145,11 +153,20 @@ final class ScriptedAudioCapture: AudioCapturing {
         let (stream, continuation) = AsyncStream<AVAudioPCMBuffer>.makeStream()
         self.continuation = continuation
         startedAt = Date()
+        if let interruptsAfter {
+            interruption = Task {
+                try? await Task.sleep(nanoseconds: UInt64(interruptsAfter * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                onEvent(.interrupted)
+            }
+        }
         let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
         return AudioCaptureRun(format: format, buffers: stream)
     }
 
     func stop() {
+        interruption?.cancel()
+        interruption = nil
         continuation?.finish()
         continuation = nil
     }

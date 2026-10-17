@@ -311,15 +311,6 @@ struct ThreadCardCopyTests {
         )
     }
 
-    @Test func gamePlanLinesGetMatchingIcons() {
-        #expect(ThreadCardCopy.planSymbol(for: "175g protein, front-load it") == "bolt.fill")
-        #expect(ThreadCardCopy.planSymbol(for: "Upper A at 6:15") == "dumbbell.fill")
-        #expect(ThreadCardCopy.planSymbol(for: "Lights out 11:30. Non-negotiable.") == "moon.zzz.fill")
-        #expect(ThreadCardCopy.planSymbol(for: "3 meals + a shake · 2,900 kcal") == "fork.knife")
-        #expect(ThreadCardCopy.planSymbol(for: "Brown rice with dinner tomorrow") == "fork.knife", "no substring false positives (row, run)")
-        #expect(ThreadCardCopy.planSymbol(for: "Call your mom") == "checkmark.circle.fill")
-    }
-
     @Test func recapEyebrowNamesTheDayItCovers() {
         let dayRecap = RecapCard(period: .day, kcal: 2_400)
         #expect(ThreadCardCopy.recapEyebrow(card: dayRecap, localDay: "2026-10-06", deliveredHour: 7) == "Monday recap")

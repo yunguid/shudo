@@ -5,12 +5,13 @@ import os
 
 /// Why live capture ended without the person asking.
 enum AudioCaptureEvent: Equatable, Sendable {
+    /// A phone call, Siri, or another app took the microphone.
     case interrupted
     case mediaServicesReset
-    /// The input route or format changed under the engine (AirPods
-    /// connecting mid-take). The take ends honestly; no hot-swap.
-    case configurationChanged
     case preempted
+    /// A route or format change stopped the input and it couldn't be
+    /// reopened. (A change that can be reopened never ends the take.)
+    case inputLost
 }
 
 /// Live microphone input. `buffers` buffers without bound, so words spoken
@@ -29,12 +30,27 @@ protocol AudioCapturing: AnyObject {
     func stop()
     /// Latest input power in dBFS (≤ 0), sampled by the meter tick.
     var currentPowerDecibels: Float { get }
+    /// Waits until the input carries real sound — not the digital silence a
+    /// Bluetooth headset sends while its microphone link comes up — or until
+    /// `timeout`. Returns whether it heard anything.
+    func waitUntilHearing(timeout: TimeInterval) async -> Bool
+}
+
+extension AudioCapturing {
+    func waitUntilHearing(timeout: TimeInterval) async -> Bool { true }
 }
 
 /// `AVAudioEngine` input-node tap. Session activation and engine start are
 /// blocking system calls, so they run on the session queue with the shared
 /// bounded retry; buffer conversion happens in the recognizer's consumer
 /// task, never on the audio thread.
+///
+/// A route or format change mid-take (AirPods switching to their mic, a
+/// car, a headset pulled out) stops the engine. The capture reopens the
+/// input on the new route and keeps feeding the same stream, so the take
+/// carries on into the same recording (its consumer converts the new
+/// format) instead of ending at the change and dropping everything said
+/// after it.
 @MainActor
 final class MicrophoneCapture: AudioCapturing {
     private final class Live: @unchecked Sendable {
@@ -52,18 +68,40 @@ final class MicrophoneCapture: AudioCapturing {
         }
     }
 
+    /// What the tap shares with the main actor.
+    private struct Signal: Sendable {
+        var decibels: Float = -160
+        /// Uptime (ns) of the latest buffer, or of the last (re)start.
+        var lastBufferAt: UInt64 = 0
+    }
+
     private struct NoInput: LocalizedError {
         var errorDescription: String? { VoiceCopy.microphoneFailed }
     }
 
-    private let power = OSAllocatedUnfairLock<Float>(initialState: -160)
+    /// Quieter than this is digital silence, not a live microphone: even a
+    /// still room sits around -60 to -90 dBFS.
+    nonisolated static let liveSignalFloor: Float = -110
+    /// How long reopening the input after a route change may take.
+    nonisolated static let reopenDeadline: TimeInterval = 4
+    /// A stopped engine that has delivered nothing for this long died
+    /// without posting a configuration change.
+    nonisolated static let stallInterval: TimeInterval = 1.2
+
+    private let signal = OSAllocatedUnfairLock(initialState: Signal())
     private var live: Live?
+    /// From a successful start until `stop()`: the session and the stream
+    /// are this take's, even while the input is being reopened.
+    private var ownsSession = false
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+    private var onEvent: (@MainActor (AudioCaptureEvent) -> Void)?
     private var ownerToken: AudioSessionController.OwnerToken?
     private var configurationObserver: NSObjectProtocol?
+    private var reopenTask: Task<Void, Never>?
+    private var watchdog: Task<Void, Never>?
     private var startGeneration = 0
 
-    var currentPowerDecibels: Float { power.withLock { $0 } }
+    var currentPowerDecibels: Float { signal.withLock { $0.decibels } }
 
     func start(onEvent: @escaping @MainActor (AudioCaptureEvent) -> Void) async throws -> AudioCaptureRun {
         stop()
@@ -73,12 +111,14 @@ final class MicrophoneCapture: AudioCapturing {
             bufferingPolicy: .unbounded
         )
         self.continuation = continuation
-        power.withLock { $0 = -160 }
-        let power = self.power
+        self.onEvent = onEvent
+        signal.withLock { $0 = Signal() }
+        let signal = self.signal
 
-        ownerToken = AudioSessionController.shared.claim { event in
+        ownerToken = AudioSessionController.shared.claim { [weak self] event in
             switch event {
             case .interruptionBegan: onEvent(.interrupted)
+            case .routeLost: self?.scheduleReopen(reason: "route_lost")
             case .mediaServicesReset: onEvent(.mediaServicesReset)
             case .preempted: onEvent(.preempted)
             }
@@ -88,7 +128,7 @@ final class MicrophoneCapture: AudioCapturing {
         do {
             started = try await AudioSessionController.startRetryingWithinDeadline(
                 attempt: {
-                    try Self.activateAndStartEngine(continuation: continuation, power: power)
+                    try Self.activateAndStartEngine(continuation: continuation, signal: signal)
                 },
                 discardOrphan: { orphan in orphan.tearDown() }
             )
@@ -103,40 +143,141 @@ final class MicrophoneCapture: AudioCapturing {
             AudioSessionController.deactivateSessionInBackground()
             throw CancellationError()
         }
-        live = started
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: started.engine,
-            queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { onEvent(.configurationChanged) }
-        }
+        ownsSession = true
+        attach(started)
+        startWatchdog()
         return AudioCaptureRun(format: started.format, buffers: stream)
     }
 
     func stop() {
         startGeneration += 1
-        if let configurationObserver {
-            NotificationCenter.default.removeObserver(configurationObserver)
-        }
-        configurationObserver = nil
-        if let live {
-            live.tearDown()
+        watchdog?.cancel()
+        watchdog = nil
+        // A reopen still running sees the new generation and discards what
+        // it started.
+        reopenTask = nil
+        detachConfigurationObserver()
+        live?.tearDown()
+        live = nil
+        if ownsSession {
             AudioSessionController.deactivateSessionInBackground()
         }
-        live = nil
+        ownsSession = false
         continuation?.finish()
         continuation = nil
+        onEvent = nil
         if let ownerToken {
             AudioSessionController.shared.release(ownerToken)
         }
         ownerToken = nil
     }
 
+    func waitUntilHearing(timeout: TimeInterval) async -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, timeout) * 1_000_000_000)
+        while currentPowerDecibels <= Self.liveSignalFloor {
+            guard DispatchTime.now().uptimeNanoseconds < deadline, !Task.isCancelled else { return false }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return true
+    }
+
+    // MARK: Route changes
+
+    private func attach(_ started: Live) {
+        live = started
+        signal.withLock { $0.lastBufferAt = DispatchTime.now().uptimeNanoseconds }
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: started.engine,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleReopen(reason: "format_change") }
+        }
+    }
+
+    /// Reopens after the notification handler returns: the engine must not
+    /// be torn down or released from inside its own configuration-change
+    /// callback (Apple: that can deadlock).
+    private func scheduleReopen(reason: String) {
+        let generation = startGeneration
+        Task { [weak self] in
+            guard let self, generation == self.startGeneration else { return }
+            self.reopenInput(reason: reason)
+        }
+    }
+
+    private func detachConfigurationObserver() {
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+        }
+        configurationObserver = nil
+    }
+
+    /// Reopens the input on whatever route the system moved to, feeding the
+    /// same stream. Only when that fails (no input left) does the take end,
+    /// keeping what it recorded.
+    private func reopenInput(reason: String) {
+        guard ownsSession, reopenTask == nil, let continuation else { return }
+        CaptureDiagnostics.record(.recorderReopening, state: reason)
+        detachConfigurationObserver()
+        live?.tearDown()
+        live = nil
+        signal.withLock { $0.decibels = -160 }
+        let generation = startGeneration
+        let signal = self.signal
+        reopenTask = Task { [weak self] in
+            let reopened = try? await AudioSessionController.startRetryingWithinDeadline(
+                deadline: Self.reopenDeadline,
+                attempt: {
+                    try Self.activateAndStartEngine(continuation: continuation, signal: signal)
+                },
+                discardOrphan: { orphan in orphan.tearDown() }
+            )
+            guard let self, generation == self.startGeneration else {
+                // The take ended meanwhile.
+                if let reopened {
+                    reopened.tearDown()
+                    AudioSessionController.deactivateSessionInBackground()
+                }
+                return
+            }
+            self.reopenTask = nil
+            guard let reopened else {
+                CaptureDiagnostics.record(.recorderReopenFailed, state: reason)
+                self.onEvent?(.inputLost)
+                return
+            }
+            self.attach(reopened)
+            CaptureDiagnostics.record(.recorderReopened, state: reason)
+        }
+    }
+
+    private func startWatchdog() {
+        watchdog?.cancel()
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.reopenIfStalled()
+            }
+        }
+    }
+
+    /// An engine can stop without posting a configuration change (a
+    /// Bluetooth route flapping): a stopped engine that has gone quiet is
+    /// reopened like any other route change.
+    private func reopenIfStalled() {
+        guard ownsSession, reopenTask == nil, let live, !live.engine.isRunning else { return }
+        let last = signal.withLock { $0.lastBufferAt }
+        let quiet = DispatchTime.now().uptimeNanoseconds &- last
+        guard quiet > UInt64(Self.stallInterval * 1_000_000_000) else { return }
+        reopenInput(reason: "stalled")
+    }
+
     /// Runs on the session queue inside a start attempt.
     private nonisolated static func activateAndStartEngine(
         continuation: AsyncStream<AVAudioPCMBuffer>.Continuation,
-        power: OSAllocatedUnfairLock<Float>
+        signal: OSAllocatedUnfairLock<Signal>
     ) throws -> Live {
         try AudioSessionController.activateSession()
         let engine = AVAudioEngine()
@@ -145,7 +286,11 @@ final class MicrophoneCapture: AudioCapturing {
         guard format.sampleRate > 0, format.channelCount > 0 else { throw NoInput() }
         input.installTap(onBus: 0, bufferSize: 2_048, format: format) { buffer, _ in
             let decibels = Self.powerDecibels(of: buffer)
-            power.withLock { $0 = decibels }
+            let now = DispatchTime.now().uptimeNanoseconds
+            signal.withLock {
+                $0.decibels = decibels
+                $0.lastBufferAt = now
+            }
             if let copy = buffer.shudoCopy() {
                 continuation.yield(copy)
             }

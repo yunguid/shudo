@@ -30,21 +30,8 @@ enum ActivityKind: String, Codable, CaseIterable, Equatable, Sendable {
         self = Self(rawValue: normalized) ?? .other
     }
 
-    var symbolName: String {
-        switch self {
-        case .strength: return "dumbbell.fill"
-        case .cardio: return "figure.mixed.cardio"
-        case .walk: return "figure.walk"
-        case .run: return "figure.run"
-        case .cycle: return "figure.outdoor.cycle"
-        case .swim: return "figure.pool.swim"
-        case .hiit: return "figure.highintensity.intervaltraining"
-        case .sport: return "sportscourt.fill"
-        case .mobility: return "figure.flexibility"
-        case .other: return "bolt.heart.fill"
-        }
-    }
-
+    /// What a workout is called where its own title doesn't say it (the
+    /// logger's hint chips). Kinds have no glyph: the words carry them.
     var label: String {
         switch self {
         case .strength: return "Strength"

@@ -319,7 +319,7 @@ struct TrainPolicyTests {
         let noPlan = TrainingWeekPolicy.progress(activities: activities, plan: nil, now: Self.now, timezone: Self.timezone)
         #expect(noPlan.target == nil)
         #expect(noPlan.countLabel == nil)
-        #expect(noPlan.days[0].symbolName == ActivityKind.strength.symbolName)
+        #expect(noPlan.days[0].marker == "U", "an off-plan session is sealed with its own initial")
     }
 
     // MARK: Polling + merge

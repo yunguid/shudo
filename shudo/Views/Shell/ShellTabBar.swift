@@ -17,13 +17,14 @@ struct ShellTabBar: View {
     private struct Item {
         let tab: AppTab
         let title: String
-        let symbol: String
+        /// An SF Symbol; nil draws Train's own mark.
+        let symbol: String?
     }
 
     private static let items: [Item] = [
         Item(tab: .today, title: "Today", symbol: "bubble.left.and.text.bubble.right"),
         Item(tab: .body, title: "Body", symbol: "figure.arms.open"),
-        Item(tab: .train, title: "Train", symbol: "dumbbell"),
+        Item(tab: .train, title: "Train", symbol: nil),
     ]
 
     var body: some View {
@@ -57,11 +58,7 @@ struct ShellTabBar: View {
             tab = item.tab
         } label: {
             VStack(spacing: 3) {
-                Image(systemName: item.symbol)
-                    .font(.custom(Design.Typeface.faceName(.medium), fixedSize: 17))
-                    .fontWeight(.medium)
-                    // Outline at rest, filled when chosen.
-                    .symbolVariant(selected ? .fill : .none)
+                glyph(item, selected: selected)
                     .frame(height: 21)
                     .foregroundStyle(selected ? Design.Color.pernambuco : Design.Color.textSecondary)
                     .overlay(alignment: .topTrailing) {
@@ -95,7 +92,62 @@ struct ShellTabBar: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("tab.\(item.tab.rawValue)")
         .accessibilityShowsLargeContentViewer {
-            Label(item.title, systemImage: item.symbol)
+            // The viewer shows an SF Symbol; "stairs" is Train's mark's nearest.
+            Label(item.title, systemImage: item.symbol ?? "stairs")
+        }
+    }
+
+    // Outline at rest, filled when chosen.
+    @ViewBuilder
+    private func glyph(_ item: Item, selected: Bool) -> some View {
+        if let symbol = item.symbol {
+            Image(systemName: symbol)
+                .font(.custom(Design.Typeface.faceName(.medium), fixedSize: 17))
+                .fontWeight(.medium)
+                .symbolVariant(selected ? .fill : .none)
+        } else {
+            TrainStepsMark(filled: selected)
+        }
+    }
+}
+
+/// Train's mark: three steps rising — the climb a session at a time — drawn
+/// rather than borrowed, since the SF dumbbell read as clip art. Weighted
+/// and sized to sit with the SF glyphs beside it, and it fills the same way.
+struct TrainStepsMark: View {
+    var filled = false
+
+    private static let lineWidth: CGFloat = 1.8
+
+    var body: some View {
+        ZStack {
+            if filled { StepsShape().fill() }
+            StepsShape().stroke(style: StrokeStyle(lineWidth: Self.lineWidth, lineJoin: .round))
+        }
+        // The stroke straddles the path; inset it so the mark's outer edge
+        // is the frame.
+        .padding(Self.lineWidth / 2)
+        .frame(width: 18, height: 16)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Train")
+    }
+
+    /// Three equal steps rising left to right, as one closed outline.
+    private struct StepsShape: Shape {
+        func path(in rect: CGRect) -> Path {
+            let run = rect.width / 3
+            let rise = rect.height / 3
+            var path = Path()
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            for step in 0..<3 {
+                let x = rect.minX + CGFloat(step) * run
+                let y = rect.maxY - CGFloat(step + 1) * rise
+                path.addLine(to: CGPoint(x: x, y: y))
+                path.addLine(to: CGPoint(x: x + run, y: y))
+            }
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.closeSubpath()
+            return path
         }
     }
 }

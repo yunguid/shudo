@@ -10,7 +10,11 @@ final class OnDeviceRecognizerEngine: SpeechEngine, @unchecked Sendable {
     let id = SpeechEngineID.sfSpeechOnDevice
 
     private let lock = NSLock()
+    private let converter = SpeechBufferConverter()
     private var request: SFSpeechAudioBufferRecognitionRequest?
+    /// The format the request started in; a route change mid-take changes
+    /// the microphone's, and later buffers are converted back into it.
+    private var format: AVAudioFormat?
     private var task: SFSpeechRecognitionTask?
     private var continuation: AsyncThrowingStream<SpeechEvent, Error>.Continuation?
 
@@ -44,6 +48,7 @@ final class OnDeviceRecognizerEngine: SpeechEngine, @unchecked Sendable {
         }
         lock.withLock {
             self.request = request
+            self.format = nil
             self.task = task
             self.continuation = continuation
         }
@@ -51,7 +56,13 @@ final class OnDeviceRecognizerEngine: SpeechEngine, @unchecked Sendable {
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
-        lock.withLock { request }?.append(buffer)
+        lock.withLock {
+            guard let request else { return }
+            let target = format ?? buffer.format
+            format = target
+            guard let converted = converter.convert(buffer, to: target) else { return }
+            request.append(converted)
+        }
     }
 
     func finish() async throws {

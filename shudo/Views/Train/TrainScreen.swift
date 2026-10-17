@@ -460,12 +460,20 @@ struct ActivityDetailContainer: View {
                     onDelete: { await viewModel.delete(activity) })
                 .onAppear { lastKnown = activity }
             } else {
-                Text("This workout is gone.")
-                    .font(Design.Typeface.text(.subheadline))
-                    .foregroundStyle(Design.Color.textTertiary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AppBackground())
+                WorkoutGoneView()
             }
         }
+    }
+}
+
+/// A workout that isn't there any more (deleted elsewhere): one quiet line
+/// on the canvas — no glyph, no system empty state in another typeface.
+struct WorkoutGoneView: View {
+    var body: some View {
+        Text("This workout is gone.")
+            .font(Design.Typeface.text(.subheadline))
+            .foregroundStyle(Design.Color.textTertiary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppBackground())
     }
 }

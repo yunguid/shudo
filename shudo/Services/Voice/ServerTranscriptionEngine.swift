@@ -11,9 +11,23 @@ protocol RecordingTranscriptionEngine: SpeechEngine {
     func transcribeRecording() async throws -> String
 }
 
+/// What the phone measured about a take. Sent with it, so the server can
+/// tell a transcript that is missing speech from a take that was short.
+struct TakeMeasurements: Equatable, Sendable {
+    /// Seconds of audio in the recording.
+    let audioSeconds: Double
+    /// Seconds of it louder than room tone (`voiceThresholdDB`).
+    let voicedSeconds: Double
+}
+
 /// Uploads one finished recording and returns its transcript.
 protocol SpeechTranscriptionUploading: Sendable {
-    func transcribe(audio: Data, purpose: TranscriptionPurpose, clientRequestId: UUID) async throws -> String
+    func transcribe(
+        audio: Data,
+        purpose: TranscriptionPurpose,
+        clientRequestId: UUID,
+        measurements: TakeMeasurements
+    ) async throws -> String
 }
 
 /// Why a recorded take couldn't be turned into text. `isRetryable` says
@@ -87,9 +101,13 @@ enum TranscriptionError: LocalizedError, Equatable {
 
 /// Records the microphone into a temporary AAC `.m4a` (mono, 44.1/48 kHz)
 /// and, when the take ends, uploads it to Shudo's `transcribe` function
-/// (OpenAI gpt-4o-transcribe). Emits no volatile events; `finish()` yields
-/// one `.finalized(text)`. The file is deleted once transcribed or
-/// cancelled; a failed upload keeps it so a retry can re-upload.
+/// (OpenAI). Emits no volatile events; `finish()` yields one
+/// `.finalized(text)`. The file is deleted once transcribed or cancelled; a
+/// failed upload keeps it so a retry can re-upload.
+///
+/// The file's format is fixed by the first buffer; when a route change
+/// mid-take (AirPods' 16/24 kHz mic) changes the microphone's format, later
+/// buffers are converted into it, so the take stays one recording.
 final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked Sendable {
     static let filePrefix = "shudo-voice-"
     static let encoderBitRate = 64_000
@@ -108,6 +126,7 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
     private let converter = SpeechBufferConverter()
     private var file: AVAudioFile?
     private var fileURL: URL?
+    private var fileSampleRate: Double = 0
     private var framesWritten: AVAudioFramePosition = 0
     private var voicedSeconds: Double = 0
     private var writeFailed = false
@@ -128,6 +147,7 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
     var recordingURL: URL? { lock.withLock { fileURL } }
     var recordedFrames: AVAudioFramePosition { lock.withLock { framesWritten } }
     var requestId: UUID { lock.withLock { clientRequestId } }
+    var measurements: TakeMeasurements { lock.withLock { measurementsLocked() } }
 
     func start(locale: Locale, profile: VoiceProfile, vocabulary: [String]) async throws -> SpeechRun {
         let (events, continuation) = AsyncThrowingStream<SpeechEvent, Error>.makeStream()
@@ -139,6 +159,7 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
             clientRequestId = UUID()
             fileURL = url
             file = nil
+            fileSampleRate = 0
             framesWritten = 0
             voicedSeconds = 0
             writeFailed = false
@@ -158,7 +179,9 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
             }
             if file == nil {
                 do {
-                    file = try Self.makeFile(at: fileURL, inputFormat: buffer.format)
+                    let created = try Self.makeFile(at: fileURL, inputFormat: buffer.format)
+                    file = created
+                    fileSampleRate = created.processingFormat.sampleRate
                 } catch {
                     writeFailed = true
                     return
@@ -186,16 +209,16 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
     }
 
     func transcribeRecording() async throws -> String {
-        let (url, frames, failedWrite, purpose, requestId, voiced) = lock.withLock {
+        let (url, frames, failedWrite, purpose, requestId, measured) = lock.withLock {
             closeFileLocked()
-            return (fileURL, framesWritten, writeFailed, self.purpose, clientRequestId, voicedSeconds)
+            return (fileURL, framesWritten, writeFailed, self.purpose, clientRequestId, measurementsLocked())
         }
         guard let url else { throw TranscriptionError.recordingMissing }
         guard frames > 0 else {
             removeRecording()
             throw failedWrite ? TranscriptionError.recordingFailed : TranscriptionError.nothingRecorded
         }
-        guard voiced >= Self.minimumVoicedSeconds else {
+        guard measured.voicedSeconds >= Self.minimumVoicedSeconds else {
             removeRecording()
             throw TranscriptionError.nothingHeard
         }
@@ -212,7 +235,12 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
         CaptureDiagnostics.record(.speechUploadStarted, state: purpose.rawValue)
         let text: String
         do {
-            text = try await uploader.transcribe(audio: audio, purpose: purpose, clientRequestId: requestId)
+            text = try await uploader.transcribe(
+                audio: audio,
+                purpose: purpose,
+                clientRequestId: requestId,
+                measurements: measured
+            )
         } catch {
             let failure = TranscriptionError.from(error)
             CaptureDiagnostics.record(.speechUploadFailed, state: failure.isRetryable ? "retryable" : "final")
@@ -277,6 +305,14 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
         )
     }
 
+    /// Caller holds `lock`.
+    private func measurementsLocked() -> TakeMeasurements {
+        TakeMeasurements(
+            audioSeconds: fileSampleRate > 0 ? Double(framesWritten) / fileSampleRate : 0,
+            voicedSeconds: voicedSeconds
+        )
+    }
+
     /// Caller holds `lock`. Closing writes the AAC container's index.
     private func closeFileLocked() {
         isClosed = true
@@ -310,9 +346,10 @@ final class ServerTranscriptionEngine: RecordingTranscriptionEngine, @unchecked 
 }
 
 /// `POST /functions/v1/transcribe`: multipart `audio` (voice.m4a,
-/// audio/mp4), `purpose`, `client_request_id` (lowercase UUID), with the same
-/// auth headers as every other function call. 200 → `{"text": …}`; errors
-/// are `{"error": "<message for Luke>"}`.
+/// audio/mp4), `purpose`, `client_request_id` (lowercase UUID), and the
+/// take's `audio_seconds` / `voiced_seconds` (the server's completeness
+/// check), with the same auth headers as every other function call. 200 →
+/// `{"text": …}`; errors are `{"error": "<message for Luke>"}`.
 struct ServerTranscriptionClient: SpeechTranscriptionUploading {
     static let maximumAudioBytes = 25 * 1024 * 1024
     static let requestTimeout: TimeInterval = 60
@@ -338,7 +375,12 @@ struct ServerTranscriptionClient: SpeechTranscriptionUploading {
         self.sessionJWTProvider = sessionJWTProvider
     }
 
-    func transcribe(audio: Data, purpose: TranscriptionPurpose, clientRequestId: UUID) async throws -> String {
+    func transcribe(
+        audio: Data,
+        purpose: TranscriptionPurpose,
+        clientRequestId: UUID,
+        measurements: TakeMeasurements
+    ) async throws -> String {
         let jwt: String
         do {
             jwt = try await sessionJWTProvider()
@@ -349,6 +391,7 @@ struct ServerTranscriptionClient: SpeechTranscriptionUploading {
             audio: audio,
             purpose: purpose,
             clientRequestId: clientRequestId,
+            measurements: measurements,
             jwt: jwt
         )
         let data: Data
@@ -366,6 +409,7 @@ struct ServerTranscriptionClient: SpeechTranscriptionUploading {
         audio: Data,
         purpose: TranscriptionPurpose,
         clientRequestId: UUID,
+        measurements: TakeMeasurements? = nil,
         jwt: String,
         boundary: String = "shudo-\(UUID().uuidString.lowercased())"
     ) -> URLRequest {
@@ -379,7 +423,8 @@ struct ServerTranscriptionClient: SpeechTranscriptionUploading {
             boundary: boundary,
             audio: audio,
             purpose: purpose,
-            clientRequestId: clientRequestId
+            clientRequestId: clientRequestId,
+            measurements: measurements
         )
         return request
     }
@@ -388,7 +433,8 @@ struct ServerTranscriptionClient: SpeechTranscriptionUploading {
         boundary: String,
         audio: Data,
         purpose: TranscriptionPurpose,
-        clientRequestId: UUID
+        clientRequestId: UUID,
+        measurements: TakeMeasurements? = nil
     ) -> Data {
         var data = Data()
         func append(_ string: String) { data.append(Data(string.utf8)) }
@@ -399,6 +445,10 @@ struct ServerTranscriptionClient: SpeechTranscriptionUploading {
         }
         field("purpose", purpose.rawValue)
         field("client_request_id", clientRequestId.uuidString.lowercased())
+        if let measurements {
+            field("audio_seconds", String(format: "%.2f", measurements.audioSeconds))
+            field("voiced_seconds", String(format: "%.2f", measurements.voicedSeconds))
+        }
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"audio\"; filename=\"\(audioFilename)\"\r\n")
         append("Content-Type: \(audioContentType)\r\n\r\n")
