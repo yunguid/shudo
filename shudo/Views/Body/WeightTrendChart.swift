@@ -43,6 +43,7 @@ struct WeightTrendChart: View {
         let xLower = LocalDayMath.adding(-2, to: window).flatMap(Self.chartDate) ?? Date()
         let xUpper = LocalDayMath.adding(1, to: today).flatMap(Self.chartDate) ?? Date()
         let xDomain = xLower...max(xUpper, xLower)
+        let ticks = dateTicks(from: xLower)
 
         Chart {
             ForEach(lane) { point in
@@ -94,10 +95,13 @@ struct WeightTrendChart: View {
         .chartXScale(domain: xDomain)
         .chartYScale(domain: domain)
         .chartXAxis {
-            AxisMarks(values: weeklyTicks(from: xLower)) { _ in
-                AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: false)
-                    .font(Design.Typeface.text(.caption2))
-                    .foregroundStyle(Design.Color.textTertiary)
+            AxisMarks(values: ticks.dates) { _ in
+                AxisValueLabel(
+                    format: ticks.monthly ? .dateTime.month(.abbreviated) : .dateTime.month(.abbreviated).day(),
+                    centered: false
+                )
+                .font(Design.Typeface.text(.caption2))
+                .foregroundStyle(Design.Color.textTertiary)
             }
         }
         .chartYAxis {
@@ -109,8 +113,8 @@ struct WeightTrendChart: View {
                     .foregroundStyle(Design.Color.textTertiary)
             }
         }
-        // Weekly date ticks collide past xLarge; the chart's VoiceOver
-        // summary carries the numbers at every size.
+        // Axis labels stop growing at xLarge; the chart's VoiceOver summary
+        // carries the numbers at every size.
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
@@ -137,15 +141,34 @@ struct WeightTrendChart: View {
         return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
-    /// Weekly ticks counted back from a week before today, so the last
-    /// label always has room before the trailing axis.
-    private func weeklyTicks(from lower: Date) -> [Date] {
+    /// At most four date labels, never touching: weekly for a short window,
+    /// every other week up to seven weeks, month names ("Aug", "Sep") past
+    /// that — a label a week across eleven weeks ran into each other. Every
+    /// tick sits at least a week before today, so its label clears the
+    /// trailing axis.
+    private func dateTicks(from lower: Date) -> (dates: [Date], monthly: Bool) {
         let floor = lower.addingTimeInterval(2 * 86_400)
-        return (1...13).compactMap { week in
-            LocalDayMath.adding(-7 * week, to: today).flatMap(Self.chartDate)
+        guard let todayDate = Self.chartDate(today) else { return ([], false) }
+        let calendar = Calendar.current
+        let span = calendar.dateComponents([.day], from: floor, to: todayDate).day ?? 0
+        if span > 49 {
+            guard let cutoff = calendar.date(byAdding: .day, value: -7, to: todayDate),
+                var month = calendar.date(from: calendar.dateComponents([.year, .month], from: floor))
+            else { return ([], true) }
+            var dates: [Date] = []
+            while month <= cutoff {
+                if month >= floor { dates.append(month) }
+                guard let next = calendar.date(byAdding: .month, value: 1, to: month) else { break }
+                month = next
+            }
+            return (dates, true)
+        }
+        let step = span > 21 ? 14 : 7
+        let dates = (1...7).compactMap { count in
+            LocalDayMath.adding(-step * count, to: today).flatMap(Self.chartDate)
         }
         .filter { $0 >= floor }
-        .reversed()
+        return (dates.reversed(), false)
     }
 
     /// Weekly lane samples from the goal's start, ending exactly at today

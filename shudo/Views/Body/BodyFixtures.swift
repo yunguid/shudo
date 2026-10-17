@@ -8,7 +8,8 @@
     ///
     /// Launch with `-shudoPolishPreview body`, optionally plus
     /// `-shudoBodyPreview <options>` (comma-separated): `noscale` (no
-    /// weigh-ins yet), `empty` (today not checked in), `revealed` (veil off),
+    /// weigh-ins yet), `long` (eleven weeks of weigh-ins), `empty` (today not
+    /// checked in), `revealed` (veil off),
     /// one action: `compare`, `camera`, `review`, `weight`, `viewer`, and a
     /// section to scroll to: `log`, `fuel`, `recaps`. `recap` opens the
     /// latest weekly recap sheet.
@@ -84,10 +85,14 @@
         /// Ten photos over the last twelve days (two misses), weigh-ins from
         /// the day the scale showed up three weeks ago.
         static func checkIns(today: String, noScale: Bool, empty: Bool) -> [WeightCheckIn] {
-            let weighIns: [Int: Double] =
+            var weighIns: [Int: Double] =
                 noScale
                 ? [:]
                 : [-20: 163.6, -16: 163.9, -13: 164.4, -9: 164.2, -6: 164.9, -3: 165.3, -1: 165.1]
+            // `long`: eleven weeks of weigh-ins, so the chart's axis shows months.
+            if options.contains("long"), !noScale {
+                weighIns.merge([-78: 164.8, -70: 165.6, -63: 166.9, -55: 165.9, -46: 165.2, -38: 164.6, -29: 163.8]) { old, _ in old }
+            }
             var photoDays = [0, -1, -2, -3, -4, -5, -7, -8, -9, -11]
             if empty { photoDays.removeAll { $0 == 0 } }
             let days = Set(photoDays).union(weighIns.keys).sorted(by: >)
