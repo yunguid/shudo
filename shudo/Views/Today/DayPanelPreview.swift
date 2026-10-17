@@ -47,7 +47,8 @@ enum DayPanelPreview {
 
     /// Five more small meals through the afternoon, on the same day.
     private static func grazing(on anchor: Entry) -> [Entry] {
-        let calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: ShellPreviewFixtures.timezone) ?? .autoupdatingCurrent
         let start = calendar.startOfDay(for: anchor.createdAt)
         func at(_ hour: Int, _ minute: Int) -> Date {
             start.addingTimeInterval(TimeInterval(hour * 3_600 + minute * 60))
