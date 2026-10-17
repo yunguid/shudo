@@ -417,12 +417,11 @@ struct BodyScreen: View {
         }
     }
 
+    /// Words only: the dashed frame beside them already shows the camera.
     @ViewBuilder
     private func promptButtons(_ checkIn: WeightCheckIn?) -> some View {
-        Button {
+        Button("Check in") {
             showsCamera = true
-        } label: {
-            Label("Check in", systemImage: "camera")
         }
         .buttonStyle(BodyPillButtonStyle(prominent: true))
         Button(checkIn?.hasWeight == true ? "Edit weight" : "Weight") {
@@ -492,7 +491,7 @@ struct BodyScreen: View {
         .accessibilityAction(named: checkIn.hasWeight ? "Edit weight" : "Add weight") { showsWeightEntry = true }
     }
 
-    /// "Checked in at 7:12 AM", plus the weight once it's in.
+    /// "Checked in at 7:12 am", plus the weight once it's in.
     private func checkedInTitle(_ checkIn: WeightCheckIn) -> String {
         var title = "Checked in"
         if let captured = checkIn.photoCapturedAt ?? (checkIn.hasPhoto ? checkIn.createdAt : nil) {
@@ -509,7 +508,9 @@ struct BodyScreen: View {
     @ViewBuilder
     private func streakLabel(fallback: String?) -> some View {
         if snapshot.streak > 0 {
-            HStack(spacing: Design.Space.xs) {
+            // On the first line's baseline, so a wrapped streak line (large
+            // text) doesn't leave the flame floating between its lines.
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
                 Image(systemName: "flame")
                     .font(Design.Typeface.text(.caption, weight: .medium))
                     .foregroundStyle(Design.Color.oak)
