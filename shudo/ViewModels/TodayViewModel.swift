@@ -624,8 +624,8 @@ final class TodayViewModel: ObservableObject {
     }
 
     /// Starts a meal correction the moment the composer accepts it locally.
-    /// The visible card flips into "Updating nutrition estimate" immediately
-    /// and the request runs here, detached from any sheet or pushed screen, so
+    /// The visible card flips into its working state immediately and the
+    /// request runs here, detached from any sheet or pushed screen, so
     /// dismissing them never abandons or blocks the update.
     @discardableResult
     func submitCorrection(entryId: UUID, submission: EntryCorrectionSubmission) -> Bool {

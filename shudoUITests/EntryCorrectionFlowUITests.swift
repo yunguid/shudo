@@ -36,6 +36,15 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         ).firstMatch
     }
 
+    /// Every meal still being worked on shows the same quiet line, "Working
+    /// on it" to VoiceOver. The fixture's dinner is always mid-analysis, so
+    /// a second line means lunch is updating.
+    private func secondWorkingLine(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Working on it")
+        ).element(boundBy: 1)
+    }
+
     /// Today's thread opens at the bottom (the evening); lunch is further
     /// up, so scroll the thread until the meal receipt is on screen.
     private func openLunch(in app: XCUIApplication) {
@@ -100,16 +109,15 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         )
 
         // The timeline is back with the corrected meal in a visible
-        // updating state.
-        let updating = element(labeled: "Updating nutrition estimate", in: app)
-        XCTAssertTrue(updating.waitForExistence(timeout: 6))
+        // updating state: its numbers give way to the working line.
+        XCTAssertTrue(secondWorkingLine(in: app).waitForExistence(timeout: 6))
         XCTAssertTrue(app.buttons["capture.mic"].firstMatch.waitForExistence(timeout: 2))
 
         // The recalculated estimate replaces the old one on the same card.
         XCTAssertTrue(
             element(labeled: "Calories 560", in: app).waitForExistence(timeout: 8)
         )
-        XCTAssertFalse(element(labeled: "Updating nutrition estimate", in: app).exists)
+        XCTAssertFalse(secondWorkingLine(in: app).exists)
     }
 
     @MainActor
@@ -118,9 +126,7 @@ final class EntryCorrectionFlowUITests: XCTestCase {
 
         submitCorrection("fail this once, then half the rice", in: app)
 
-        XCTAssertTrue(
-            element(labeled: "Updating nutrition estimate", in: app).waitForExistence(timeout: 6)
-        )
+        XCTAssertTrue(secondWorkingLine(in: app).waitForExistence(timeout: 6))
 
         // The failure is visible where the user is, with the previous
         // estimate back on the card and the correction preserved.
@@ -132,9 +138,7 @@ final class EntryCorrectionFlowUITests: XCTestCase {
         XCTAssertTrue(retry.exists)
         retry.tap()
 
-        XCTAssertTrue(
-            element(labeled: "Updating nutrition estimate", in: app).waitForExistence(timeout: 6)
-        )
+        XCTAssertTrue(secondWorkingLine(in: app).waitForExistence(timeout: 6))
         XCTAssertTrue(
             element(labeled: "Calories 560", in: app).waitForExistence(timeout: 8)
         )
