@@ -62,6 +62,10 @@ struct TodayScreen: View {
     /// Stick-to-bottom: true while the newest row is in view. Only Luke's own
     /// scrolling unpins it; the keyboard and composer resizing never do.
     @State private var isPinnedToBottom = true
+    /// More than a screen above the newest row: the way back shows.
+    @State private var isFarFromLatest = false
+    /// Something of Shudo's landed below while Luke was reading up the day.
+    @State private var hasUnseenBelow = false
     @State private var scrollPhase: ScrollPhase = .idle
     @State private var coachNotice: String?
     @State private var showErrorAlert = false
@@ -204,6 +208,12 @@ struct TodayScreen: View {
                             isPinnedToBottom = false
                         }
                     }
+                    .onScrollGeometryChange(for: Bool.self, of: Self.isFarFromLatest) { _, far in
+                        withAnimation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                            isFarFromLatest = far
+                            if !far { hasUnseenBelow = false }
+                        }
+                    }
                     .offset(x: daySwipePreview + dayEntrance)
                     .opacity(1 - dayVeil)
                     .refreshable {
@@ -244,13 +254,18 @@ struct TodayScreen: View {
                     .onChange(of: rows.last?.id) { _, _ in
                         guard settledDay == selectedDay else { return }
                         // Don't yank Luke away from something he scrolled up
-                        // to read, unless the new row is his own send.
-                        guard isPinnedToBottom || rows.last?.item.side == .me else { return }
+                        // to read, unless the new row is his own send; the
+                        // way back down marks that something arrived.
+                        guard isPinnedToBottom || rows.last?.item.side == .me else {
+                            hasUnseenBelow = true
+                            return
+                        }
                         isPinnedToBottom = true
                         withAnimation(Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion)) {
                             proxy.scrollTo("thread.bottom", anchor: .bottom)
                         }
                     }
+                    .overlay(alignment: .bottomTrailing) { jumpToLatest(proxy) }
                 }
                 .contentShape(Rectangle())
                 .simultaneousGesture(daySwipeGesture(containerWidth: geometry.size.width))
@@ -322,6 +337,13 @@ struct TodayScreen: View {
     private static func isAtBottom(_ geometry: ScrollGeometry) -> Bool {
         let visibleBottom = geometry.visibleRect.maxY - geometry.contentInsets.bottom
         return geometry.contentSize.height - visibleBottom <= 48
+    }
+
+    /// More than a screenful of the day below what's in view.
+    private static func isFarFromLatest(_ geometry: ScrollGeometry) -> Bool {
+        let visibleBottom = geometry.visibleRect.maxY - geometry.contentInsets.bottom
+        let visibleHeight = geometry.visibleRect.height - geometry.contentInsets.top - geometry.contentInsets.bottom
+        return geometry.contentSize.height - visibleBottom > max(visibleHeight, 360)
     }
 
     /// Typing ends wherever focus lives (the shell's message field).
@@ -843,6 +865,47 @@ struct TodayScreen: View {
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: pendingDeletion?.id)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: coachNotice)
         .animation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion), value: isToday)
+    }
+
+    /// Far up the day, one quiet way back to the newest row, at the trailing
+    /// edge away from the well; a Pernambuco dot when something of Shudo's
+    /// landed below meanwhile.
+    @ViewBuilder
+    private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
+        if isFarFromLatest {
+            Button {
+                isPinnedToBottom = true
+                hasUnseenBelow = false
+                withAnimation(Design.Motion.calm(Design.Motion.shoji, reduceMotion: reduceMotion)) {
+                    proxy.scrollTo("thread.bottom", anchor: .bottom)
+                }
+            } label: {
+                Image(systemName: "arrow.down")
+                    .font(.custom(Design.Typeface.faceName(.semibold), fixedSize: 15))
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Design.Color.textSecondary)
+                    .frame(width: 42, height: 42)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .chromeGlass(in: Circle(), tint: Design.Color.canvas.opacity(0.5), interactive: true)
+            .overlay(alignment: .topTrailing) {
+                if hasUnseenBelow {
+                    Circle()
+                        .fill(Design.Color.pernambuco)
+                        .frame(width: 8, height: 8)
+                        .offset(x: -1, y: 1)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
+            .padding(.trailing, 14)
+            .padding(.bottom, composerInset + 12)
+            .accessibilityLabel("Newest message")
+            .accessibilityHint(hasUnseenBelow ? "Something new below" : "Scrolls to the end of the day")
+            .accessibilityIdentifier("today.jumpToLatest")
+            .transition(.shoji(.bottom, reduceMotion: reduceMotion))
+        }
     }
 
     // MARK: Account
