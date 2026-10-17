@@ -236,11 +236,22 @@ struct TodayScreen: View {
                         guard let id else { return }
                         focus(on: id, proxy: proxy)
                     }
-                    .onChange(of: composerInset) { _, _ in
-                        // The field changed height (typing, resting, a draft
-                        // growing to six lines): the newest row stays right
-                        // above it.
-                        guard isPinnedToBottom else { return }
+                    .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentInsets.bottom }) { old, new in
+                        // What sits under the thread changed height — the
+                        // field resting or typing, a draft growing to six
+                        // lines, the band stepping back after the keyboard
+                        // (an inset, not a resize): the newest row stays
+                        // right above it.
+                        guard isPinnedToBottom, abs(new - old) > 0.5 else { return }
+                        withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                            proxy.scrollTo("thread.bottom", anchor: .bottom)
+                        }
+                    }
+                    .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentSize.height }) { old, new in
+                        // Shudo's reply growing as it streams (or a card
+                        // below settling taller): pinned, the thread keeps
+                        // its last line in view, not just its first.
+                        guard isPinnedToBottom, settledDay == selectedDay, new > old + 0.5 else { return }
                         withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
                             proxy.scrollTo("thread.bottom", anchor: .bottom)
                         }
