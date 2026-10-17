@@ -716,18 +716,25 @@ final class FakeCoachService: CoachServing, @unchecked Sendable {
     }
 
     /// accepted → status → deltas → final message → optional card → done.
+    /// The pauses (all 0 by default) give previews a readable pace: the
+    /// server taking the turn, Shudo thinking, the words arriving.
     static func replyScript(
         reply: [String],
         statusLabel: String? = nil,
-        card: (@Sendable (TurnContext) -> CoachMessage)? = nil
+        card: (@Sendable (TurnContext) -> CoachMessage)? = nil,
+        acceptAfterMilliseconds: Int = 0,
+        thinkMilliseconds: Int = 0,
+        chunkMilliseconds: Int = 0
     ) -> Script {
         { request, context in
-            var steps: [Step] = [
-                .event(.accepted(runId: context.runId, userMessage: context.userMessage, duplicate: false)),
-            ]
+            var steps: [Step] = []
+            if acceptAfterMilliseconds > 0 { steps.append(.pause(milliseconds: acceptAfterMilliseconds)) }
+            steps.append(.event(.accepted(runId: context.runId, userMessage: context.userMessage, duplicate: false)))
             if let statusLabel { steps.append(.event(.status(label: statusLabel))) }
+            if thinkMilliseconds > 0 { steps.append(.pause(milliseconds: thinkMilliseconds)) }
             for chunk in reply {
                 steps.append(.event(.delta(messageId: context.replyId, text: chunk)))
+                if chunkMilliseconds > 0 { steps.append(.pause(milliseconds: chunkMilliseconds)) }
             }
             let final = CoachMessage(
                 id: context.replyId,

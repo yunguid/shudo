@@ -13,7 +13,8 @@ import UIKit
 /// Launch with `-shudoPolishPreview main | today-expanded | today-cards`;
 /// add `-shudoTodayPreview typing` to start a coach turn that stays in the
 /// "thinking" state (typing indicator), `quiet` for a light day (the plan and
-/// two meals), or `empty` for a fresh day with nothing in it yet.
+/// two meals), `empty` for a fresh day with nothing in it yet, or
+/// `failsend` to make the first send fail (Not sent · Retry).
 enum ShellPreviewFixtures {
     static let timezone = "America/New_York"
     static let userId = "00000000-0000-4000-8000-000000000001"
@@ -367,6 +368,9 @@ enum ShellPreviewFixtures {
     // MARK: Services
 
     static func coachService(cards: Bool, settings: CoachSettings = .defaults) -> FakeCoachService {
+        // A send gets a canned answer at the real pace: Shudo takes the turn
+        // after a beat, thinks (typing dots), then the words stream in — so
+        // the whole loop can be judged on screen.
         let service = FakeCoachService(
             messages: cards ? cardMessages() : messages(),
             memory: memory,
@@ -375,9 +379,20 @@ enum ShellPreviewFixtures {
             now: { ShellPreviewFixtures.now() },
             script: FakeCoachService.replyScript(
                 reply: ["Copy that. ", "Logging it now — ", "I’ll check the numbers when it lands."],
-                statusLabel: "Checking your day…"
+                statusLabel: "Checking your day…",
+                acceptAfterMilliseconds: 350,
+                thinkMilliseconds: 1_400,
+                chunkMilliseconds: 220
             )
         )
+        if options.contains("failsend") {
+            // `-shudoTodayPreview failsend`: the first send never reaches
+            // Shudo, so the bubble shows Not sent · Retry; Retry goes through.
+            service.enqueueOverride([
+                .pause(milliseconds: 600),
+                .fail(.server(statusCode: 503, code: nil, message: "Couldn’t reach Shudo.")),
+            ])
+        }
         if options.contains("typing") {
             service.script = { _, context in
                 [
