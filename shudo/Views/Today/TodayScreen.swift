@@ -240,8 +240,10 @@ struct TodayScreen: View {
             }
             .background { AppBackground() }
             // The header is the page's own top (no nav bar, no glass card):
-            // the day's name, the figure, and the account at the corner.
-            .safeAreaBar(edge: .top, spacing: 0) { header }
+            // the day's name, the figure, and the account at the corner. An
+            // inset, not a bar: the open day hangs below the header over the
+            // thread, and a bar won't take touches outside its own frame.
+            .safeAreaInset(edge: .top, spacing: 0) { header }
             .overlay(alignment: .bottom) { bottomOverlay }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: TodayRoute.self) { route in destination(route) }
@@ -320,8 +322,8 @@ struct TodayScreen: View {
                 fallbackTarget: today.effectiveTarget,
                 selectedTotals: headerTotals
             ),
-            meals: dayMeals,
-            timeText: timeText,
+            meals: DayPanelPreview.meals(dayMeals),
+            timeZone: formatters.calendar.timeZone,
             onSelectDay: { select(day: $0) },
             onOpenMeal: { meal in
                 guard meal.status == .complete else { return }
