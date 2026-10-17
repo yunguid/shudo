@@ -278,6 +278,72 @@ Deno.test("an unchanged state collapses onto the completed run without a model c
   assertEquals(ledger.completions.length, 0);
 });
 
+Deno.test("a passed slot or the plan's own note doesn't re-plan the day; a meal does, even one that brings an earlier state back", async () => {
+  const fake = coachFakeAdmin({ tables: fixtures() });
+  const ledger = installCoachLedger(fake, { userId: USER });
+  // Claims as the database makes them: a key it has seen returns that run,
+  // and the day's newest run is the one the next plan reads.
+  const runs: Row[] = [];
+  fake.rpc.claim_coach_run = (args) => {
+    const known = runs.find((run) =>
+      run.checkpoint_key === args.p_checkpoint_key
+    );
+    if (known) return { status: known.status, run_id: known.id };
+    runs.unshift({
+      id: crypto.randomUUID(),
+      checkpoint_key: args.p_checkpoint_key,
+      input_fingerprint: args.p_input_fingerprint,
+      status: "complete",
+    });
+    return {
+      status: "claimed",
+      run_id: runs[0].id,
+      claim_token: ledger.claimToken,
+      generation_attempt: 1,
+    };
+  };
+  fake.rpc.get_coach_runs = () => runs.slice(0, 1);
+  const plan = async (at: string) =>
+    (await runCoachPlan(
+      fake.admin as never,
+      { userId: USER, trigger: "foreground", foreground: true },
+      {
+        client: fakeClaude([jsonTextEvents(GOOD_PLAN), jsonTextEvents(REPAIR)]),
+        now: () => new Date(at),
+      },
+    )).generated;
+
+  assertEquals(await plan("2026-10-05T16:40:00Z"), true); // 12:40
+  // Lunch went out at 1 and the plan saved a note about itself; neither is
+  // something he did, so opening the app at 1:30 calls no model.
+  const memory = fake.tables.coach_memory[0];
+  memory.version = 4;
+  (memory.sections as Row).notes = { n1: "Lunch text went out at 1." };
+  assertEquals(await plan("2026-10-05T17:30:00Z"), false);
+
+  // A bar at 1:40 re-plans. Deleting it brings back the 12:40 state, but the
+  // texts out there were written for the bar, so that re-plans too.
+  fake.tables.entries.push({
+    id: "44444444-4444-4444-8444-444444444444",
+    user_id: USER,
+    local_day: "2026-10-05",
+    occurred_at: "2026-10-05T17:40:00Z",
+    created_at: "2026-10-05T17:40:00Z",
+    updated_at: "2026-10-05T17:41:00Z",
+    title: "Protein bar",
+    status: "complete",
+    calories_kcal: 230,
+    protein_g: 20,
+    carbs_g: 25,
+    fat_g: 8,
+  });
+  assertEquals(await plan("2026-10-05T17:45:00Z"), true);
+  fake.tables.entries.pop();
+  assertEquals(await plan("2026-10-05T17:50:00Z"), true);
+  assertEquals(await plan("2026-10-05T17:55:00Z"), false);
+  assertEquals(runs.length, 3);
+});
+
 Deno.test("a refusal falls back to template copy instead of going silent", async () => {
   const fake = coachFakeAdmin({ tables: fixtures() });
   const ledger = installCoachLedger(fake, { userId: USER });
@@ -298,8 +364,9 @@ Deno.test("a refusal falls back to template copy instead of going silent", async
   // Silence wins where the templates have nothing useful to say.
   assertEquals(
     messages.slice(1).map((message) => message.slot_key),
-    ["training", "dinner", "wind_down"],
+    ["training", "dinner", "wind_down", "wake"],
   );
+  assertEquals(messages.at(-1)?.local_day, "2026-10-06");
 });
 
 Deno.test("a meal that already has an ack is not acknowledged twice", async () => {

@@ -291,11 +291,12 @@ Deno.test("plan prompts carry the brief, and exactly one slot asks the next open
   // The open questions never sit in the prompt as a list to fire off.
   assertEquals(systemText(requests[0]).includes("bathroom scale"), false);
   const slots = (packOf(requests[0]).request as Row).slots as Row[];
-  assertEquals(slots.map((slot) => slot.slot_key), [
-    "afternoon",
-    "training",
-    "dinner",
-    "wind_down",
+  assertEquals(slots.map((slot) => `${slot.day}:${slot.slot_key}`), [
+    "today:afternoon",
+    "today:training",
+    "today:dinner",
+    "today:wind_down",
+    "tomorrow:wake",
   ]);
   assertEquals(slots.filter((slot) => slot.ask).map((slot) => slot.ask), [
     SCALE_QUESTION,

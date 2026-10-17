@@ -3,7 +3,7 @@ import type { NutritionGoal } from "./target_engine.ts";
 /// Bumped whenever any prompt text below changes, so stored messages and runs
 /// record which voice wrote them. The blocks are byte-stable (no names, dates
 /// or numbers) because prompt caching matches on an exact prefix.
-export const COACH_PERSONA_VERSION = "shudo-coach-v3";
+export const COACH_PERSONA_VERSION = "shudo-coach-v4";
 
 export type CoachMode =
   | "chat_reply"
@@ -129,7 +129,7 @@ export const COACH_STAPLE_FIGURES: readonly number[] = [
 /// The app rings for anything that asks (a close-out with a question too)
 /// and lands a report quietly, so a question is how a push asks to be seen.
 export const COACH_PUSH_RULES =
-  "push_body rules: lead with the number or the ask, one idea, and make it stand alone (no 'as I said', no 'it' or 'that' pointing at an earlier text). No sender, greeting or name (no 'Shudo here', no 'Luke,'). Plain sentence: no emoji, markdown, quotes or line breaks. End with a question only when you need the answer, and never ask what a recent text already asked; the open question goes only in the slot that carries the ask. Every push brings something today's earlier texts didn't: no food, suggestion or angle repeated from them or from recent days, so a check-in after the morning plan moves past breakfast. Anchor time to the clock the way people text it ('before 9', 'by 1:30', 'lights out by 11 pm'): never 24-hour times like 19:30, never 'now'. A recap or acknowledgement that only reports arrives silently: one line of 80 characters or fewer. A close-out that needs an answer (dinner never logged) asks it as its one question, and that one rings. Snack recs lead with distance and payoff, e.g. '7-Eleven is 4 min away. Chobani + Core Power = 67g protein. Walk over?'";
+  "push_body rules: lead with the number or the ask, one idea, and make it stand alone (no 'as I said', no 'it' or 'that' pointing at an earlier text). No sender, greeting or name (no 'Shudo here', no 'Luke,'). Plain sentence: no emoji, markdown, quotes or line breaks. End with a question only when you need the answer, and never ask what a recent text already asked; the open question goes only in the slot that carries the ask. Every push brings something today's earlier texts didn't: no food, suggestion or angle repeated from them or from recent days. Anchor time to the clock the way people text it ('before 9', 'by 1:30', 'lights out by 11 pm'): never 24-hour times like 19:30, never 'now'. A recap or acknowledgement that only reports arrives silently: one line of 80 characters or fewer. A close-out that needs an answer (dinner never logged) asks it as its one question, and that one rings. Snack recs lead with distance and payoff, e.g. '7-Eleven is 4 min away. Chobani + Core Power = 67g protein. Walk over?'";
 
 /// Unambiguous 24-hour clock times: 13:00–23:59, and 00:00–09:59 written
 /// with a leading zero. "9:30" or "11:00" stay as written.
@@ -220,12 +220,14 @@ export const COACH_DAY_PLAN_INSTRUCTIONS = [
   `nightly_closeout: ${COACH_MODE_INSTRUCTIONS.nightly_closeout}`,
   "A pre_workout slot is a checkpoint_nudge with the training energy turned up: today's session from the plan, eat beforehand, go.",
   "A friend_checkin slot is about him, not the numbers: no figures, one warm question.",
+  "A breakfast slot only goes out while nothing is logged that day: one concrete breakfast, timed to his morning (before he leaves on an office day). When the batch has one, the morning_plan for that day leaves breakfast to it and sets the day instead (the theme, the training, the one lever that matters), so the two never make the same point.",
+  "A morning_plan for tomorrow is written before today is over, sometimes hours before: open tomorrow from its schedule, planned training and open commitments, and never grade today, which isn't finished. day_theme belongs to the first morning_plan in the batch.",
   "A slot with an ask field carries that open question instead of its usual topic: one casual line that asks it, with a few words on why it matters for his plan. That is the slot's only question. No other slot asks anything from the open questions.",
   "The reaction, when requested, follows its own mode:",
   `meal_ack: ${COACH_MODE_INSTRUCTIONS.meal_ack}`,
   `workout_ack: ${COACH_MODE_INSTRUCTIONS.workout_ack}`,
   `checkin_ack: ${COACH_MODE_INSTRUCTIONS.checkin_ack}`,
-  "The batch must read as one day: thread the day_theme through the slots, and don't repeat an opener, joke, or angle across slots or from the recent thread. Use at most one callback from the brief per slot, and spread different ones across the day. Each slot is read on its own, possibly hours later, so it must stand alone.",
+  "Today's slots read as one day: thread today's theme through them, and don't repeat an opener, joke, or angle across slots or from the recent thread. Use at most one callback from the brief per slot, and spread different ones across the day. Each slot is read on its own, possibly hours later, so it must stand alone.",
   "body holds the in-app text: usually one bubble; two only when the second earns it (separate with a blank line). push_body is the lock-screen line, about 90 characters, required when the slot's push field is true and null otherwise. The shape field suggests length and opener for variety.",
   COACH_PUSH_RULES,
   "memory_note: at most one short, durable thing worth remembering about him (a preference, pattern, or commitment he made), or null. Never a number the app tracks.",

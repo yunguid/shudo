@@ -347,6 +347,8 @@ export function installCoachLedger(
     state.failures.push(args);
     return true;
   };
+  // No earlier plan run on the day unless a test says otherwise.
+  fake.rpc.get_coach_runs = () => [];
   fake.rpc.upsert_streaming_coach_message = (args) => {
     state.streams.push(args);
     const existing = fake.tables.coach_messages.find((row) =>

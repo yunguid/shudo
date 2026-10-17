@@ -60,8 +60,10 @@ import {
 import {
   claimCoachRun,
   type CoachMessageInput,
+  type CoachRunSummary,
   completeCoachRun,
   failCoachRun,
+  getCoachRuns,
   isClaimed,
 } from "./coach_rpc.ts";
 import { recordCoachUsage } from "./coach_usage.ts";
@@ -499,33 +501,87 @@ async function sha256Hex(value: string): Promise<string> {
   ).join("");
 }
 
-/// Same state, same fingerprint: a re-sync with nothing new is a no-op
-/// because the claim key repeats and the completed run is returned.
+/// What the day's texts are written from. A slot passing, a text going
+/// out, or the plan's own memory note changes none of it, so none of them
+/// re-plans the day; a finished meal or workout, a check-in, his own words,
+/// a goal, schedule or settings change, or a new coach day does. Meals and
+/// workouts count once they're finished: the completion re-plans.
 export function planFingerprint(
   context: CoachContext,
   slots: PlannedSlot[],
-  reaction: ReactionPlan | null,
 ): Promise<string> {
+  const finished = (row: { status: string }) => row.status === "complete";
   return sha256Hex(JSON.stringify({
     v: COACH_PERSONA_VERSION,
     day: context.localDay,
-    meals: context.meals.map((meal) => [meal.id, meal.status, meal.updated_at]),
-    activities: context.activities.map((activity) => [
+    timezone: context.timezone,
+    meals: context.meals.filter(finished).map((meal) => [
+      meal.id,
+      meal.updated_at,
+    ]),
+    activities: context.activities.filter(finished).map((activity) => [
       activity.id,
-      activity.status,
       activity.updated_at,
     ]),
     checkin: context.checkin
       ? [context.checkin.id, context.checkin.updated_at]
       : null,
-    memory: context.memory?.version ?? 0,
+    said: context.recentUserMessages.at(-1)?.id ?? null,
+    schedule: context.schedule,
+    questions: context.memory ? openQuestions(context.memory.sections) : [],
     digest: context.digests.at(-1)?.local_day ?? null,
+    goal: [
+      context.profile.goal_type,
+      context.profile.target_weight_kg,
+      context.profile.goal_date,
+    ],
+    training_plan: context.trainingPlan?.id ?? null,
     settings: context.settings,
     targets: context.targets,
     wellbeing: context.wellbeingHold,
-    slots: slots.map((slot) => `${slot.day}:${slot.slot_key}`),
-    reaction: reaction?.subjectKey ?? null,
+    tomorrow: slots.some((slot) => slot.day === "tomorrow"),
   }));
+}
+
+/// The day's newest plan run: the texts out there are its texts.
+async function latestPlanRun(
+  admin: SupabaseClient,
+  userId: string,
+  localDay: string,
+): Promise<CoachRunSummary | null> {
+  try {
+    const [run] = await getCoachRuns(admin, {
+      userId,
+      localDay,
+      operation: "coach_checkpoint",
+      limit: 1,
+    });
+    return run ?? null;
+  } catch (error) {
+    console.warn("coach_plan_latest_run_failed", { message: String(error) });
+    return null;
+  }
+}
+
+/// The run key for this plan. Nothing new since the latest plan (however
+/// many of its slots have passed): that run's key, so the claim returns it
+/// and no model is called. Otherwise a key chained past the latest run, so
+/// a state that comes back (a meal logged, then deleted) still re-plans,
+/// and concurrent triggers for one state still share a run.
+async function planCheckpointKey(
+  fingerprint: string,
+  reaction: ReactionPlan | null,
+  latest:
+    | Pick<CoachRunSummary, "id" | "checkpoint_key" | "input_fingerprint">
+    | null,
+): Promise<string> {
+  if (!reaction && latest && latest.input_fingerprint === fingerprint) {
+    return latest.checkpoint_key;
+  }
+  const chained = await sha256Hex(
+    [fingerprint, reaction?.subjectKey ?? "", latest?.id ?? ""].join(":"),
+  );
+  return `plan:${chained.slice(0, 16)}`;
 }
 
 function fallbackSnapshot(context: CoachContext): FallbackSnapshot {
@@ -628,7 +684,9 @@ function slotMessage(
     ...(notify ? { push_body: push } : {}),
   };
   if (slot.kind === "plan") {
-    const focus = Array.isArray(context.gamePlan?.focus)
+    // The game plan's focus is today's. Tomorrow's comes with the digest
+    // of today, and the 5 am plan puts it on tomorrow's card.
+    const focus = slot.day === "today" && Array.isArray(context.gamePlan?.focus)
       ? (context.gamePlan.focus as unknown[]).filter((item): item is string =>
         typeof item === "string"
       ).slice(0, 3)
@@ -877,6 +935,9 @@ export async function writePlanCopy(
     );
   }
 
+  // One day_theme per batch: it belongs to the first morning plan in it
+  // (today's at 5 am, otherwise tomorrow's).
+  const themed = slots.find((slot) => slot.kind === "plan");
   const collect = (candidateOutput: PlanOutput) => {
     const candidates = new Map<string, CopyCandidate>();
     if (reaction && candidateOutput.reaction) {
@@ -903,7 +964,7 @@ export async function writePlanCopy(
         mode: slot.mode,
         bubbles,
         push: slot.notify ? pushFor(bubbles, written.push_body) : null,
-        dayTheme: slot.slot_key === "wake" ? candidateOutput.day_theme : null,
+        dayTheme: slot === themed ? candidateOutput.day_theme : null,
       });
     }
     return candidates;
@@ -1097,16 +1158,22 @@ export async function runCoachPlan(
     lastLogAt: context.lastLogAt,
     lastProactiveAt: context.lastProactiveAt,
     deliveredToday: context.proactiveDeliveredToday,
+    mealsLoggedToday: context.meals.length,
     pace: paceOf(context),
     wellbeingHold: context.wellbeingHold,
   });
   const reaction = await resolveReaction(admin, context, request);
-  const fingerprint = await planFingerprint(context, slots, reaction);
+  const fingerprint = await planFingerprint(context, slots);
+  const checkpointKey = await planCheckpointKey(
+    fingerprint,
+    reaction,
+    await latestPlanRun(admin, request.userId, context.localDay),
+  );
   const claim = await claimCoachRun(admin, {
     userId: request.userId,
     operation: "coach_checkpoint",
     localDay: context.localDay,
-    checkpointKey: `plan:${fingerprint.slice(0, 16)}`,
+    checkpointKey,
     triggerSource: request.trigger === "daily"
       ? "schedule"
       : request.foreground
@@ -1145,7 +1212,7 @@ export async function runCoachPlan(
       } satisfies ModelCopy
       : await writePlanCopy(context, slots, reaction, {
         reactionNotify,
-        seed: fingerprint,
+        seed: checkpointKey,
         client: dependencies.client,
         onUsage: (usage) => usageEvents.push(usage),
         ask: pickAskSlot(context, slots),

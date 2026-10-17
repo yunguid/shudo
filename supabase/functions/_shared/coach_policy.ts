@@ -41,8 +41,12 @@ export const INTENSITY_RULES: Record<
 /// day that is still being closed out.
 export const COACH_DAY_BOUNDARY_MINUTES = 4 * 60;
 export const POST_LOG_QUIET_MINUTES = 45;
-/// Slots generated after this local time also write tomorrow's wake text.
-export const TOMORROW_WAKE_AFTER_MINUTES = 18 * 60;
+/// Every plan also writes tomorrow's wake text, so the phone holds the
+/// morning's first text from whenever the app last synced, not only after
+/// an evening open; the 5 am plan rewrites it with the night's digest.
+/// complete_coach_run refuses anything more than 36 hours out, so a wake
+/// that far away waits for a later plan.
+const TOMORROW_WAKE_MAX_LEAD_MINUTES = 34 * 60;
 const SLOT_LEAD_MINUTES = 2;
 
 export const SLOT_KEYS = [
@@ -329,6 +333,8 @@ export type SlotPlanInput = {
   lastProactiveAt?: Date | null;
   /// Proactive messages already delivered on the current coach day.
   deliveredToday?: number;
+  /// Meals logged on the current coach day (still analyzing included).
+  mealsLoggedToday?: number;
   pace?: CoachPace | null;
   wellbeingHold?: boolean;
 };
@@ -372,9 +378,12 @@ function slotFor(
 }
 
 /**
- * The remaining proactive slots for the current coach day (plus tomorrow's
- * wake text after 18:00): post-log quiet, minimum spacing, the intensity
- * cap (raised by one when behind pace), and quiet hours (notify=false).
+ * The remaining proactive slots for the current coach day, plus tomorrow's
+ * wake text: post-log quiet, minimum spacing, the intensity cap (raised by
+ * one when behind pace), and quiet hours (notify=false). The breakfast
+ * check exists only while nothing is logged that day: the morning plan
+ * sets the day, breakfast asks for the first meal, and once he has eaten
+ * it has nothing left to say.
  */
 export function planCoachSlots(input: SlotPlanInput): PlannedSlot[] {
   const clock = localClock(input.now, input.timezone);
@@ -385,9 +394,10 @@ export function planCoachSlots(input: SlotPlanInput): PlannedSlot[] {
   };
   const nowMs = input.now.getTime();
   const lastLogMs = input.lastLogAt?.getTime() ?? null;
-  const allowedKeys: ReadonlySet<CoachSlotKey> = input.wellbeingHold
-    ? new Set<CoachSlotKey>(["wake", "wind_down"])
-    : new Set(SLOT_KEYS);
+  const allowedKeys = new Set<CoachSlotKey>(
+    input.wellbeingHold ? ["wake", "wind_down"] : SLOT_KEYS,
+  );
+  if ((input.mealsLoggedToday ?? 0) > 0) allowedKeys.delete("breakfast");
 
   const candidates = slotTimesForDay(input.schedule, clock.coachDay)
     .filter((slot) => allowedKeys.has(slot.slot_key))
@@ -430,13 +440,14 @@ export function planCoachSlots(input: SlotPlanInput): PlannedSlot[] {
     accepted.push(slot);
   }
 
-  if (clock.coachMinutes >= TOMORROW_WAKE_AFTER_MINUTES) {
-    const tomorrow = addDays(clock.coachDay, 1);
-    const wake = slotTimesForDay(input.schedule, tomorrow)
-      .find((slot) => slot.slot_key === "wake");
-    if (wake) {
-      const planned = slotFor(wake, tomorrow, "tomorrow", input, quiet);
-      if (Date.parse(planned.deliver_at) > nowMs) accepted.push(planned);
+  const tomorrow = addDays(clock.coachDay, 1);
+  const wake = slotTimesForDay(input.schedule, tomorrow)
+    .find((slot) => slot.slot_key === "wake");
+  if (wake) {
+    const planned = slotFor(wake, tomorrow, "tomorrow", input, quiet);
+    const at = Date.parse(planned.deliver_at);
+    if (at > nowMs && at <= nowMs + TOMORROW_WAKE_MAX_LEAD_MINUTES * 60_000) {
+      accepted.push(planned);
     }
   }
 

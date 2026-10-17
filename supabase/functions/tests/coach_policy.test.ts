@@ -85,12 +85,25 @@ Deno.test("locked_in caps the day at seven texts, dropping the lowest priority",
     "training",
     "dinner",
     "wind_down",
+    "tomorrow:wake",
   ]);
   assertEquals(slots[0].deliver_at, "2026-10-05T11:10:00.000Z");
   assertEquals(slots[0].deliver_local, "07:10");
   assertEquals(slots[0].mode, "morning_plan");
-  assertEquals(slots.at(-1)?.mode, "nightly_closeout");
+  assertEquals(slots.at(-2)?.mode, "nightly_closeout");
   assert(slots.every((slot) => slot.notify), "No slot falls in quiet hours");
+  // Breakfast is a check, not a second morning plan: once anything is
+  // logged it goes, and mid-morning gets its place under the cap.
+  assertEquals(keys(planCoachSlots(input({ mealsLoggedToday: 1 }))), [
+    "wake",
+    "mid_morning",
+    "lunch",
+    "afternoon",
+    "training",
+    "dinner",
+    "wind_down",
+    "tomorrow:wake",
+  ]);
 });
 
 Deno.test("intensity sets the cap: chill keeps four, drill sergeant keeps all", () => {
@@ -99,10 +112,11 @@ Deno.test("intensity sets the cap: chill keeps four, drill sergeant keeps all", 
     "lunch",
     "training",
     "wind_down",
+    "tomorrow:wake",
   ]);
   assertEquals(
     planCoachSlots(input({ intensity: "drill_sergeant" })).length,
-    8,
+    9,
   );
 });
 
@@ -112,7 +126,13 @@ Deno.test("nothing is scheduled within 45 minutes after a log", () => {
     lastLogAt: new Date("2026-10-05T16:30:00Z"), // logged 12:30
     deliveredToday: 3,
   }));
-  assertEquals(keys(slots), ["afternoon", "training", "dinner", "wind_down"]);
+  assertEquals(keys(slots), [
+    "afternoon",
+    "training",
+    "dinner",
+    "wind_down",
+    "tomorrow:wake",
+  ]);
 });
 
 Deno.test("proactive texts keep a 75 minute gap from the last one delivered", () => {
@@ -124,15 +144,23 @@ Deno.test("proactive texts keep a 75 minute gap from the last one delivered", ()
   assertEquals(slots.some((slot) => slot.slot_key === "lunch"), false);
 });
 
-Deno.test("evening plans also write tomorrow's wake text", () => {
+Deno.test("an afternoon open already writes tomorrow's wake text", () => {
+  // The app last synced at 3 pm: the phone still has a first text for the
+  // morning, and the 5 am plan rewrites it when it can.
   const slots = planCoachSlots(input({
-    now: new Date("2026-10-06T00:00:00Z"), // Monday 20:00 EDT
-    deliveredToday: 5,
+    now: new Date("2026-10-05T19:00:00Z"), // Monday 15:00 EDT
+    deliveredToday: 4,
   }));
-  assertEquals(keys(slots), ["wind_down", "tomorrow:wake"]);
-  const wake = slots[1];
+  assertEquals(keys(slots), [
+    "afternoon",
+    "training",
+    "wind_down",
+    "tomorrow:wake",
+  ]);
+  const wake = slots.at(-1)!;
   assertEquals(wake.local_day, "2026-10-06");
   assertEquals(wake.deliver_at, "2026-10-06T11:10:00.000Z");
+  assertEquals(wake.mode, "morning_plan");
 });
 
 Deno.test("the coach day ends at 04:00, not midnight", () => {
@@ -168,7 +196,7 @@ Deno.test("falling well behind pace on a bulk earns one extra text", () => {
     now: new Date("2026-10-05T20:30:00Z"), // 16:30 EDT
     deliveredToday: 7,
   });
-  assertEquals(planCoachSlots(base).length, 0);
+  assertEquals(keys(planCoachSlots(base)), ["tomorrow:wake"]);
   const behind = planCoachSlots({
     ...base,
     pace: {
@@ -178,14 +206,14 @@ Deno.test("falling well behind pace on a bulk earns one extra text", () => {
       proteinTarget: 170,
     },
   });
-  assertEquals(keys(behind), ["training"]);
+  assertEquals(keys(behind), ["training", "tomorrow:wake"]);
   assertEquals(expectedPaceShare(13 * 60), 0.35);
   assertEquals(expectedPaceShare(19 * 60 + 45), 0.8);
 });
 
-Deno.test("a wellbeing hold leaves only two friend check-ins", () => {
+Deno.test("a wellbeing hold leaves only friend check-ins, morning and night", () => {
   const slots = planCoachSlots(input({ wellbeingHold: true }));
-  assertEquals(keys(slots), ["wake", "wind_down"]);
+  assertEquals(keys(slots), ["wake", "wind_down", "tomorrow:wake"]);
   assert(slots.every((slot) => slot.topic === "friend_checkin"));
 });
 
