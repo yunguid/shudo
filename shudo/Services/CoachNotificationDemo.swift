@@ -10,10 +10,13 @@ import UserNotifications
 /// `UNUserNotificationCenter`.
 ///
 /// On launch it asks for notification permission, runs a self-check against
-/// the real pending requests (plan, badges, re-sync, relaunch, supersede,
-/// unread renumbering, snooze, cancel-on-log, quiet hours), then schedules
-/// four believable texts a few seconds out so the banner, the grouped stack
-/// and the long-look with Reply can be screenshotted.
+/// the real pending requests (plan, per-day badges, actions by topic,
+/// re-sync, relaunch, supersede, unread renumbering, snooze, cancel-on-log,
+/// quiet hours, one-text answers), then, once the app is in the background,
+/// leaves yesterday's close-out in Notification Center and schedules four
+/// believable texts a few seconds out so the banner, the grouped stack and
+/// the long-looks (Log food, Reply) can be screenshotted. Coming back to the
+/// app checks that yesterday's text was cleared.
 ///
 ///     simctl launch <udid> luke.shudo -shudoPolishPreview main \
 ///       -shudoNotificationDemo [-shudoNotificationDemoDelay 15]
@@ -38,7 +41,8 @@ enum CoachNotificationDemo {
         guard let flag = arguments.firstIndex(of: "-shudoNotificationDemoDelay"),
               arguments.indices.contains(flag + 1),
               let seconds = TimeInterval(arguments[flag + 1]) else { return 8 }
-        return max(3, seconds)
+        // The show settles for ~4 s before reporting what's pending.
+        return max(6, seconds)
     }
 
     static let userId = ShellPreviewFixtures.userId
@@ -66,8 +70,9 @@ enum CoachNotificationDemo {
         settings: settings,
         stepDelayMilliseconds: 90,
         now: { CoachNotificationDemo.clock() },
+        // Two bubbles, as coach_chat writes them: the answer lands as one text.
         script: FakeCoachService.replyScript(
-            reply: ["Good. ", "That shake puts you at 158g. ", "A yogurt before bed and you’re there."]
+            reply: ["Good. ", "That shake puts you at 158g.\n\n", "A yogurt before bed and you’re there."]
         )
     )
 
@@ -141,13 +146,21 @@ enum CoachNotificationDemo {
         }
     }
 
+    /// What iOS still shows once the app is back in front, after the
+    /// foreground reconcile had a moment to clear earlier days.
     private static func logDelivered() async {
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
         let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
             .filter { $0.request.identifier.hasPrefix(CoachNotificationIdentifiers.ownedPrefix) }
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         let lines = delivered.map { "\($0.request.identifier.suffix(8)) \(formatter.string(from: $0.date))" }
         log("active; delivered: \(lines)")
+        let today = CoachDayBoundary.day(for: clock(), timeZone: timeZone)
+        let earlier = delivered.filter {
+            (CoachNotificationPayload(userInfo: $0.request.content.userInfo)?.localDay ?? today) < today
+        }
+        log("\(earlier.isEmpty ? "PASS" : "FAIL") open: earlier-day texts cleared from Notification Center (\(earlier.count) left)")
     }
 
     // MARK: Run
@@ -219,49 +232,60 @@ enum CoachNotificationDemo {
         let day = CoachLocalDay.string(for: now, timeZone: timeZone)
         let quietStart = nextOccurrence(of: settings.quietHoursStart, after: now)
             .addingTimeInterval(30 * 60)
+        let tomorrowWake = nextOccurrence(of: CoachClockTime(hour: 7, minute: 10), after: now)
+        let tomorrow = CoachLocalDay.string(for: tomorrowWake, timeZone: timeZone)
 
-        let lunch = row("checkpoint", "Lunch window. Make it 50g protein, not a salad.", day, now + 30 * 60)
+        let lunch = row("checkpoint", "Lunch window. Make it 50g protein, not a salad.", day, now + 30 * 60, topic: "lunch")
         let snack = snackRow("7-Eleven is 4 min away. Chobani + Core Power = 67g protein.", day, now + 100 * 60)
-        let banter = row("text", "Upper A at 6:15. Bench moved 185×5 last week. Go for 6.", day, now + 160 * 60)
-        let recap = row("recap", "Day closed: 171g protein, 2,850 kcal.", day, now + 200 * 60)
+        let banter = row("checkpoint", "Upper A at 6:15. Bench moved 185×5 last week. Go for 6.", day, now + 160 * 60,
+                         topic: "pre_workout")
+        let recap = row("recap", "Day closed: 171g protein, 2,850 cal.", day, now + 200 * 60, topic: "closeout")
+        let morning = row("plan", "Protein early today: 40g by 10.", tomorrow, tomorrowWake, topic: "morning_plan")
         let quiet = row("checkpoint", "This one lands in quiet hours.", day, quietStart)
         let silent = row("checkpoint", "In the thread only.", day, now + 40 * 60, notify: false)
-        for message in [lunch, snack, banter, recap, quiet, silent] { service.insert(message) }
+        for message in [lunch, snack, banter, recap, morning, quiet, silent] { service.insert(message) }
+        let todays = [lunch, snack, banter, recap]
 
         // 1. Plan
         await sync.sync(trigger: .foreground)
         var pending = await coachPending()
         let messageIds = Set(pending.keys.filter { $0.hasPrefix(CoachNotificationIdentifiers.messagePrefix) })
-        let expected = Set([lunch, snack, banter, recap].map { CoachNotificationIdentifiers.message($0.id) })
+        let expected = Set((todays + [morning]).map { CoachNotificationIdentifiers.message($0.id) })
         report.check("plan: future texts scheduled; quiet-hours and notify=false rows skipped",
                      messageIds == expected, "got \(messageIds.count) of \(expected.count)")
 
-        // 2. Badges count up from unread, in delivery order.
+        // 2. Badges count up from today's unread; tomorrow starts over at 1.
         let unread = (try? await service.fetchUnreadCount()) ?? 0
-        let badges = [lunch, snack, banter, recap].compactMap {
-            pending[CoachNotificationIdentifiers.message($0.id)]?.content.badge?.intValue
-        }
-        report.check("badges: \(badges) count up from unread \(unread)",
-                     badges == Array((unread + 1)...(unread + 4)))
+        let badges = todays.compactMap { pending[CoachNotificationIdentifiers.message($0.id)]?.content.badge?.intValue }
+        let morningBadge = pending[CoachNotificationIdentifiers.message(morning.id)]?.content.badge?.intValue
+        report.check("badges: today \(badges) count up from unread \(unread); tomorrow's plan \(morningBadge ?? -1)",
+                     badges == Array((unread + 1)...(unread + 4)) && morningBadge == 1)
 
         // 3. Content
         if let text = pending[CoachNotificationIdentifiers.message(lunch.id)]?.content,
            let card = pending[CoachNotificationIdentifiers.message(snack.id)]?.content,
+           let lift = pending[CoachNotificationIdentifiers.message(banter.id)]?.content,
            let quietOne = pending[CoachNotificationIdentifiers.message(recap.id)]?.content {
             let link = (text.userInfo["shudo"] as? [String: Any])?["deep_link"] as? String
             let destination = link.flatMap(URL.init(string:)).flatMap(AppRouter.coachDestination(for:))
             report.check("content: title Shudo, no subtitle, one thread, chime, active",
                          text.title == "Shudo" && text.subtitle.isEmpty
                             && text.threadIdentifier == CoachNotificationIdentifiers.threadIdentifier
-                            && text.sound != nil && text.interruptionLevel == .active
-                            && text.categoryIdentifier == CoachNotificationIdentifiers.textCategory)
+                            && text.sound != nil && text.interruptionLevel == .active)
             report.check("content: deep link opens the thread at that message",
                          destination == .thread(messageId: lunch.id, localDay: day), link ?? "nil")
+            let categories = await UNUserNotificationCenter.current().notificationCategories()
+            let food = categories.first { $0.identifier == CoachNotificationIdentifiers.foodCategory }
+            report.check("actions: a meal text leads with Log food; the pre-lift push with Reply",
+                         text.categoryIdentifier == CoachNotificationIdentifiers.foodCategory
+                            && food?.actions.first?.identifier == CoachNotificationIdentifiers.logFoodAction
+                            && lift.categoryIdentifier == CoachNotificationIdentifiers.textCategory,
+                         "\(text.categoryIdentifier) \(lift.categoryIdentifier)")
             report.check("content: snack rec gets Directions category, top relevance",
                          card.categoryIdentifier == CoachNotificationIdentifiers.snackCategory
                             && abs(card.relevanceScore - 0.9) < 0.001,
                          "\(card.categoryIdentifier) \(card.relevanceScore)")
-            report.check("content: recap is passive and silent",
+            report.check("content: a close-out that only reports is passive and silent",
                          quietOne.interruptionLevel == .passive && quietOne.sound == nil)
         } else {
             report.line("FAIL content: expected requests missing")
@@ -277,6 +301,10 @@ enum CoachNotificationDemo {
         await relaunched.sync(trigger: .foreground)
         pending = await coachPending()
         report.check("relaunch: a fresh CoachSync re-plans to the identical set", hashes(pending) == before)
+        await relaunched.refreshQueue()
+        pending = await coachPending()
+        report.check("refresh queue: the fetch-only pass (background refresh, lock-screen actions) keeps the set",
+                     hashes(pending) == before)
 
         // 5. Server supersedes a text.
         var superseded = recap
@@ -289,13 +317,13 @@ enum CoachNotificationDemo {
                      pending[CoachNotificationIdentifiers.message(recap.id)] == nil
                         && pending[CoachNotificationIdentifiers.message(lunch.id)] != nil)
 
-        // 6. Reading the thread renumbers pending badges.
+        // 6. Reading the thread renumbers today's pending badges.
         await sync.updateUnreadCount(0)
         pending = await coachPending()
-        let renumbered = [lunch, snack, banter].compactMap {
+        let renumbered = [lunch, snack, banter, morning].compactMap {
             pending[CoachNotificationIdentifiers.message($0.id)]?.content.badge?.intValue
         }
-        report.check("unread → 0: pending badges renumbered \(renumbered)", renumbered == [1, 2, 3])
+        report.check("unread → 0: pending badges renumbered \(renumbered)", renumbered == [1, 2, 3, 1])
         await sync.updateUnreadCount(unread)
 
         // 7. Snooze reposts an hour out.
@@ -320,8 +348,33 @@ enum CoachNotificationDemo {
                         && pending[CoachNotificationIdentifiers.snooze(banter.id)] == nil
                         && pending[CoachNotificationIdentifiers.message(snack.id)] != nil)
 
-        // 9. Clean up for the show.
-        for var message in [lunch, snack, banter, quiet, silent] {
+        // 9. An answer to a lock-screen reply is one text, however many
+        //    bubbles and cards it brought.
+        let bubbles = CoachMessage(role: .coach, kind: "text", body: "Good.\n\nThat shake puts you at 158g.",
+                                   localDay: day, deliverAt: now)
+        let answer = CoachNotificationPolicy.answer(
+            [bubbles, CoachFixtures.snackRec(localDay: day, at: now)],
+            firstBadge: 3
+        )
+        report.check("answer: two bubbles and a snack card land as one text, with Directions",
+                     answer?.body == "Good. That shake puts you at 158g." && answer?.badge == 4
+                        && answer?.categoryIdentifier == CoachNotificationIdentifiers.snackCategory
+                        && answer?.mapsQuery == "7-Eleven 2nd Ave",
+                     answer.map { "\($0.body) \($0.badge ?? -1) \($0.categoryIdentifier)" } ?? "nil")
+
+        // 10. Background refresh: 5:30 am after a night, within the hour by day.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let night = calendar.date(bySettingHour: 22, minute: 15, second: 0, of: now) ?? now
+        let afterNight = CoachRefreshPolicy.earliestBeginDate(after: night, timeZone: timeZone)
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: now) ?? now
+        report.check("background refresh: 10:15 pm asks for 5:30 am; noon asks for 1 pm",
+                     calendar.dateComponents([.hour, .minute], from: afterNight) == DateComponents(hour: 5, minute: 30)
+                        && afterNight > night
+                        && CoachRefreshPolicy.earliestBeginDate(after: noon, timeZone: timeZone) == noon + 3600)
+
+        // 11. Clean up for the show.
+        for var message in [lunch, snack, banter, morning, quiet, silent] {
             message.status = .superseded
             message.updatedAt = clock()
             service.insert(message)
@@ -337,20 +390,39 @@ enum CoachNotificationDemo {
         let start = clock().addingTimeInterval(deliveryDelay)
         let day = CoachLocalDay.string(for: start, timeZone: timeZone)
         let texts = [
-            row("checkpoint", "62g of protein to go before 9. Greek yogurt and a shake closes it.", day, start),
+            row("checkpoint", "62g of protein to go before 9. Greek yogurt and a shake closes it.", day, start,
+                topic: "protein_gap"),
             snackRow("7-Eleven is 4 min away. Chobani + Core Power = 67g protein. Walk over?", day, start + 10),
-            row("text", "Upper A at 6:15. Bench moved 185×5 last week. Go for 6.", day, start + 20),
-            row("recap", "Day closed: 171g protein, 2,850 kcal. Bed by 11 and we go again.", day, start + 30),
+            row("checkpoint", "Upper A at 6:15. Bench moved 185×5 last week. Go for 6.", day, start + 20,
+                topic: "pre_workout"),
+            row("recap", "Dinner never made the log. What did you eat after the lift?", day, start + 30,
+                topic: "closeout"),
         ]
         for message in texts { service.insert(message) }
         await CoachSync.shared.sync(trigger: .foreground)
+        // Last night's close-out, still in Notification Center: it lands
+        // quietly now, and the next time the app runs (a lock-screen reply,
+        // a refresh, an open) it's cleared. Posted once the sync above and
+        // the thread's refresh have settled, since either would clear it.
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        let yesterday = CoachLocalDay.string(for: start.addingTimeInterval(-24 * 3600), timeZone: timeZone)
+        let lastNight = row("recap", "Yesterday closed at 2,610 cal and 158g protein. Same again today.",
+                            yesterday, clock(), topic: "closeout")
+        await scheduler.center.add(
+            CoachNotificationPolicy.planned(row: CoachScheduledRow(message: lastNight), fireAt: nil, badge: nil)
+        )
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        let delivered = await scheduler.center.deliveredCoachNotifications()
+        report.line("show: last night's close-out \(delivered.contains { $0.localDay == yesterday } ? "is" : "is NOT") in Notification Center")
         let pending = await coachPending()
         let unread = await CoachSync.shared.snapshot.unreadCount
         report.line("show: unread \(unread) before the texts")
         for message in texts {
             let request = pending[CoachNotificationIdentifiers.message(message.id)]
             let badge = request?.content.badge.map { "badge \($0)" } ?? "-"
-            report.line("\(request != nil ? "show" : "FAIL show") +\(Int(message.deliverAt.timeIntervalSince(clock())))s \(message.id.uuidString.lowercased().suffix(8)) \(badge) \(message.kind): \(message.notificationText)")
+            let level = request?.content.interruptionLevel == .passive ? "quiet" : "rings"
+            let category = request?.content.categoryIdentifier ?? "-"
+            report.line("\(request != nil ? "show" : "FAIL show") +\(Int(message.deliverAt.timeIntervalSince(clock())))s \(message.id.uuidString.lowercased().suffix(8)) \(badge) \(level) \(category) \(message.kind): \(message.notificationText)")
         }
     }
 
@@ -361,13 +433,16 @@ enum CoachNotificationDemo {
         _ text: String,
         _ day: String,
         _ deliverAt: Date,
-        notify: Bool = true
+        notify: Bool = true,
+        topic: String? = nil
     ) -> CoachMessage {
-        CoachMessage(
+        var payload: [String: CoachJSON] = ["push_body": .string(text)]
+        if let topic { payload["topic"] = .string(topic) }
+        return CoachMessage(
             role: .coach,
             kind: kind,
             body: text,
-            rawPayload: .object(["push_body": .string(text)]),
+            rawPayload: .object(payload),
             localDay: day,
             deliverAt: deliverAt,
             status: .scheduled,
@@ -436,6 +511,9 @@ enum CoachNotificationDemo {
 
         func removePending(identifiers: [String]) async { await base.removePending(identifiers: identifiers) }
         func removeDelivered(identifiers: [String]) async { await base.removeDelivered(identifiers: identifiers) }
+        func deliveredCoachNotifications() async -> [CoachDeliveredNotification] {
+            await base.deliveredCoachNotifications()
+        }
         func setBadgeCount(_ count: Int) async { await base.setBadgeCount(count) }
         func authorizationStatus() async -> CoachSyncRequest.NotificationStatus { await base.authorizationStatus() }
         func requestAuthorization() async -> Bool { await base.requestAuthorization() }
