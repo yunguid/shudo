@@ -117,6 +117,26 @@ struct CorrectionRetryBanner: View {
     }
 }
 
+/// A small text action under a thread row ("Retry", "Delete"): caption
+/// type, but a full thumb's target around the word.
+struct ThreadTextAction: View {
+    let title: String
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(Design.Typeface.text(.caption, weight: .semibold))
+                .foregroundStyle(color)
+                .padding(.horizontal, 8)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// The account button's avatar. Settings owns uploading and caching the
 /// photo; this reuses the same disk cache first and falls back to one
 /// network fetch, so the corner shows an initial only when the user has no

@@ -619,23 +619,30 @@ struct TodayScreen: View {
                         .opacity(pending.isFailed ? 0.6 : 0.85)
                 }
                 if case .failed(let message, let retryable) = pending.state {
-                    HStack(spacing: 10) {
-                        Text(message)
-                            .font(Design.Typeface.text(.caption2))
+                    // It stays where he sent it. A passing failure just says
+                    // "Not sent" (the reason is for VoiceOver); one Retry
+                    // can't fix says why.
+                    HStack(spacing: 4) {
+                        Text(retryable ? "Not sent" : message)
+                            .font(Design.Typeface.text(.caption))
                             .foregroundStyle(Design.Color.danger)
                             .lineLimit(2)
                             .multilineTextAlignment(.trailing)
+                            .accessibilityLabel(retryable ? "Not sent. \(message)" : message)
                         if retryable {
-                            Button("Retry") { coach.retry(pending.clientRequestId) }
-                                .font(Design.Typeface.text(.caption, weight: .semibold))
-                                .foregroundStyle(Design.Color.ember)
-                                .accessibilityLabel("Retry message")
+                            ThreadTextAction(title: "Retry", color: Design.Color.ember) {
+                                coach.retry(pending.clientRequestId)
+                            }
+                            .accessibilityLabel("Retry message")
+                            .accessibilityIdentifier("today.pending.retry")
                         }
-                        Button("Delete") { coach.discardPending(pending.clientRequestId) }
-                            .font(Design.Typeface.text(.caption, weight: .semibold))
-                            .foregroundStyle(Design.Color.textSecondary)
-                            .accessibilityLabel("Delete unsent message")
+                        ThreadTextAction(title: "Delete", color: Design.Color.textSecondary) {
+                            coach.discardPending(pending.clientRequestId)
+                        }
+                        .accessibilityLabel("Delete unsent message")
                     }
+                    .padding(.top, -6)
+                    .transition(.opacity)
                 }
             }
         }
