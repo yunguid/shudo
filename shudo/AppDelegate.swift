@@ -47,6 +47,8 @@ enum CoachNotificationRouting {
         case acknowledge(messageId: UUID)
         case snooze(messageId: UUID)
         case directions(query: String)
+        /// Opens the food sheet; the text that asked counts as read.
+        case logFood(messageId: UUID?)
         case ignore
     }
 
@@ -71,14 +73,17 @@ enum CoachNotificationRouting {
             if let query = action.payload?.mapsQuery, !query.isEmpty { return .directions(query: query) }
             if let link = action.payload?.deepLink { return .open(link) }
             return .ignore
+        case CoachNotificationIdentifiers.logFoodAction:
+            return .logFood(messageId: action.messageId)
         default:
             return .ignore
         }
     }
 
     /// No banner while the thread is on screen; the message animates in.
-    /// Elsewhere in the app a passive text only joins the list, as it would
-    /// on the lock screen.
+    /// Elsewhere in the app a text slides in as a calm banner with no tone
+    /// (he's already looking at the phone), and a passive one only joins the
+    /// list, as it would on the lock screen.
     static func presentationOptions(
         isCoach: Bool,
         threadVisible: Bool,
@@ -86,6 +91,7 @@ enum CoachNotificationRouting {
     ) -> UNNotificationPresentationOptions {
         if isCoach && threadVisible { return [] }
         if isCoach && isPassive { return [.list] }
+        if isCoach { return [.banner, .list] }
         return [.banner, .list, .sound]
     }
 
@@ -187,9 +193,15 @@ final class CoachNotificationResponder {
         case .open(let url):
             AppRouter.shared.handle(url: url)
         case .reply(let text):
-            await reply(text, to: action.messageId)
+            await inBackgroundTask("coach-reply") {
+                await self.reply(text, to: action.messageId)
+                await self.sync.refreshQueue()
+            }
         case .acknowledge(let messageId):
-            await sync.markRead([messageId])
+            await inBackgroundTask("coach-ack") {
+                await self.sync.markRead([messageId])
+                await self.sync.refreshQueue()
+            }
         case .snooze(let messageId):
             guard let payload = action.payload else { return }
             let fireAt = CoachNotificationPolicy.snoozeFireDate(
@@ -197,23 +209,41 @@ final class CoachNotificationResponder {
                 settings: CoachSettingsMirror().load(),
                 timeZone: .autoupdatingCurrent
             )
-            await scheduler.snooze(payload, messageId: messageId, fireAt: fireAt)
+            await inBackgroundTask("coach-snooze") {
+                await self.scheduler.snooze(payload, messageId: messageId, fireAt: fireAt)
+                await self.sync.refreshQueue()
+            }
         case .directions(let query):
             if let url = CoachNotificationRouting.directionsURL(query: query) {
                 await UIApplication.shared.open(url)
+            }
+        case .logFood(let messageId):
+            AppRouter.shared.handle(url: AppRouter.logFoodURL)
+            if let messageId {
+                let sync = sync
+                Task { await sync.markRead([messageId]) }
             }
         case .ignore:
             break
         }
     }
 
-    /// Lock-screen reply: runs `coach_chat` (input_mode notification_reply)
-    /// inside a background task and posts Shudo's answer as a notification
-    /// if it arrives in time; otherwise it waits in the thread.
-    private func reply(_ text: String, to messageId: UUID?) async {
+    /// A lock-screen action wakes the app for a few seconds. Besides the
+    /// action itself, that's a chance to pull in whatever the coach wrote
+    /// since the last sync (`refreshQueue`), so answering one text keeps
+    /// the rest of the day's texts arriving.
+    private func inBackgroundTask(_ name: String, _ work: @MainActor () async -> Void) async {
         let background = UIKitCoachBackgroundTasks.shared
-        let token = background.begin("coach-reply")
+        let token = background.begin(name)
         defer { background.end(token) }
+        await work()
+    }
+
+    /// Lock-screen reply: runs `coach_chat` (input_mode notification_reply)
+    /// and posts Shudo's answer as a notification if it arrives in time;
+    /// otherwise it waits in the thread. Runs inside the caller's
+    /// background task.
+    private func reply(_ text: String, to messageId: UUID?) async {
         let remaining = UIApplication.shared.backgroundTimeRemaining
         let budget = min(25, max(5, remaining - 4))
         let now = Date()

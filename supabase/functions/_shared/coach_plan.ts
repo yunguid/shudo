@@ -44,6 +44,7 @@ import {
   COACH_DAY_PLAN_INSTRUCTIONS,
   COACH_PERSONA_VERSION,
   type CoachMode,
+  humanizePushClock,
 } from "./coach_persona.ts";
 import {
   addDays,
@@ -687,9 +688,13 @@ function reactionMessage(
 }
 
 function pushFor(bubbles: string[], proposed: string | null): string | null {
-  if (proposed && !/[\r\n]/u.test(proposed)) return stripPreamble(proposed);
+  if (proposed && !/[\r\n]/u.test(proposed)) {
+    return humanizePushClock(stripPreamble(proposed));
+  }
   const first = bubbles.length === 1 ? bubbles[0] : null;
-  return first && Array.from(first).length <= 150 ? first : null;
+  return first && Array.from(first).length <= 150
+    ? humanizePushClock(first)
+    : null;
 }
 
 /// Bubbles with any assistant throat-clearing dropped from the first one.

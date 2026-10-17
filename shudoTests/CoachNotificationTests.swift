@@ -232,10 +232,37 @@ struct CoachNotificationPolicyTests {
         #expect(center.removedPending == [CoachNotificationIdentifiers.message(second.id)])
     }
 
+    @Test func aReconcileSecondsBeforeATextRingsLeavesItPending() async {
+        let center = RecordingCoachNotificationCenter()
+        let scheduler = CoachNotificationScheduler(center: center)
+        let soon = row(10)
+        await scheduler.reconcile(rows: [soon], unreadCount: 0, suppressed: [], now: now)
+        #expect(center.pending.count == 1)
+
+        // A lock-screen reply lands 3 s before the text is due and the app
+        // re-plans: too late to re-add, so it must not be removed either.
+        await scheduler.reconcile(
+            rows: [soon], unreadCount: 1, suppressed: [], now: soon.deliverAt.addingTimeInterval(-3)
+        )
+        #expect(center.pending[CoachNotificationIdentifiers.message(soon.id)] != nil)
+        #expect(center.removedPending.isEmpty)
+    }
+
     // MARK: Cancel-on-log
 
-    @Test func cancelOnLogTakesOnlyTheServersPostLogWindow() {
-        #expect(CoachNotificationPolicy.cancelOnLogWindow == 45 * 60)
+    @Test func cancelOnLogTakesOnlyTheServersPostLogWindow() throws {
+        // Parity with the server's post-log quiet: a shorter client window
+        // lets a stale nudge ring after a log, a longer one mutes texts the
+        // server deliberately kept.
+        let policySource = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("supabase/functions/_shared/coach_policy.ts")
+        let source = try String(contentsOf: policySource, encoding: .utf8)
+        let line = source.split(separator: "\n").first { $0.contains("POST_LOG_QUIET_MINUTES =") }
+        let serverMinutes = line.flatMap { Double(String($0.filter(\.isNumber))) }
+        #expect(serverMinutes != nil, "POST_LOG_QUIET_MINUTES not found in coach_policy.ts")
+        #expect(CoachNotificationPolicy.cancelOnLogWindow == (serverMinutes ?? 0) * 60)
         let atNow = row(0)
         let soon = row(1)
         let edge = row(45)
