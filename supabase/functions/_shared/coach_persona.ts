@@ -3,7 +3,7 @@ import type { NutritionGoal } from "./target_engine.ts";
 /// Bumped whenever any prompt text below changes, so stored messages and runs
 /// record which voice wrote them. The blocks are byte-stable (no names, dates
 /// or numbers) because prompt caching matches on an exact prefix.
-export const COACH_PERSONA_VERSION = "shudo-coach-v2";
+export const COACH_PERSONA_VERSION = "shudo-coach-v3";
 
 export type CoachMode =
   | "chat_reply"
@@ -126,8 +126,33 @@ export const COACH_STAPLE_FIGURES: readonly number[] = [
 
 /// Lock-screen craft shared by every mode that writes push_body. The
 /// notification title already says "Shudo", so the line carries no sender.
+/// The app rings for anything that asks (a close-out with a question too)
+/// and lands a report quietly, so a question is how a push asks to be seen.
 export const COACH_PUSH_RULES =
-  "push_body rules: lead with the number or the ask, one idea, and make it stand alone (no 'as I said', no 'it' or 'that' pointing at an earlier text). No sender, greeting or name (no 'Shudo here', no 'Luke,'). Plain sentence: no emoji, markdown, quotes or line breaks. End with a question only when you need the answer. Anchor time to the clock ('before 9'), never 'now'. Recaps and acknowledgements arrive silently: one line of 80 characters or fewer, no call to action. Snack recs lead with distance and payoff, e.g. '7-Eleven is 4 min away. Chobani + Core Power = 67g protein. Walk over?'";
+  "push_body rules: lead with the number or the ask, one idea, and make it stand alone (no 'as I said', no 'it' or 'that' pointing at an earlier text). No sender, greeting or name (no 'Shudo here', no 'Luke,'). Plain sentence: no emoji, markdown, quotes or line breaks. End with a question only when you need the answer, and never ask what a recent text already asked; the open question goes only in the slot that carries the ask. Every push brings something today's earlier texts didn't: no food, suggestion or angle repeated from them or from recent days, so a check-in after the morning plan moves past breakfast. Anchor time to the clock the way people text it ('before 9', 'by 1:30', 'lights out by 11 pm'): never 24-hour times like 19:30, never 'now'. A recap or acknowledgement that only reports arrives silently: one line of 80 characters or fewer. A close-out that needs an answer (dinner never logged) asks it as its one question, and that one rings. Snack recs lead with distance and payoff, e.g. '7-Eleven is 4 min away. Chobani + Core Power = 67g protein. Walk over?'";
+
+/// Unambiguous 24-hour clock times: 13:00–23:59, and 00:00–09:59 written
+/// with a leading zero. "9:30" or "11:00" stay as written.
+const TWENTY_FOUR_HOUR_TIME =
+  /(?<![\d:.,])(0\d|1[3-9]|2[0-3]):([0-5]\d)(?![\d:])(?!\s?[ap]\.?m\b)/giu;
+
+/// A push reads like a text from a person: "lights out by 11 pm", "the 6:15
+/// pm lift", never "18:15". The pack hands the model 24-hour times and it
+/// echoes some back despite COACH_PUSH_RULES; this rewrites the ones that
+/// slip through, in the app's own clock style (lowercase am/pm).
+export function humanizePushClock(text: string): string {
+  return text.replace(
+    TWENTY_FOUR_HOUR_TIME,
+    (_match, hours: string, minutes: string) => {
+      const hour = Number(hours);
+      const twelve = hour % 12 === 0 ? 12 : hour % 12;
+      const suffix = hour < 12 ? "am" : "pm";
+      return minutes === "00"
+        ? `${twelve} ${suffix}`
+        : `${twelve}:${minutes} ${suffix}`;
+    },
+  );
+}
 
 /// Persona bible §5 per mode (meal_ack added in the same pattern), tightened
 /// to text-message length: lock-screen lines aim for 90 characters.
