@@ -13,14 +13,16 @@ import {
 } from "../_shared/http.ts";
 import {
   OPENAI_TRANSCRIPTION_ENGINE,
-  OPENAI_TRANSCRIPTION_MODEL,
+  parseSeconds,
   parseTranscriptionPurpose,
   transcribeAudio,
 } from "../_shared/transcription.ts";
 
 /// Record-then-send voice: the phone uploads one recording, gets text back,
 /// and submits that text through the normal meal / coach / correction paths.
-/// Audio is never stored.
+/// Audio is never stored. The phone also says how long the take ran and how
+/// much of it was voice (`audio_seconds`, `voiced_seconds`), which is how a
+/// transcript missing half of what Luke said gets a second opinion.
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -41,10 +43,13 @@ Deno.serve(async (req: Request) => {
     }
     const audio = formFile(form, "audio");
     if (!audio) throw new HttpError(400, "Attach a recording");
-    const text = await transcribeAudio(audio, purpose);
+    const result = await transcribeAudio(audio, purpose, {
+      audioSeconds: parseSeconds(formString(form, "audio_seconds")),
+      voicedSeconds: parseSeconds(formString(form, "voiced_seconds")),
+    });
     return json({
-      text,
-      model: OPENAI_TRANSCRIPTION_MODEL,
+      text: result.text,
+      model: result.model,
       speech_engine: OPENAI_TRANSCRIPTION_ENGINE,
     });
   } catch (error) {

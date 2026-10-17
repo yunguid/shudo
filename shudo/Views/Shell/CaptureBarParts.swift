@@ -277,6 +277,7 @@ struct SheetCaptureBar: View {
             // go into the field to review.
             if phase == .ready, !isSending, let take = voice.collectReadyTake() {
                 onTake(take)
+                if let reason = voice.notice?.message { show(reason) }
             }
             if !voice.canRetryTranscription, let error = voice.errorMessage {
                 show(error)

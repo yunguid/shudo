@@ -124,7 +124,7 @@ struct CoachNotificationPresentationTests {
         #expect(center.snoozes.first?.categoryIdentifier == CoachNotificationIdentifiers.textCategory)
     }
 
-    @Test func immediateRepliesCountUpOnlyForWhatTheyPost() async {
+    @Test func anAnswerLandsAsOneTextCountingWhatItPosts() async {
         let center = RecordingCoachNotificationCenter()
         let scheduler = CoachNotificationScheduler(center: center)
         func reply(_ body: String, role: CoachRole = .coach) -> CoachMessage {
@@ -134,8 +134,8 @@ struct CoachNotificationPresentationTests {
             [reply("Good."), reply("echo", role: .user), reply("   "), reply("Now water.")],
             firstBadge: 4
         )
-        #expect(center.delivered.map(\.body) == ["Good.", "Now water."])
-        #expect(center.delivered.map(\.badge) == [4, 5])
+        #expect(center.delivered.map(\.body) == ["Good. Now water."])
+        #expect(center.delivered.map(\.badge) == [5], "both bubbles count toward the badge")
     }
 
     @Test func passiveTextsOnlyJoinTheListInTheForeground() {

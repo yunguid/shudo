@@ -4,12 +4,12 @@ import SwiftUI
 //
 // One workout in a state that needs a card: sending, being read, couldn't
 // be read, or not sent (with Retry / Discard). Shaped like the thread's
-// `WorkoutReceiptCard` — kind glyph and title, one line beneath, the same
-// warm receipt surface — so when a log settles in the Today thread the
-// receipt takes its place without the card changing shape. While it's read
-// the line is the session itself, shimmering. Used by the Today thread
-// (fixed to `Design.Layout.threadCardWidth` there) and, for unsent logs,
-// the Train history.
+// `WorkoutReceiptCard` — the title, one line beneath, the same warm
+// receipt surface — so when a log settles in the Today thread the receipt
+// takes its place without the card changing shape. While it's read the
+// line is the session itself, shimmering. Used by the Today thread (fixed
+// to `Design.Layout.threadCardWidth` there) and, for unsent logs, the Train
+// history.
 
 struct ActivityCard: View {
     let activity: Activity
@@ -32,11 +32,6 @@ struct ActivityCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: activity.kind.symbolName)
-                    .font(Design.Typeface.text(.caption, weight: .bold))
-                    .foregroundStyle(ActivityKindTile.tint(for: activity.kind))
-                    .symbolEffect(.pulse, options: .repeating, isActive: activity.isProcessing)
-                    .accessibilityHidden(true)
                 Text(activity.title)
                     .font(Design.Typeface.text(.subheadline, weight: .medium))
                     .foregroundStyle(Design.Color.textPrimary)
@@ -112,19 +107,6 @@ private extension String {
 }
 
 // MARK: - Building blocks (shared by the Train views)
-
-/// The kind glyph's tint (the old icon tile is gone; cards and receipts
-/// now show the bare glyph).
-enum ActivityKindTile {
-    static func tint(for kind: ActivityKind) -> Color {
-        switch kind {
-        case .strength, .hiit: return Design.Color.ember
-        case .run, .cardio, .cycle, .swim: return Design.Color.macroCarbs
-        case .walk, .mobility: return Design.Color.macroFat
-        case .sport, .other: return Design.Color.honey
-        }
-    }
-}
 
 struct TrainPRBadge: View {
     var count: Int = 1

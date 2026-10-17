@@ -127,6 +127,8 @@ struct CaptureBar: View {
             // parks as `.ready`; fold it into the draft to review and send.
             if phase == .ready, !isSendingVoice, let take = voice.collectReadyTake() {
                 draft.append(take)
+                // Say why it stopped (a call took the mic, the time limit).
+                if let reason = voice.notice?.message { show(notice: reason) }
             }
             if !voice.canRetryTranscription, let message = voice.errorMessage {
                 show(notice: message)

@@ -144,7 +144,7 @@ final class CoachViewModel: ObservableObject {
     /// Optimistic user bubbles not yet accepted (sending or failed).
     @Published private(set) var pendingSends: [CoachPendingSend] = []
     @Published private(set) var typing: CoachTypingState?
-    /// Unread coach messages across all days (badge).
+    /// Unread coach messages from today's coach day (badge).
     @Published private(set) var unreadCount = 0
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
@@ -703,7 +703,11 @@ final class CoachViewModel: ObservableObject {
             }
         }
         if !ids.isEmpty {
-            unreadCount = max(0, unreadCount - ids.count)
+            // The badge counts today's coach day only; reading back
+            // through an older day doesn't move it.
+            if localDay >= CoachDayBoundary.day(for: current, timeZone: timeZone()) {
+                unreadCount = max(0, unreadCount - ids.count)
+            }
             publish()
             notifier?.removeDelivered(messageIds: ids)
             notifier?.setBadge(unreadCount)

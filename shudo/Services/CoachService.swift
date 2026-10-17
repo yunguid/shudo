@@ -426,13 +426,20 @@ struct CoachService: CoachServing {
         }
     }
 
+    /// Unread texts from today's coach day: the badge. Yesterday's unread
+    /// nudges stay in the thread but no longer count.
     func fetchUnreadCount() async throws -> Int {
+        let current = now()
         var query = [
             URLQueryItem(name: "select", value: "id"),
             URLQueryItem(name: "role", value: "eq.coach"),
             URLQueryItem(name: "read_at", value: "is.null"),
             URLQueryItem(name: "status", value: "neq.superseded"),
-            URLQueryItem(name: "deliver_at", value: "lte.\(CoachDateCoding.string(from: now()))"),
+            URLQueryItem(name: "deliver_at", value: "lte.\(CoachDateCoding.string(from: current))"),
+            URLQueryItem(
+                name: "local_day",
+                value: "gte.\(CoachDayBoundary.day(for: current, timeZone: .autoupdatingCurrent))"
+            ),
             URLQueryItem(name: "limit", value: "100"),
         ]
         if let userId = userIdProvider() {

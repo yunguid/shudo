@@ -20,12 +20,16 @@ enum CoachNotificationIdentifiers {
     static let soundName = "coach_text.caf"
 
     static let textCategory = "COACH_TEXT"
+    /// Texts about eating (the day's plan, meal check-ins, the close-out):
+    /// they lead with Log food.
+    static let foodCategory = "COACH_FOOD"
     static let snackCategory = "COACH_SNACK"
 
     static let replyAction = "coach.reply"
     static let ackAction = "coach.ack"
     static let snoozeAction = "coach.snooze"
     static let directionsAction = "coach.directions"
+    static let logFoodAction = "coach.log-food"
 
     static func message(_ id: UUID) -> String { messagePrefix + id.uuidString.lowercased() }
     static func snooze(_ id: UUID) -> String { snoozePrefix + id.uuidString.lowercased() }
@@ -35,6 +39,19 @@ enum CoachNotificationIdentifiers {
             return UUID(uuidString: String(identifier.dropFirst(prefix.count)))
         }
         return nil
+    }
+}
+
+// MARK: - Coach day
+
+/// The coach's day turns over at 04:00, like the server's
+/// (`COACH_DAY_BOUNDARY_MINUTES`): a 12:30 am close-out still belongs to the
+/// evening it closes. Badges and Notification Center are scoped to it.
+enum CoachDayBoundary {
+    static let hour = 4
+
+    static func day(for date: Date, timeZone: TimeZone) -> String {
+        CoachLocalDay.string(for: date.addingTimeInterval(-Double(hour) * 3600), timeZone: timeZone)
     }
 }
 
@@ -52,6 +69,9 @@ struct CoachScheduledRow: Codable, Equatable, Identifiable, Sendable {
     var text: String
     var readAt: Date?
     var mapsQuery: String?
+    /// `payload.topic` of a planned slot (`lunch`, `closeout`, …); picks the
+    /// actions. Optional so state saved by older builds still decodes.
+    var topic: String?
 
     init(
         id: UUID,
@@ -62,7 +82,8 @@ struct CoachScheduledRow: Codable, Equatable, Identifiable, Sendable {
         notify: Bool,
         text: String,
         readAt: Date? = nil,
-        mapsQuery: String? = nil
+        mapsQuery: String? = nil,
+        topic: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -73,6 +94,7 @@ struct CoachScheduledRow: Codable, Equatable, Identifiable, Sendable {
         self.text = text
         self.readAt = readAt
         self.mapsQuery = mapsQuery
+        self.topic = topic
     }
 
     init(message: CoachMessage) {
@@ -87,7 +109,8 @@ struct CoachScheduledRow: Codable, Equatable, Identifiable, Sendable {
             notify: message.notify,
             text: message.notificationText,
             readAt: message.readAt,
-            mapsQuery: mapsQuery
+            mapsQuery: mapsQuery,
+            topic: message.rawPayload["topic"]?.stringValue
         )
     }
 }
@@ -118,6 +141,13 @@ struct CoachPendingRequest: Equatable, Sendable {
     let contentHash: String?
     /// When the request will fire (nil when unknown).
     var fireAt: Date? = nil
+}
+
+/// A coach text still sitting in Notification Center.
+struct CoachDeliveredNotification: Equatable, Sendable {
+    let identifier: String
+    /// The text's coach day (`payload.local_day`), when it carried one.
+    let localDay: String?
 }
 
 struct CoachNotificationDiff: Equatable, Sendable {
@@ -206,9 +236,12 @@ enum CoachNotificationPolicy {
     /// hour out; one pushed past quiet hours to the morning survives).
     static let snoozeCancelOnLogWindow: TimeInterval = 90 * 60
 
-    /// - Parameter quietHours: when given, rows due inside quiet hours are
-    ///   not notified (the server already marks them `notify=false`; this is
-    ///   the client-side safety net). They still appear in the thread.
+    /// - Parameters:
+    ///   - unreadCount: today's unread texts (the badge counts the coach day
+    ///     only, so yesterday's unread nudges never inflate it).
+    ///   - quietHours: when given, rows due inside quiet hours are not
+    ///     notified (the server already marks them `notify=false`; this is
+    ///     the client-side safety net). They still appear in the thread.
     static func plan(
         rows: [CoachScheduledRow],
         now: Date,
@@ -217,27 +250,63 @@ enum CoachNotificationPolicy {
         quietHours settings: CoachSettings? = nil,
         timeZone: TimeZone = .autoupdatingCurrent
     ) -> [PlannedCoachNotification] {
-        let candidates = rows
+        // Badges are absolute: today's texts count up from today's unread
+        // (one about to fire still takes its number); tomorrow's morning
+        // plan starts a fresh count at 1.
+        let today = CoachDayBoundary.day(for: now, timeZone: timeZone)
+        var counts: [String: Int] = [:]
+        var plan: [PlannedCoachNotification] = []
+        for row in upcoming(rows, now: now, suppressed: suppressed, quietHours: settings, timeZone: timeZone) {
+            let day = row.localDay > today ? row.localDay : today
+            counts[day, default: day == today ? max(0, unreadCount) : 0] += 1
+            guard row.deliverAt > now.addingTimeInterval(minimumLeadTime) else { continue }
+            plan.append(planned(row: row, fireAt: row.deliverAt, badge: counts[day]))
+            if plan.count == maximumPendingMessages { break }
+        }
+        return plan
+    }
+
+    /// Requests due within the lead time: too close to (re)add, but a
+    /// reconcile must leave them pending or the text never rings. (A lock-
+    /// screen reply or a foreground sync seconds before a text was due used
+    /// to drop it.)
+    static func imminentIdentifiers(
+        rows: [CoachScheduledRow],
+        now: Date,
+        suppressed: Set<UUID> = [],
+        quietHours settings: CoachSettings? = nil,
+        timeZone: TimeZone = .autoupdatingCurrent
+    ) -> Set<String> {
+        Set(
+            upcoming(rows, now: now, suppressed: suppressed, quietHours: settings, timeZone: timeZone)
+                .filter { $0.deliverAt <= now.addingTimeInterval(minimumLeadTime) }
+                .map { CoachNotificationIdentifiers.message($0.id) }
+        )
+    }
+
+    /// Rows that should ring, soonest first.
+    private static func upcoming(
+        _ rows: [CoachScheduledRow],
+        now: Date,
+        suppressed: Set<UUID>,
+        quietHours settings: CoachSettings?,
+        timeZone: TimeZone
+    ) -> [CoachScheduledRow] {
+        rows
             .filter { row in
                 row.status == .scheduled
                     && row.notify
                     && row.readAt == nil
-                    && row.deliverAt > now.addingTimeInterval(minimumLeadTime)
+                    && row.deliverAt > now
                     && !suppressed.contains(row.id)
                     && !row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && !(settings?.isQuietHour(row.deliverAt, timeZone: timeZone) ?? false)
             }
             .sorted { ($0.deliverAt, $0.id.uuidString) < ($1.deliverAt, $1.id.uuidString) }
-            .prefix(maximumPendingMessages)
-        return candidates.enumerated().map { index, row in
-            planned(row: row, fireAt: row.deliverAt, badge: max(0, unreadCount) + index + 1)
-        }
     }
 
     static func planned(row: CoachScheduledRow, fireAt: Date?, badge: Int?) -> PlannedCoachNotification {
-        let category = row.kind == CoachMessageKind.snackRec.rawValue
-            ? CoachNotificationIdentifiers.snackCategory
-            : CoachNotificationIdentifiers.textCategory
+        let category = category(kind: row.kind, topic: row.topic)
         let body = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
         return PlannedCoachNotification(
             messageId: row.id,
@@ -250,18 +319,34 @@ enum CoachNotificationPolicy {
             kind: row.kind,
             localDay: row.localDay,
             mapsQuery: row.mapsQuery,
-            interruption: interruption(for: row.kind),
+            interruption: interruption(for: row.kind, body: body),
             relevance: relevance(for: row.kind),
             contentHash: contentHash(body: body, fireAt: fireAt, badge: badge, category: category)
         )
     }
 
+    /// Slot topics about eating: their texts offer Log food first.
+    static let foodTopics: Set<String> = [
+        "morning_plan", "breakfast", "snack", "lunch", "protein_gap", "dinner", "closeout",
+    ]
+
+    /// The actions a text offers: snack recs lead with Directions, texts
+    /// about eating with Log food, everything else (a reply, the pre-lift
+    /// push, a check-in on him) with Reply.
+    static func category(kind: String, topic: String?) -> String {
+        if kind == CoachMessageKind.snackRec.rawValue { return CoachNotificationIdentifiers.snackCategory }
+        if let topic, foodTopics.contains(topic) { return CoachNotificationIdentifiers.foodCategory }
+        return CoachNotificationIdentifiers.textCategory
+    }
+
     /// Texts that ask something of Luke ring (`.active`); confirmations and
-    /// read-later messages land quietly in the list (`.passive`).
-    static func interruption(for kind: String) -> PlannedCoachNotification.Interruption {
+    /// read-later messages land quietly in the list (`.passive`), unless
+    /// they ask a question: a close-out asking whether dinner happened
+    /// needs an answer tonight, so it rings.
+    static func interruption(for kind: String, body: String = "") -> PlannedCoachNotification.Interruption {
         switch CoachMessageKind(rawValue: kind) {
         case .mealAck?, .workoutAck?, .weighInAck?, .recap?, .photoFeedback?, .profileUpdate?:
-            return .passive
+            return body.contains("?") ? .active : .passive
         default:
             return .active
         }
@@ -322,19 +407,62 @@ enum CoachNotificationPolicy {
             .sorted()
     }
 
+    /// Delivered texts from an earlier coach day. Yesterday's lunch nudge is
+    /// noise by morning; every text stays in the thread.
+    static func staleDelivered(_ delivered: [CoachDeliveredNotification], today: String) -> [String] {
+        delivered
+            .filter { notification in
+                guard let day = notification.localDay, CoachLocalDay.isValid(day) else { return false }
+                return day < today
+            }
+            .map(\.identifier)
+            .sorted()
+    }
+
+    /// Lock-screen line for Shudo's answer to a lock-screen reply: one text
+    /// however many bubbles it runs to, so an answer never lands as a burst.
+    static let maximumAnswerLength = 400
+
+    /// Shudo's answer as one notification under the first bubble's id. A
+    /// card that rode along (a snack rec) lends its Directions; the badge
+    /// counts every message the answer added to the thread.
+    static func answer(_ messages: [CoachMessage], firstBadge: Int?) -> PlannedCoachNotification? {
+        let replies = messages.filter { $0.role == .coach && !$0.notificationText.isEmpty }
+        let texts = replies.filter { $0.kind == CoachMessageKind.text.rawValue }
+        guard let lead = texts.first ?? replies.first else { return nil }
+        let joined = (texts.isEmpty ? [lead.notificationText] : texts.map(\.body))
+            .flatMap { $0.components(separatedBy: "\n") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let body = joined.count > maximumAnswerLength
+            ? String(joined.prefix(maximumAnswerLength - 1)).trimmingCharacters(in: .whitespaces) + "…"
+            : joined
+        let snack = replies.lazy.map(CoachScheduledRow.init(message:)).first { $0.mapsQuery != nil }
+        var row = CoachScheduledRow(message: lead)
+        row.text = body
+        if let snack {
+            row.kind = snack.kind
+            row.mapsQuery = snack.mapsQuery
+        }
+        return planned(row: row, fireAt: nil, badge: firstBadge.map { $0 + replies.count - 1 })
+    }
+
     /// Deterministic across launches (unlike `hashValue`). The version
     /// prefix changes whenever the content builder does, so a new build
     /// re-posts pending requests with the new styling exactly once.
     static func contentHash(body: String, fireAt: Date?, badge: Int?, category: String) -> String {
         let fire = fireAt.map { String(Int64($0.timeIntervalSince1970.rounded())) } ?? "now"
-        let input = "v2|\(category)|\(fire)|\(badge.map(String.init) ?? "-")|\(body)"
+        let input = "v3|\(category)|\(fire)|\(badge.map(String.init) ?? "-")|\(body)"
         let digest = SHA256.hash(data: Data(input.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// - Parameter imminent: pending requests about to fire; never removed.
     static func diff(
         plan: [PlannedCoachNotification],
-        pending: [CoachPendingRequest]
+        pending: [CoachPendingRequest],
+        keeping imminent: Set<String> = []
     ) -> CoachNotificationDiff {
         let owned = pending.filter { $0.identifier.hasPrefix(CoachNotificationIdentifiers.messagePrefix) }
         let pendingHashes = Dictionary(
@@ -342,7 +470,9 @@ enum CoachNotificationPolicy {
             uniquingKeysWith: { first, _ in first }
         )
         let plannedIds = Set(plan.map(\.identifier))
-        let toRemove = pendingHashes.keys.filter { !plannedIds.contains($0) }.sorted()
+        let toRemove = pendingHashes.keys
+            .filter { !plannedIds.contains($0) && !imminent.contains($0) }
+            .sorted()
         let toAdd = plan.filter { pendingHashes[$0.identifier] != $0.contentHash }
         return CoachNotificationDiff(toAdd: toAdd, toRemove: toRemove)
     }
@@ -415,6 +545,37 @@ enum CoachNotificationPolicy {
     }
 }
 
+// MARK: - Background refresh timing
+
+/// When to ask iOS for the next background refresh. Without push, a text
+/// only rings if the phone heard about it first, and the server writes the
+/// whole day in its early-morning run (09:17 UTC: 5:17 am in New York, 4:17
+/// in winter). The refresh that matters most is the one right after it, so
+/// nights ask for 5:30 am; daytime asks again within the hour to pick up
+/// re-plans. iOS treats the date as a floor and still decides.
+enum CoachRefreshPolicy {
+    static let morningHour = 5
+    static let morningMinute = 30
+    static let daytimeInterval: TimeInterval = 60 * 60
+    /// From here until morning nothing new is written unless Luke acts.
+    static let eveningCutoffHour = 21
+
+    static func earliestBeginDate(after now: Date, timeZone: TimeZone) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let hour = calendar.component(.hour, from: now)
+        let minute = calendar.component(.minute, from: now)
+        guard let morning = calendar.date(
+            bySettingHour: morningHour, minute: morningMinute, second: 0, of: now
+        ) else { return now.addingTimeInterval(daytimeInterval) }
+        if (hour, minute) < (morningHour, morningMinute) { return morning }
+        if hour >= eveningCutoffHour {
+            return calendar.date(byAdding: .day, value: 1, to: morning) ?? now.addingTimeInterval(daytimeInterval)
+        }
+        return now.addingTimeInterval(daytimeInterval)
+    }
+}
+
 // MARK: - Notification center seam
 
 protocol CoachNotificationCenter: Sendable {
@@ -428,6 +589,12 @@ protocol CoachNotificationCenter: Sendable {
     func authorizationStatus() async -> CoachSyncRequest.NotificationStatus
     /// Shows the system prompt (only ever once per install); true if granted.
     func requestAuthorization() async -> Bool
+    /// Coach texts still showing in Notification Center.
+    func deliveredCoachNotifications() async -> [CoachDeliveredNotification]
+}
+
+extension CoachNotificationCenter {
+    func deliveredCoachNotifications() async -> [CoachDeliveredNotification] { [] }
 }
 
 /// How a coach text looks on the lock screen: one sender ("Shudo"), no
@@ -501,6 +668,17 @@ struct LiveCoachNotificationCenter: CoachNotificationCenter {
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 
+    func deliveredCoachNotifications() async -> [CoachDeliveredNotification] {
+        await UNUserNotificationCenter.current().deliveredNotifications().compactMap { notification in
+            let request = notification.request
+            guard request.identifier.hasPrefix(CoachNotificationIdentifiers.ownedPrefix) else { return nil }
+            return CoachDeliveredNotification(
+                identifier: request.identifier,
+                localDay: CoachNotificationPayload(userInfo: request.content.userInfo)?.localDay
+            )
+        }
+    }
+
     func setBadgeCount(_ count: Int) async {
         try? await UNUserNotificationCenter.current().setBadgeCount(max(0, count))
     }
@@ -550,8 +728,15 @@ struct CoachNotificationScheduler: Sendable {
             quietHours: settings,
             timeZone: timeZone
         )
+        let imminent = CoachNotificationPolicy.imminentIdentifiers(
+            rows: rows,
+            now: now,
+            suppressed: suppressed,
+            quietHours: settings,
+            timeZone: timeZone
+        )
         let pending = await center.pendingCoachRequests()
-        let diff = CoachNotificationPolicy.diff(plan: plan, pending: pending)
+        let diff = CoachNotificationPolicy.diff(plan: plan, pending: pending, keeping: imminent)
         await center.removePending(identifiers: diff.toRemove)
         for notification in diff.toAdd {
             await center.add(notification)
@@ -586,18 +771,22 @@ struct CoachNotificationScheduler: Sendable {
         })
     }
 
-    /// Posts coach replies right now (nil trigger), as if texted.
+    /// Clears texts from earlier coach days out of Notification Center;
+    /// returns their identifiers.
+    @discardableResult
+    func clearEarlierDays(today: String) async -> [String] {
+        let stale = CoachNotificationPolicy.staleDelivered(
+            await center.deliveredCoachNotifications(),
+            today: today
+        )
+        await center.removeDelivered(identifiers: stale)
+        return stale
+    }
+
+    /// Posts Shudo's answer right now (nil trigger), as one text.
     func presentImmediately(_ messages: [CoachMessage], firstBadge: Int?) async {
-        var badge = firstBadge
-        for message in messages where message.role == .coach {
-            let text = message.notificationText
-            guard !text.isEmpty else { continue }
-            var row = CoachScheduledRow(message: message)
-            row.text = text
-            let planned = CoachNotificationPolicy.planned(row: row, fireAt: nil, badge: badge)
-            await center.add(planned)
-            badge = badge.map { $0 + 1 }
-        }
+        guard let answer = CoachNotificationPolicy.answer(messages, firstBadge: firstBadge) else { return }
+        await center.add(answer)
     }
 
     /// Re-posts the text an hour out and clears the original from
@@ -653,13 +842,27 @@ enum CoachNotificationCategories {
             identifier: CoachNotificationIdentifiers.directionsAction,
             title: "Directions",
             options: [.foreground],
-            icon: UNNotificationActionIcon(systemImageName: "figure.walk")
+            icon: UNNotificationActionIcon(systemImageName: "map")
+        )
+        // Straight into the food sheet: camera, photos or a barcode.
+        let logFood = UNNotificationAction(
+            identifier: CoachNotificationIdentifiers.logFoodAction,
+            title: "Log food",
+            options: [.foreground],
+            icon: UNNotificationActionIcon(systemImageName: "fork.knife")
         )
         let options: UNNotificationCategoryOptions = [.customDismissAction, .hiddenPreviewsShowTitle]
         return [
             UNNotificationCategory(
                 identifier: CoachNotificationIdentifiers.textCategory,
                 actions: [reply, ack, snooze],
+                intentIdentifiers: [],
+                hiddenPreviewsBodyPlaceholder: hiddenPreviewPlaceholder,
+                options: options
+            ),
+            UNNotificationCategory(
+                identifier: CoachNotificationIdentifiers.foodCategory,
+                actions: [logFood, reply, snooze],
                 intentIdentifiers: [],
                 hiddenPreviewsBodyPlaceholder: hiddenPreviewPlaceholder,
                 options: options

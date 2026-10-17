@@ -37,7 +37,8 @@ struct BuildIdentity: Equatable {
 
 /// Privacy-safe, on-device capture diagnostics. Events contain only static
 /// state names and the public source revision: never meal text, transcripts,
-/// media names, image contents, permission identifiers, or audio-route names.
+/// media names, image contents, permission identifiers, or audio-route names
+/// (a route change records only its reason).
 /// The bounded trace lives in Caches so device verification can read this one
 /// file without inspecting the user's app data or photo library.
 enum CaptureDiagnostics {
@@ -67,7 +68,16 @@ enum CaptureDiagnostics {
         case recorderWarmupAborted = "recorder.warmup.aborted"
         case audioInterrupted = "recorder.interrupted"
         case audioRouteChanged = "recorder.route_changed"
+        case audioRouteLost = "recorder.route_lost"
         case mediaServicesReset = "recorder.media_services_reset"
+        /// The microphone carried real sound (state `live`), or the take
+        /// started without it after the wait (`silent`).
+        case recorderHearing = "recorder.hearing"
+        /// A route or format change stopped the input mid-take; state is
+        /// why (`format_change`, `route_lost`, `stalled`).
+        case recorderReopening = "recorder.reopening"
+        case recorderReopened = "recorder.reopened"
+        case recorderReopenFailed = "recorder.reopen_failed"
         case speechAssetStatus = "speech.asset_status"
         case speechEngineSelected = "speech.engine_selected"
         case speechEngineUnavailable = "speech.engine_unavailable"

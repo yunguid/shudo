@@ -151,10 +151,12 @@ struct GamePlanCardView: View {
                 VStack(alignment: .leading, spacing: 9) {
                     ForEach(Array(card.actions.enumerated()), id: \.offset) { _, action in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Image(systemName: ThreadCardCopy.planSymbol(for: action))
-                                .font(Design.Typeface.text(.caption))
-                                .foregroundStyle(Design.Color.honey.opacity(0.8))
-                                .frame(width: 16)
+                            // The weekly recap's action dash, not an icon: the
+                            // words carry the line.
+                            Capsule()
+                                .fill(Design.Color.pernambuco)
+                                .frame(width: 10, height: 1.5)
+                                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                                 .accessibilityHidden(true)
                             Text(action)
                                 .font(Design.Typeface.text(.subheadline))

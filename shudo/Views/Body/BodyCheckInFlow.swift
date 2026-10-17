@@ -168,12 +168,17 @@ struct BodyCheckInFlow: View {
             .navigationTitle(step == .weight ? "Weight" : "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Hinoki like every sheet's way out; the accent is the save
+                // bar's.
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }.disabled(isSaving)
+                    Button("Close") { dismiss() }
+                        .tint(Design.Color.textPrimary)
+                        .disabled(isSaving)
                 }
                 if step == .review {
                     ToolbarItem(placement: .primaryAction) {
                         Button("Retake") { go(to: .camera) }
+                            .tint(Design.Color.textPrimary)
                             .disabled(isSaving)
                     }
                 }
