@@ -259,6 +259,13 @@ struct TodayScreen: View {
             // The header is the page's own top (no nav bar, no glass card):
             // the day's name, the figure, and the account at the corner.
             .safeAreaBar(edge: .top, spacing: 0) { header }
+            // Typing: a tap anywhere on the page — thread or header — puts
+            // the keyboard away (a drag on the thread already does); rows and
+            // the header keep their own taps.
+            .simultaneousGesture(
+                TapGesture().onEnded { Self.dismissKeyboard() },
+                including: isComposing ? .all : .subviews
+            )
             .overlay(alignment: .bottom) { bottomOverlay }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: TodayRoute.self) { route in destination(route) }
@@ -315,6 +322,11 @@ struct TodayScreen: View {
     private static func isAtBottom(_ geometry: ScrollGeometry) -> Bool {
         let visibleBottom = geometry.visibleRect.maxY - geometry.contentInsets.bottom
         return geometry.contentSize.height - visibleBottom <= 48
+    }
+
+    /// Typing ends wherever focus lives (the shell's message field).
+    private static func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private var readKey: String {
@@ -785,6 +797,8 @@ struct TodayScreen: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .chromeGlass(in: Capsule(), tint: Design.Color.canvas.opacity(0.6))
+                    // A passing line: the rows under it keep their taps.
+                    .allowsHitTesting(false)
                     .transition(.shoji(.bottom, reduceMotion: reduceMotion))
             }
             if let pendingDeletion {
