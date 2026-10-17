@@ -28,7 +28,14 @@ enum DayThreadItem: Identifiable, Equatable {
 
     var id: String {
         switch self {
-        case .message(let message): return "msg-\(message.id.uuidString)"
+        case .message(let message):
+            // Luke's text keeps the id its optimistic bubble had (the
+            // request id), so the row Shudo accepts is the same row: it
+            // brightens in place instead of leaving and arriving again.
+            if message.role == .user, let request = message.clientRequestId {
+                return "msg-\(request.uuidString)"
+            }
+            return "msg-\(message.id.uuidString)"
         case .pending(let pending): return "msg-\(pending.clientRequestId.uuidString)"
         case .meal(let entry): return "meal-\(entry.id.uuidString)"
         case .activity(let activity): return "act-\(activity.id.uuidString)"
