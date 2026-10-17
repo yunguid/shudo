@@ -21,6 +21,9 @@ struct TodayScreenActions {
     var sendToCoach: (String) -> Void
     /// Targets/goal changed server-side (goal card): refresh the profile.
     var refreshProfile: () -> Void
+    /// The thread is on screen (true) or a page is pushed over it: the
+    /// shell's message field rests only on the thread.
+    var threadOnScreen: (Bool) -> Void = { _ in }
 }
 
 struct TodayScreenEnvironment {
@@ -72,6 +75,7 @@ struct TodayScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.captureComposerInset) private var composerInset
+    @Environment(\.captureIsTyping) private var isComposing
 
     init(
         profile: Profile,
@@ -175,9 +179,13 @@ struct TodayScreen: View {
                     }
                     .defaultScrollAnchor(.bottom, for: .initialOffset)
                     .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                    // A short day sits on the message field, so a send lands
+                    // where it was typed, not up under the header.
+                    .defaultScrollAnchor(.bottom, for: .alignment)
                     .scrollDismissesKeyboard(.interactively)
-                    // The keyboard composer floats over the thread; make room
-                    // for it so the newest row sits right above it.
+                    // The message field floats over the thread (resting or
+                    // typing); make room for it so the newest row sits right
+                    // above it.
                     .safeAreaPadding(.bottom, composerInset)
                     .onScrollPhaseChange { _, phase in
                         scrollPhase = phase
@@ -217,6 +225,15 @@ struct TodayScreen: View {
                     .onChange(of: coach.focusedMessageId) { _, id in
                         guard let id else { return }
                         focus(on: id, proxy: proxy)
+                    }
+                    .onChange(of: composerInset) { _, _ in
+                        // The field changed height (typing, resting, a draft
+                        // growing to six lines): the newest row stays right
+                        // above it.
+                        guard isPinnedToBottom else { return }
+                        withAnimation(Design.Motion.gated(Design.Motion.settle, reduceMotion: reduceMotion)) {
+                            proxy.scrollTo("thread.bottom", anchor: .bottom)
+                        }
                     }
                     .onAppear {
                         if let id = coach.focusedMessageId { focus(on: id, proxy: proxy) }
@@ -263,6 +280,15 @@ struct TodayScreen: View {
         .onChange(of: coach.localDay) { _, day in
             // Sending from a past day jumps the thread back to today.
             if day != selectedDay { select(day: day) }
+        }
+        .onChange(of: path.isEmpty) { _, isEmpty in actions.threadOnScreen(isEmpty) }
+        .onChange(of: isComposing) { _, composing in
+            // Typing needs the thread: the open day panel shuts before the
+            // keyboard has risen.
+            guard composing, headerExpanded else { return }
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) { headerExpanded = false }
         }
         .onChange(of: today.entries) { _, _ in
             context.scheduleWeekRefresh()
@@ -343,13 +369,19 @@ struct TodayScreen: View {
     @ViewBuilder
     private func thread(_ rows: [DayThreadRow], viewport: CGFloat) -> some View {
         let receiptRowId = DayThreadPolicy.readReceiptRowId(for: rows)
+        // The bottom margin *is* the scroll target, so scrolling to the
+        // newest row keeps the same breathing room above the field as
+        // opening the day does. A past day leaves room for the "Back to
+        // today" pill so it never sits on the last card.
+        let bottomRoom: CGFloat = isToday ? 18 : 66
         VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
                 if today.isLoadingDay || coach.isLoading {
                     loadingRows
                 } else {
+                    // The hello sits in the middle of the open page.
                     emptyState
-                        .frame(minHeight: viewport * 0.6)
+                        .frame(minHeight: max(0, viewport - composerInset - bottomRoom - 4))
                 }
             }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
@@ -358,11 +390,7 @@ struct TodayScreen: View {
                     .id(row.id)
                     .transition(arrival(for: row.item.side))
             }
-            // The bottom margin *is* the scroll target, so scrolling to the
-            // newest row keeps the same breathing room above the capture bar
-            // as opening the day does. A past day leaves room for the
-            // "Back to today" pill so it never sits on the last card.
-            Color.clear.frame(height: isToday ? 18 : 66).id("thread.bottom")
+            Color.clear.frame(height: bottomRoom).id("thread.bottom")
         }
         .animation(
             settledDay == selectedDay ? Design.Motion.gated(Design.Motion.arrive, reduceMotion: reduceMotion) : nil,
@@ -789,7 +817,8 @@ struct TodayScreen: View {
                 .transition(.opacity)
             }
         }
-        .padding(.bottom, 10)
+        // Above the message field, never on it.
+        .padding(.bottom, 10 + composerInset)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: pendingDeletion?.id)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: coachNotice)
         .animation(Design.Motion.calm(Design.Motion.breath, reduceMotion: reduceMotion), value: isToday)

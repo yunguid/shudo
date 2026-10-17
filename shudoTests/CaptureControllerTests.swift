@@ -75,7 +75,7 @@ struct CaptureControllerTests {
         #expect(CaptureContext.body.transcriptionPurpose == .coach)
         #expect(CaptureContext.bio.transcriptionPurpose == .coach)
 
-        #expect(CaptureContext.today.placeholder == "Tell Shudo anything…")
+        #expect(CaptureContext.today.placeholder == "Message Shudo…")
         #expect(CaptureContext.train.placeholder == "Log a workout…")
         #expect(CaptureContext.body.placeholder == "Weight or a note…")
         #expect(CaptureContext.bio.placeholder == "Tell Shudo about you…")

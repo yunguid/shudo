@@ -16,21 +16,16 @@ final class AppShellUITests: XCTestCase {
         return app
     }
 
-    /// Typing opens from the key's dial (Type) into a field docked above
-    /// the keyboard; sending puts Luke's bubble in Today's thread and the
-    /// scripted coach answers.
+    /// Typing is one tap away: the field resting on Today becomes the
+    /// composer docked above the keyboard; a send puts Luke's bubble in the
+    /// thread, the keyboard steps down and the scripted coach answers. The
+    /// key's dial (Type) opens the same field.
     @MainActor
     func testTypingToShudoStaysAboveTheKeyboardAndSends() throws {
         let app = launch()
-        let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        // Hold the key and slide straight up to Type.
-        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -96)))
         let input = app.descendants(matching: .any).matching(identifier: "capture.input").firstMatch
-        let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "After choosing Type on the dial"
-        shot.lifetime = .keepAlways
-        add(shot)
-        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        XCTAssertTrue(input.waitForExistence(timeout: 3), "the message field rests on Today")
+        input.tap()
         let keyboard = app.keyboards.firstMatch
         if keyboard.waitForExistence(timeout: 3) {
             // Let the keyboard finish animating in.
@@ -46,9 +41,15 @@ final class AppShellUITests: XCTestCase {
 
         let bubble = app.staticTexts["had a protein bar at 4"]
         XCTAssertTrue(bubble.waitForExistence(timeout: 5))
-        XCTAssertFalse(input.exists)
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: keyboard)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 3), .completed, "the keyboard steps down after a send")
         let reply = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Logging it now'")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 8))
+
+        // Hold the key and slide straight up to Type: the same field, typing.
+        let start = app.buttons["capture.mic"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -96)))
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 3), "Type on the dial opens the keyboard")
     }
 
     /// Left-handed, one spot: the bottom-left mic starts recording and

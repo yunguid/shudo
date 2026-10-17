@@ -453,33 +453,43 @@ struct CaptureBar: View {
 }
 
 extension EnvironmentValues {
-    /// Height of the keyboard composer while it's open (0 otherwise). A
-    /// scrolling screen under it adds this to its bottom inset so its newest
-    /// content stays visible above the composer.
+    /// How far the message field reaches up over the thread — resting on
+    /// Today above the band, or the keyboard composer while typing (0 when
+    /// neither shows). A scrolling screen under it adds this to its bottom
+    /// inset so its newest content stays visible above the field.
     @Entry var captureComposerInset: CGFloat = 0
+    /// The keyboard composer is up; a tap on the thread puts it away.
+    @Entry var captureIsTyping = false
 }
 
-/// The typing surface: the command band steps down under the keyboard, so
-/// Type (on the key's dial) opens this glass field docked right above it, bound to
-/// the same draft. Same shape as the bar: mic bottom-left, send trailing.
-/// Losing focus (swipe the thread, tap away) tucks it back into the bar with
-/// the draft kept.
+/// The message field, one field in two places. At rest it lies on Today
+/// just above the command band — a quiet "Message Shudo…", or the draft
+/// Luke left there. Tap it and it becomes the keyboard composer in place:
+/// the band steps down under the keyboard, the same field rides up on it,
+/// and the mic joins at its leading edge (left thumb), send trailing.
+/// Losing focus (drag or tap the thread) settles it back onto the band with
+/// the draft kept. Type on the key's dial opens it straight into typing,
+/// on any tab.
 struct CaptureComposer: View {
     @Binding var draft: CaptureDraft
+    /// Typing above the keyboard (focused) rather than resting on the band.
+    @Binding var isActive: Bool
     var placeholder = CaptureContext.today.placeholder
     var onSend: () -> Void
     var onDictate: () -> Void
-    var onClose: () -> Void
 
     @FocusState private var focused: Bool
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            Button(action: onDictate) {
-                CaptureLeadingFace(role: .mic)
+            if isActive {
+                Button(action: onDictate) {
+                    CaptureLeadingFace(role: .mic)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Record instead")
+                .transition(.opacity)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Record instead")
 
             TextField(
                 "",
@@ -489,7 +499,8 @@ struct CaptureComposer: View {
                     .foregroundStyle(Design.Color.textTertiary),
                 axis: .vertical
             )
-            .lineLimit(1...6)
+            // At rest a kept draft shows its first line; typing grows to six.
+            .lineLimit(isActive ? 1...6 : 1...1)
             .font(Design.Typeface.text(.body))
             .foregroundStyle(Design.Color.textPrimary)
             .tint(Design.Color.ember)
@@ -500,25 +511,58 @@ struct CaptureComposer: View {
                 if text.isEmpty { draft.speechEngine = nil }
             }
 
-            CaptureCircleButton(kind: .send, isEnabled: !draft.isEmpty, action: onSend)
-                .padding(.bottom, 5)
-                .accessibilityLabel("Send to Shudo")
-                .accessibilityIdentifier("capture.input.send")
+            // Resting and empty, the field is just the line; a kept draft
+            // can go from where it lies.
+            if isActive || !draft.isEmpty {
+                CaptureCircleButton(kind: .send, isEnabled: !draft.isEmpty, action: onSend)
+                    .padding(.bottom, 5)
+                    .accessibilityLabel("Send to Shudo")
+                    .accessibilityIdentifier("capture.input.send")
+            }
         }
-        .padding(.leading, 4)
+        // The same height resting or typing, so the hand-off doesn't jump.
+        .frame(minHeight: 42, alignment: .bottom)
+        .padding(.leading, isActive ? 4 : 16)
         .padding(.trailing, 8)
         .padding(.vertical, 4)
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        // The whole capsule is the target at rest, not just the words; the
+        // send arrow on a kept draft still wins its own taps.
+        .gesture(
+            TapGesture().onEnded { focused = true },
+            including: isActive ? .subviews : .all
+        )
         .chromeGlass(
             in: RoundedRectangle(cornerRadius: 24, style: .continuous),
             tint: Design.Color.hinoki.opacity(0.04),
             interactive: true
         )
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
-        .onAppear { focused = true }
+        // Edges in line with the tab bar's; at rest a clear step above the
+        // well's rim.
+        .padding(.horizontal, CommandBandMetrics.trailingMargin)
+        .padding(.bottom, isActive ? 8 : 12)
+        .onAppear { if isActive { focused = true } }
+        .onChange(of: isActive) { _, active in
+            if focused != active { focused = active }
+        }
         .onChange(of: focused) { _, isFocused in
-            if !isFocused { onClose() }
+            if isActive != isFocused { isActive = isFocused }
         }
     }
 }
 
+/// While the key records or transcribes, the field stays where it lies but
+/// steps back and takes no touches: one input at a time. Observes the
+/// transcriber itself so its meter never re-renders the shell.
+struct VoiceQuietedField<Content: View>: View {
+    @ObservedObject var voice: VoiceTranscriber
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        let quiet = CaptureLeadingRole.isVoiceActive(voice)
+        content
+            .opacity(quiet ? 0.35 : 1)
+            .allowsHitTesting(!quiet)
+            .animation(.easeInOut(duration: 0.2), value: quiet)
+    }
+}

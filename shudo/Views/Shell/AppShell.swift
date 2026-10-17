@@ -29,6 +29,10 @@ struct AppShell: View {
     @State private var draft = CaptureDraft()
     @State private var isTyping = false
     @State private var composerHeight: CGFloat = 0
+    /// Today's thread is on screen (no meal, workout or week page pushed
+    /// over it): the message field rests on it.
+    @State private var todayShowsThread = true
+    @State private var typedSends = 0
     /// Held, not observed: the bar and the overlay watch the fan, so opening
     /// it mid-press doesn't rebuild the shell (which cancels the press).
     @StateObject private var fanHolder = UnobservedHolder(CaptureFan())
@@ -82,11 +86,14 @@ struct AppShell: View {
             // screen's bottom edge.
             commandBand
         }
-        .overlay(alignment: .bottom) { typingOverlay }
+        .overlay(alignment: .bottom) { messageField }
         .overlay { CaptureFanOverlay(fan: fanHolder.value, metrics: bandMetrics) }
-        .environment(\.captureComposerInset, isTyping ? composerHeight : 0)
+        .environment(\.captureComposerInset, messageFieldInset)
+        .environment(\.captureIsTyping, isTyping)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: isTyping)
         .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: bandHidden)
+        .animation(Design.Motion.calm(Design.Motion.settle, reduceMotion: reduceMotion), value: showsRestingField)
+        .sensoryFeedback(.impact(weight: .light), trigger: typedSends)
         .onAppear(perform: measureBand)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             isKeyboardUp = true
@@ -267,7 +274,8 @@ extension AppShell {
                 openBio: { sheet = .bio },
                 switchTab: { switchTab(to: $0) },
                 sendToCoach: { sendToCoach($0, mode: .typed, engine: nil) },
-                refreshProfile: refreshProfile
+                refreshProfile: refreshProfile,
+                threadOnScreen: { todayShowsThread = $0 }
             ),
             headerExpanded: $headerExpanded,
             isActiveTab: tab == .today
@@ -305,42 +313,98 @@ extension AppShell {
         )
     }
 
-    /// The keyboard-docked composer (the band itself steps under the
-    /// keyboard). On Today the thread stays bright and makes room for it
-    /// (`captureComposerInset`) — you're replying to what's there. Elsewhere
-    /// a light scrim; tap it to tuck the draft back into the bar.
+    /// On Today the message field rests on the band, one tap from typing.
+    /// Not over a pushed page, a meal page's own bar, or another tab.
+    private var showsRestingField: Bool {
+        tab == .today && todayShowsThread && bandSuppressions == 0 && !isTyping
+    }
+
+    /// At rest the field sits on the well's lip (the overlay's bottom is
+    /// the home-indicator safe area); typing, on the keyboard.
+    private var restingLift: CGFloat {
+        max(0, bandMetrics.wellSide - bandMetrics.bottomSafeArea)
+    }
+
+    /// What the field adds above the band (resting: its ground covers the
+    /// band's own fade, so less than its height) or above the keyboard.
+    /// Kept while another tab is up, so Today's thread never re-settles
+    /// under the field on the way back.
+    private var messageFieldInset: CGFloat {
+        if isTyping { return composerHeight }
+        if todayShowsThread, bandSuppressions == 0 {
+            return max(0, composerHeight - CommandBandMetrics.topGap)
+        }
+        return 0
+    }
+
+    /// The message field: resting on Today, typing above the keyboard on
+    /// any tab (the band itself steps under the keyboard). On Today the
+    /// thread stays bright and makes room for it (`captureComposerInset`) —
+    /// you're replying to what's there. Elsewhere a light scrim; tap it to
+    /// tuck the draft away.
     @ViewBuilder
-    private var typingOverlay: some View {
-        if isTyping {
-            ZStack(alignment: .bottom) {
-                if tab != .today {
-                    Design.Color.canvas.opacity(0.45)
-                        .ignoresSafeArea()
-                        .onTapGesture { isTyping = false }
-                        .accessibilityHidden(true)
+    private var messageField: some View {
+        ZStack(alignment: .bottom) {
+            if isTyping, tab != .today {
+                Design.Color.canvas.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { isTyping = false }
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+            if isTyping || showsRestingField {
+                VoiceQuietedField(voice: coachVoice.value) {
+                    CaptureComposer(
+                        draft: $draft,
+                        isActive: $isTyping,
+                        placeholder: capture.context.placeholder,
+                        onSend: sendDraft,
+                        onDictate: dictateInstead
+                    )
                 }
-                CaptureComposer(
-                    draft: $draft,
-                    placeholder: capture.context.placeholder,
-                    onSend: sendDraft,
-                    onDictate: {
-                        isTyping = false
-                        let voice = coachVoice.value
-                        voice.transcriptionPurposeOverride = capture.context.transcriptionPurpose
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(250))
-                            _ = await voice.start()
-                        }
-                    },
-                    onClose: { isTyping = false }
-                )
+                .padding(.top, isTyping ? 0 : 6)
+                .background(alignment: .top) { fieldGround }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
+                .padding(.bottom, isTyping ? 0 : restingLift)
+                .opacity(fadingTab == .today && !isTyping ? 0 : 1)
                 .transition(.shoji(.bottom, reduceMotion: reduceMotion))
             }
-            .transition(.opacity)
         }
     }
 
+    /// The field lies on the band's own ground — opaque down to the well's
+    /// lip (or the keyboard), dissolving upward — so the thread fades out
+    /// above it rather than sliding under the glass (a bubble never shows
+    /// through the words being typed), and nothing hidden behind it can
+    /// take a tap.
+    private var fieldGround: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Design.Color.canvas.opacity(0), Design.Color.canvas],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: CommandBandMetrics.topGap)
+            .allowsHitTesting(false)
+            Design.Color.canvas
+        }
+        .padding(.top, -CommandBandMetrics.topGap)
+        .accessibilityHidden(true)
+    }
+
+    private func dictateInstead() {
+        isTyping = false
+        let voice = coachVoice.value
+        voice.transcriptionPurposeOverride = capture.context.transcriptionPurpose
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            _ = await voice.start()
+        }
+    }
+
+    /// The bubble lands in the thread at once (optimistic); the keyboard
+    /// steps down so Shudo's answer has the room, and the field settles
+    /// back on the band, cleared.
     private func sendDraft() {
         guard let submission = draft.submission else { return }
         sendToCoach(
@@ -351,6 +415,7 @@ extension AppShell {
         )
         draft.clear()
         isTyping = false
+        typedSends += 1
         capture.captureEnded()
     }
 

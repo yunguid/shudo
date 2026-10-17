@@ -50,7 +50,7 @@ enum CaptureContext: String, CaseIterable, Equatable, Sendable {
     /// The idle field's hint.
     var placeholder: String {
         switch self {
-        case .today: return "Tell Shudo anything…"
+        case .today: return "Message Shudo…"
         case .train: return "Log a workout…"
         case .body: return "Weight or a note…"
         case .bio: return "Tell Shudo about you…"
