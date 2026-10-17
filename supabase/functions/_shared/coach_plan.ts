@@ -35,11 +35,7 @@ import {
   type FallbackSnapshot,
   type ReactionKind,
 } from "./coach_fallbacks.ts";
-import {
-  addMemoryNote,
-  openQuestions,
-  updateCoachMemory,
-} from "./coach_memory.ts";
+import { openQuestions } from "./coach_memory.ts";
 import {
   COACH_DAY_PLAN_INSTRUCTIONS,
   COACH_PERSONA_VERSION,
@@ -72,6 +68,10 @@ import { recordCoachUsage } from "./coach_usage.ts";
 /// logged plus copy for every remaining slot. Slots come from the pure
 /// policy; the model only writes. Every body passes assertCoachCopy or is
 /// repaired once, then dropped (slots) or replaced by a template (reaction).
+/// Plans write no memory: they run many times a day and could only append,
+/// which filled the notes with narration of their own texts and evicted
+/// real ones. The nightly digest curates notes; chat's remember tool keeps
+/// what he says.
 
 export const COACH_PLAN_MODEL = CLAUDE_MODELS.sonnet;
 const PLAN_TIMEOUT_MS = 45_000;
@@ -159,9 +159,8 @@ export const COACH_PLAN_SCHEMA = {
       },
     },
     day_theme: { type: ["string", "null"], maxLength: 80 },
-    memory_note: { type: ["string", "null"], maxLength: 200 },
   },
-  required: ["reaction", "slots", "day_theme", "memory_note"],
+  required: ["reaction", "slots", "day_theme"],
 } as const;
 
 type PlanOutputSlot = {
@@ -178,7 +177,6 @@ export type PlanOutput = {
   reaction: { kind: string; body: string; push_body: string | null } | null;
   slots: PlanOutputSlot[];
   day_theme: string | null;
-  memory_note: string | null;
 };
 
 function text(value: unknown): string {
@@ -223,7 +221,6 @@ export function parsePlanOutput(value: unknown): PlanOutput {
       }];
     }),
     day_theme: nullableText(object.day_theme),
-    memory_note: nullableText(object.memory_note),
   };
 }
 
@@ -502,7 +499,7 @@ async function sha256Hex(value: string): Promise<string> {
 }
 
 /// What the day's texts are written from. A slot passing, a text going
-/// out, or the plan's own memory note changes none of it, so none of them
+/// out, or a memory version bump changes none of it, so none of them
 /// re-plans the day; a finished meal or workout, a check-in, his own words,
 /// a goal, schedule or settings change, or a new coach day does. Meals and
 /// workouts count once they're finished: the completion re-plans.
@@ -765,7 +762,6 @@ function cleanBubbles(body: string, max: number): string[] {
 type ModelCopy = {
   messages: WrittenMessage[];
   dayTheme: string | null;
-  memoryNote: string | null;
   model: string | null;
   responseId: string | null;
   fallbackUsed: boolean;
@@ -827,7 +823,6 @@ function templateCopy(
   return {
     messages,
     dayTheme: null,
-    memoryNote: null,
     model: null,
     responseId: null,
     fallbackUsed: true,
@@ -1114,7 +1109,6 @@ export async function writePlanCopy(
   return {
     messages,
     dayTheme: output.day_theme,
-    memoryNote: output.memory_note,
     model,
     responseId,
     fallbackUsed: false,
@@ -1204,7 +1198,6 @@ export async function runCoachPlan(
       ? {
         messages: [],
         dayTheme: null,
-        memoryNote: null,
         model: null,
         responseId: null,
         fallbackUsed: false,
@@ -1225,30 +1218,6 @@ export async function runCoachPlan(
         usage,
         claim.run_id,
       );
-    }
-
-    if (written.memoryNote && !context.wellbeingHold) {
-      const note = written.memoryNote;
-      await updateCoachMemory(
-        admin,
-        request.userId,
-        (sections) => {
-          if (Object.values(sections.notes).includes(note)) return null;
-          return {
-            sections: addMemoryNote(sections, note, now).sections,
-            summary: `Coach note: ${note}`,
-          };
-        },
-        {
-          source: "coach_reply",
-          runId: claim.run_id,
-          claimToken: claim.claim_token,
-        },
-      ).catch((error) => {
-        console.warn("coach_plan_memory_note_failed", {
-          message: String(error),
-        });
-      });
     }
 
     const messages = written.messages.map((item) => item.message);

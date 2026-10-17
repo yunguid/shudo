@@ -3,7 +3,7 @@ import type { NutritionGoal } from "./target_engine.ts";
 /// Bumped whenever any prompt text below changes, so stored messages and runs
 /// record which voice wrote them. The blocks are byte-stable (no names, dates
 /// or numbers) because prompt caching matches on an exact prefix.
-export const COACH_PERSONA_VERSION = "shudo-coach-v4";
+export const COACH_PERSONA_VERSION = "shudo-coach-v5";
 
 export type CoachMode =
   | "chat_reply"
@@ -230,7 +230,6 @@ export const COACH_DAY_PLAN_INSTRUCTIONS = [
   "Today's slots read as one day: thread today's theme through them, and don't repeat an opener, joke, or angle across slots or from the recent thread. Use at most one callback from the brief per slot, and spread different ones across the day. Each slot is read on its own, possibly hours later, so it must stand alone.",
   "body holds the in-app text: usually one bubble; two only when the second earns it (separate with a blank line). push_body is the lock-screen line, about 90 characters, required when the slot's push field is true and null otherwise. The shape field suggests length and opener for variety.",
   COACH_PUSH_RULES,
-  "memory_note: at most one short, durable thing worth remembering about him (a preference, pattern, or commitment he made), or null. Never a number the app tracks.",
 ].join("\n\n");
 
 /// Nightly digest (Fable): compresses yesterday into memory, never voice copy

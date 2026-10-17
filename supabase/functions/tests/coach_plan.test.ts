@@ -161,7 +161,6 @@ const GOOD_PLAN = {
     },
   ],
   day_theme: "Eat early, lift heavy",
-  memory_note: "Likes burritos for lunch on workdays.",
 };
 
 const REPAIR = {
@@ -176,7 +175,6 @@ const REPAIR = {
     push_body: "Make lunch the big one today. Rice and a real protein.",
   }],
   day_theme: null,
-  memory_note: null,
 };
 
 Deno.test("a finished meal yields one reaction plus copy for every remaining slot", async () => {
@@ -250,9 +248,9 @@ Deno.test("a finished meal yields one reaction plus copy for every remaining slo
   assertEquals(recap.kcal, 1640);
   assertEquals(recap.kcal_target, 2900);
 
-  // The memory note is saved under the run, and usage is recorded per call.
-  assertEquals(ledger.memorySaves.length, 1);
-  assertEquals(ledger.memorySaves[0].p_run_id, ledger.runId);
+  // A plan never writes memory (the digest and chat do); usage is recorded
+  // per call.
+  assertEquals(ledger.memorySaves.length, 0);
   assertEquals(ledger.usage.length, 2);
   assertEquals(ledger.usage[0].p_operation, "coach_checkpoint");
 });
@@ -278,7 +276,7 @@ Deno.test("an unchanged state collapses onto the completed run without a model c
   assertEquals(ledger.completions.length, 0);
 });
 
-Deno.test("a passed slot or the plan's own note doesn't re-plan the day; a meal does, even one that brings an earlier state back", async () => {
+Deno.test("a passed slot or a memory note doesn't re-plan the day; a meal does, even one that brings an earlier state back", async () => {
   const fake = coachFakeAdmin({ tables: fixtures() });
   const ledger = installCoachLedger(fake, { userId: USER });
   // Claims as the database makes them: a key it has seen returns that run,
@@ -314,11 +312,11 @@ Deno.test("a passed slot or the plan's own note doesn't re-plan the day; a meal 
     )).generated;
 
   assertEquals(await plan("2026-10-05T16:40:00Z"), true); // 12:40
-  // Lunch went out at 1 and the plan saved a note about itself; neither is
-  // something he did, so opening the app at 1:30 calls no model.
+  // Lunch went out at 1 and memory gained a note; neither is something he
+  // did, so opening the app at 1:30 calls no model.
   const memory = fake.tables.coach_memory[0];
   memory.version = 4;
-  (memory.sections as Row).notes = { n1: "Lunch text went out at 1." };
+  (memory.sections as Row).notes = { n1: "Likes burritos for lunch." };
   assertEquals(await plan("2026-10-05T17:30:00Z"), false);
 
   // A bar at 1:40 re-plans. Deleting it brings back the 12:40 state, but the

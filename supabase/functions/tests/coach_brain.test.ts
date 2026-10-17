@@ -261,7 +261,6 @@ const GOLDEN_PLAN = {
     },
   ],
   day_theme: null,
-  memory_note: null,
 };
 
 Deno.test("plan prompts carry the brief, and exactly one slot asks the next open question", async () => {
@@ -480,7 +479,6 @@ Deno.test("after midnight, a late snack is acknowledged on the day the app filed
           },
           slots: [],
           day_theme: null,
-          memory_note: null,
         }),
       ], requests),
       now: () => new Date("2026-10-08T04:30:00Z"), // Thu 00:30 EDT
