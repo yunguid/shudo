@@ -727,6 +727,7 @@ struct TrainingPlanSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .tint(Design.Color.textPrimary)
                 }
             }
         }

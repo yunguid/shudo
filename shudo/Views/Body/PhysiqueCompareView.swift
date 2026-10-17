@@ -75,9 +75,11 @@ struct PhysiqueCompareView: View {
                             .contentTransition(.symbolEffect(.replace))
                     }
                     .accessibilityLabel(mode == .wipe ? "Show side by side" : "Show wipe")
+                    .tint(Design.Color.textPrimary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .tint(Design.Color.textPrimary)
                 }
             }
         }
@@ -311,7 +313,10 @@ struct PhysiquePhotoViewer: View {
             .navigationTitle(checkIns.first { $0.id == selection }.map { BodyDayLabel.short($0.localDay) } ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .tint(Design.Color.textPrimary)
+                }
             }
         }
         .preferredColorScheme(.dark)

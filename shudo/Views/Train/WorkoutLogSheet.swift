@@ -91,8 +91,10 @@ struct WorkoutLogSheet: View {
             .navigationTitle(session?.name ?? "Log a workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Hinoki like every sheet's way out; the accent is Log's.
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .tint(Design.Color.textPrimary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Log") { submit() }
