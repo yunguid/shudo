@@ -562,10 +562,11 @@ enum PRPolicy {
 struct TrainingWeekDay: Equatable, Identifiable, Sendable {
     var localDay: String
     var weekdayInitial: String
-    /// Plan session letter ("U") when a plan session was logged that day.
+    /// The seal's letter on a training day: the plan session's ("U"), or an
+    /// off-plan session's own initial.
     var marker: String?
-    /// Kind symbol for an off-plan session or other activity.
-    var symbolName: String?
+    /// Moved without a session (a walk, a ride): a small ring, not a seal.
+    var moved: Bool
     var trained: Bool
     var isToday: Bool
     var isFuture: Bool
@@ -616,12 +617,16 @@ enum TrainingWeekPolicy {
             let planMarker = sessions.lazy
                 .compactMap { $0.planSessionId.flatMap { plan?.session(id: $0) }?.marker }
                 .first
-            let symbol: String? = planMarker == nil ? (sessions.first ?? rows.first)?.kind.symbolName : nil
+            // An off-plan session is sealed with its own initial, the way a
+            // plan session is with its letter.
+            let marker = planMarker ?? sessions.first.map { session in
+                session.title.first.map { String($0).uppercased() } ?? "•"
+            }
             return TrainingWeekDay(
                 localDay: day,
                 weekdayInitial: TrainCalendar.weekdayInitials[index],
-                marker: planMarker,
-                symbolName: symbol,
+                marker: marker,
+                moved: sessions.isEmpty && !rows.isEmpty,
                 trained: !sessions.isEmpty,
                 isToday: day == today,
                 isFuture: day > today

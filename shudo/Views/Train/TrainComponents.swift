@@ -78,10 +78,10 @@ struct TrainWeekHeader: View {
 
 /// One day of the week strip. Trained days are soft seals — a disc of
 /// Pernambuco at a fifth strength with the session's letter in oak, so the
-/// strip stays quieter than the session below it; a walk or a ride is just
-/// its glyph; rest days are a single dot. Today's letter and ring are the
-/// strip's only full-strength Pernambuco. A seal settles in with a small
-/// press when a session lands.
+/// strip stays quieter than the session below it; a walk or a ride is a
+/// small open ring; rest days are a single dot. Today's letter and ring are
+/// the strip's only full-strength Pernambuco. A seal settles in with a
+/// small press when a session lands.
 struct TrainDayPad: View {
     let day: TrainingWeekDay
 
@@ -119,10 +119,10 @@ struct TrainDayPad: View {
             Text(marker)
                 .font(Design.Typeface.numeral(.footnote, weight: .semibold))
                 .foregroundStyle(Design.Color.oak)
-        } else if let symbol = day.symbolName {
-            Image(systemName: symbol)
-                .font(Design.Typeface.text(.caption, weight: .semibold))
-                .foregroundStyle(day.trained ? Design.Color.oak : Design.Color.textTertiary)
+        } else if day.moved {
+            Circle()
+                .strokeBorder(Design.Color.textTertiary, lineWidth: 1.25)
+                .frame(width: 8, height: 8)
         } else {
             Circle()
                 .fill(day.isFuture ? Design.Color.surface3 : Design.Color.textDisabled)
@@ -562,9 +562,10 @@ struct PRBoardRow: View {
 
 // MARK: - Recent
 
-/// One past workout as a quiet line in the history: kind glyph and name,
-/// the one stat line beneath. The day sits in a narrow column on the left,
-/// written once per day like a training diary.
+/// One past workout as a quiet line in the history: its name, the one stat
+/// line beneath — the words say what it was, so no kind glyph. The day sits
+/// in a narrow column on the left, written once per day like a training
+/// diary.
 struct ActivityLedgerRow: View {
     let activity: Activity
     var units: String = "imperial"
@@ -584,11 +585,6 @@ struct ActivityLedgerRow: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Image(systemName: activity.kind.symbolName)
-                        .font(Design.Typeface.text(.caption, weight: .semibold))
-                        .foregroundStyle(Design.Color.textTertiary)
-                        .symbolEffect(.pulse, options: .repeating, isActive: activity.isProcessing)
-                        .accessibilityHidden(true)
                     Text(activity.title)
                         .font(Design.Typeface.text(.subheadline, weight: .medium))
                         .foregroundStyle(Design.Color.textPrimary)
@@ -691,9 +687,17 @@ struct TrainingPlanSheet: View {
                         sessionSection(session)
                     }
                     if let conditioning = plan.plan.conditioning {
-                        Label(conditioning.summary, systemImage: "figure.outdoor.cycle")
-                            .font(Design.Typeface.text(.subheadline))
-                            .foregroundStyle(Design.Color.textSecondary)
+                        // Named like a session, so it reads as part of the week.
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Conditioning")
+                                .font(Design.Typeface.display(.title3))
+                                .foregroundStyle(Design.Color.textPrimary)
+                                .accessibilityAddTraits(.isHeader)
+                            Text(conditioning.summary)
+                                .font(Design.Typeface.text(.subheadline))
+                                .foregroundStyle(Design.Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     VStack(spacing: 10) {
                         if let onRun, plan.status == .draft {

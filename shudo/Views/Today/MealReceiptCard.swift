@@ -185,10 +185,11 @@ private struct MealPhotoTile: View {
     }
 }
 
-/// A finished workout in the thread, matching the meal receipt: a small
-/// kind glyph, the session, its one-line summary, and minutes as the
-/// number. PRs are Shudo's to celebrate (his card follows), and live or
-/// unsent states use the Train tab's full `ActivityCard`.
+/// A finished workout in the thread, set exactly like the meal receipt:
+/// the session, its one-line summary, and minutes as the number — the
+/// words say it was a lift, so no kind glyph. PRs are Shudo's to celebrate
+/// (his card follows), and live or unsent states use the Train tab's full
+/// `ActivityCard`.
 struct WorkoutReceiptCard: View {
     let activity: Activity
     let units: String
@@ -202,17 +203,10 @@ struct WorkoutReceiptCard: View {
             : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
         layout {
             VStack(alignment: .leading, spacing: 6) {
-                Label {
-                    Text(activity.title)
-                        .font(Design.Typeface.text(.subheadline, weight: .medium))
-                        .foregroundStyle(Design.Color.textPrimary)
-                        .lineLimit(1)
-                } icon: {
-                    Image(systemName: activity.kind.symbolName)
-                        .font(Design.Typeface.text(.caption, weight: .bold))
-                        .foregroundStyle(ActivityKindTile.tint(for: activity.kind))
-                }
-                .labelStyle(TightLabelStyle())
+                Text(activity.title)
+                    .font(Design.Typeface.text(.subheadline, weight: .medium))
+                    .foregroundStyle(Design.Color.textPrimary)
+                    .lineLimit(stacked ? 3 : 1)
                 if let subtitle = ActivitySummaryFormatter.subtitle(for: activity, units: units) {
                     Text(subtitle)
                         .font(Design.Typeface.numeral(.caption))
@@ -230,15 +224,6 @@ struct WorkoutReceiptCard: View {
         .frame(width: Design.Layout.threadCardWidth, alignment: .leading)
         .receiptSurface()
         .accessibilityElement(children: .combine)
-    }
-}
-
-private struct TightLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            configuration.icon
-            configuration.title
-        }
     }
 }
 
