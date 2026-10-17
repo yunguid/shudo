@@ -25,6 +25,7 @@ $$;
 \ir ../migrations/20261006200000_shudo_two.sql
 -- The Shudo 2.0 migration is additive and intentionally safe to replay.
 \ir ../migrations/20261006200000_shudo_two.sql
+\ir ../migrations/20261017220125_remove_storage_cleanup_cron_job.sql
 
 insert into auth.users (id, email)
 values

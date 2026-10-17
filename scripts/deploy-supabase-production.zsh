@@ -290,6 +290,7 @@ approved_migration_files=(
   20260730011301_add_existing_meal_photos.sql
   20260730041117_weight_checkins_and_micronutrient_reports.sql
   20261006200000_shudo_two.sql
+  20261017220125_remove_storage_cleanup_cron_job.sql
 )
 
 approved_migration_hashes=(
@@ -305,6 +306,7 @@ approved_migration_hashes=(
   6532384219785ab7cdffd3f7d186340043fecbae0a374aa89f63bc1a8cbc8de7
   9077a9d3c2f320b2085552f693e18619df60a60110e981a283dac1f08a73eadf
   b8986c30ef07a96a8919207ad55889bfd6b386d9dce19d06d94b89bd404a1a66
+  c2abae1605dc7fd20940726217b1d08b24936f70283c1038deabdf45953c5bd6
 )
 
 approved_migration_versions=()

@@ -28,6 +28,8 @@ shudo_weight_checkins_migration="$shudo_repo_root/supabase/migrations/2026073004
 shudo_weight_checkins_migration_sha="9077a9d3c2f320b2085552f693e18619df60a60110e981a283dac1f08a73eadf"
 shudo_two_migration="$shudo_repo_root/supabase/migrations/20261006200000_shudo_two.sql"
 shudo_two_migration_sha="b8986c30ef07a96a8919207ad55889bfd6b386d9dce19d06d94b89bd404a1a66"
+shudo_cleanup_cron_migration="$shudo_repo_root/supabase/migrations/20261017220125_remove_storage_cleanup_cron_job.sql"
+shudo_cleanup_cron_migration_sha="c2abae1605dc7fd20940726217b1d08b24936f70283c1038deabdf45953c5bd6"
 shudo_node24_dir="/Users/luke/.nvm/versions/node/v24.16.0/bin"
 shudo_node24_sha="1ee75375e33b94fc34b3b19aede049e11dae90efb63b374dc96d6bdace70c4b8"
 shudo_supabase_cli="/opt/homebrew/Cellar/supabase/2.109.1/bin/supabase"
@@ -69,6 +71,7 @@ verify_migration_sha "$shudo_profile_photos_migration" "$shudo_profile_photos_mi
 verify_migration_sha "$shudo_meal_photos_migration" "$shudo_meal_photos_migration_sha"
 verify_migration_sha "$shudo_weight_checkins_migration" "$shudo_weight_checkins_migration_sha"
 verify_migration_sha "$shudo_two_migration" "$shudo_two_migration_sha"
+verify_migration_sha "$shudo_cleanup_cron_migration" "$shudo_cleanup_cron_migration_sha"
 
 cd "$shudo_repo_root"
 git diff --check

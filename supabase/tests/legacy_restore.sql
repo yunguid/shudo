@@ -207,6 +207,7 @@ values
 \ir ../migrations/20260730011301_add_existing_meal_photos.sql
 \ir ../migrations/20260730041117_weight_checkins_and_micronutrient_reports.sql
 \ir ../migrations/20261006200000_shudo_two.sql
+\ir ../migrations/20261017220125_remove_storage_cleanup_cron_job.sql
 
 do $$
 declare

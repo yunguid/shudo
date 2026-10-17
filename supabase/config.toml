@@ -426,8 +426,9 @@ entrypoint = "./functions/delete_account/index.ts"
 
 [functions.drain_storage_cleanup]
 enabled = true
-# This endpoint is intended for Supabase Cron. It authenticates every request
-# with the dedicated x-shudo-cleanup-secret header instead of a user JWT.
+# The daily Vercel cron (/api/cron/keepalive) calls this endpoint. It
+# authenticates every request with the dedicated x-shudo-cleanup-secret header
+# instead of a user JWT.
 verify_jwt = false
 entrypoint = "./functions/drain_storage_cleanup/index.ts"
 

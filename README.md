@@ -248,6 +248,12 @@ Vercel calls `/api/cron/keepalive` once daily. The route:
 - drains pending private Storage cleanup with `SHUDO_CLEANUP_SECRET`; and
 - idempotently generates due weekly summaries with `SHUDO_WEEKLY_SECRET`.
 
+Storage cleanup also drains inline after captures, deletes, and processing, so
+the daily run is only the fallback. Don't add a pg_cron caller: it needs a
+Vault copy of `SHUDO_CLEANUP_SECRET` that nothing keeps in sync. The one created
+by hand in July was rejected with 401 every 15 minutes until migration
+`20261017220125_remove_storage_cleanup_cron_job.sql` removed it.
+
 The external request also keeps a legitimately used Supabase Free project from
 sitting completely idle. It is operational maintenance, not a guarantee against
 provider policy changes. The initial app should remain within the Free plan for
