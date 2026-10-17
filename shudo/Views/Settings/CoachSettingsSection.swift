@@ -4,8 +4,8 @@ import UserNotifications
 
 /// Settings → Coach and Notifications: whether Shudo texts at all, how hard
 /// he pushes, how he talks, nearby-store recs (When-In-Use location), the
-/// opt-in physique review, notification permission and quiet hours. Every
-/// change saves to `profiles` and re-plans the day's texts
+/// opt-in physique review, notification permission, background refresh and
+/// quiet hours. Every change saves to `profiles` and re-plans the day's texts
 /// (`CoachSync.apply(settings:)`).
 struct CoachSettingsSection: View {
     let service: any CoachServing
@@ -17,6 +17,7 @@ struct CoachSettingsSection: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
+    @State private var backgroundRefresh: BackgroundRefresh = .available
     @State private var locationDenied = false
     @State private var quietSaveTask: Task<Void, Never>?
     /// Which quiet-hours edge has its wheel open under the row.
@@ -64,6 +65,9 @@ struct CoachSettingsSection: View {
                 // "Allow notifications" names itself; ma is the only header.
                 SettingsGroup {
                     notificationsRow
+                    if notificationsAllowed && backgroundRefresh != .available {
+                        backgroundRefreshRow
+                    }
                     quietHoursRow
                     if let edge = editingQuietEdge {
                         quietWheel(edge)
@@ -147,6 +151,46 @@ struct CoachSettingsSection: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("settings.notifications")
+    }
+
+    /// Without push, a text only rings if the phone heard about it first:
+    /// the morning's texts reach it through Background App Refresh. When
+    /// that's off (or Low Power Mode pauses it) they wait for the next time
+    /// Shudo is opened, so the row only appears then, pointing to the fix.
+    private var backgroundRefreshRow: some View {
+        Button(action: openSystemSettings) {
+            SettingsRow(
+                title: "Background refresh",
+                subtitle: backgroundRefresh == .lowPower
+                    ? "Low Power Mode holds texts until you open Shudo"
+                    : "Texts wait until you open Shudo"
+            ) {
+                HStack(spacing: 12) {
+                    Text(backgroundRefresh == .lowPower ? "Paused" : "Off")
+                        .font(Design.Typeface.text(.body))
+                        .foregroundStyle(Design.Color.honey)
+                    Image(systemName: "chevron.right")
+                        .font(Design.Typeface.text(.caption, weight: .semibold))
+                        .foregroundStyle(Design.Color.textTertiary)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.backgroundRefresh")
+    }
+
+    private enum BackgroundRefresh: Equatable {
+        case available, off, lowPower
+
+        @MainActor static var current: BackgroundRefresh {
+            #if DEBUG
+            // PolishPreview screenshots: `-shudoBackgroundRefreshOff`.
+            if ProcessInfo.processInfo.arguments.contains("-shudoBackgroundRefreshOff") { return .off }
+            #endif
+            if ProcessInfo.processInfo.isLowPowerModeEnabled { return .lowPower }
+            return UIApplication.shared.backgroundRefreshStatus == .available ? .available : .off
+        }
     }
 
     private enum QuietEdge: Hashable {
@@ -365,6 +409,7 @@ struct CoachSettingsSection: View {
 
     private func refreshPermissions() async {
         notificationStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        backgroundRefresh = .current
         if loadsRemotely {
             locationDenied = settings.locationRecsEnabled && !LocationFixProvider.shared.authorization.isAuthorized
         }

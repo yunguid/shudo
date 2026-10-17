@@ -377,14 +377,36 @@ actor CoachSync {
         queuedForegroundSync = true
         defer { queuedForegroundSync = false }
         state.lastForegroundSyncAt = now
-        return await sync(trigger: .foreground, wait: true, promptsForNotifications: true)
+        let outcome = await sync(trigger: .foreground, wait: true, promptsForNotifications: true)
+        // Keep a refresh queued even if iOS never sees the app background.
+        Self.scheduleAppRefresh(now: now, timeZone: environment.timeZone())
+        return outcome
     }
 
+    /// iOS woke the app for a background refresh (~30 s, may be cut short).
+    /// The texts the server already wrote are scheduled first — on a
+    /// morning refresh that is the whole day — then replies stuck in the
+    /// outbox go out, and only then does the coach re-plan.
     @discardableResult
     func handleBackgroundRefresh() async -> CoachSyncOutcome {
-        Self.scheduleAppRefresh()
+        Self.scheduleAppRefresh(now: environment.now(), timeZone: environment.timeZone())
+        await refreshQueue()
         await flushOutbox()
         return await sync(trigger: .bgRefresh, wait: true)
+    }
+
+    /// Fetch-only: folds in whatever the server already wrote and re-plans
+    /// the pending requests. No plan run and no location fix, so it fits a
+    /// background refresh or the few seconds a lock-screen action gets.
+    @discardableResult
+    func refreshQueue() async -> CoachSyncOutcome {
+        let previous = tail
+        let work = Task { () -> CoachSyncOutcome in
+            await previous?.value
+            return await self.performQueueRefresh()
+        }
+        tail = Task { _ = await work.value }
+        return await work.value
     }
 
     /// Call right after a log lands locally (SPEC §5.4 cancel-on-log), and
@@ -529,7 +551,10 @@ actor CoachSync {
         device.notificationStatus = promptsForNotifications
             ? await scheduler.requestAuthorizationIfNeeded()
             : await scheduler.authorizationStatus()
-        let location = settings.locationRecsEnabled
+        // When-In-Use location can't get a fix in the background; waiting
+        // out the fix timeout there only eats the refresh's ~30 s. The
+        // server keeps the last nearby list it was sent.
+        let location = settings.locationRecsEnabled && trigger != .bgRefresh
             ? await environment.locationContext(Self.locationMaxAge)
             : nil
         let timeZone = environment.timeZone()
@@ -544,7 +569,21 @@ actor CoachSync {
             wait: wait
         )
         let generated = (try? await service.sync(request))?.generated ?? false
+        return await fetchAndReconcile(syncedAt: now, generated: generated)
+    }
 
+    /// The fetch-only pass behind `refreshQueue()`. It never resets state:
+    /// sign-in changes are the full sync's job.
+    private func performQueueRefresh() async -> CoachSyncOutcome {
+        guard let userId = environment.userId() else { return .signedOut }
+        guard state.userId == userId else { return .throttled }
+        guard let settings = mirror.load(), settings.enabled else { return .disabled }
+        return await fetchAndReconcile(syncedAt: environment.now(), generated: false)
+    }
+
+    /// Reads the rows changed since the cursor, folds them in, refreshes
+    /// the unread count and re-plans the pending requests.
+    private func fetchAndReconcile(syncedAt now: Date, generated: Bool) async -> CoachSyncOutcome {
         let changes: [CoachMessage]
         do {
             changes = try await service.fetchChanges(
@@ -586,12 +625,14 @@ actor CoachSync {
         return fresh
     }
 
-    /// Re-plans pending requests from the persisted rows (no network).
+    /// Re-plans pending requests from the persisted rows (no network), and
+    /// clears texts from earlier coach days out of Notification Center.
     func reconcileNotifications() async {
         let status = await scheduler.authorizationStatus()
         guard status == .authorized || status == .provisional else { return }
         guard let settings = mirror.load(), settings.enabled else { return }
         let now = environment.now()
+        let timeZone = environment.timeZone()
         state.rows = state.rows.filter { $0.deliverAt > now }
         state.suppressed = state.suppressed.filter { $0.value > now }
         await scheduler.reconcile(
@@ -600,8 +641,9 @@ actor CoachSync {
             suppressed: Set(state.suppressed.keys),
             now: now,
             quietHours: settings,
-            timeZone: environment.timeZone()
+            timeZone: timeZone
         )
+        await scheduler.clearEarlierDays(today: CoachDayBoundary.day(for: now, timeZone: timeZone))
         await scheduler.setBadge(state.unreadCount)
         persist()
     }
@@ -683,10 +725,13 @@ actor CoachSync {
 
     // MARK: Background refresh
 
-    /// Asks iOS for a refresh in ~2 h (heuristic; never relied on).
-    nonisolated static func scheduleAppRefresh(now: Date = Date()) {
+    /// Asks iOS for the next refresh (`CoachRefreshPolicy`: 5:30 am after a
+    /// night, within the hour by day). iOS still decides, and grants fewer
+    /// the less the app is opened, which is why each one does the cheap
+    /// fetch first. A new submit replaces the queued request.
+    nonisolated static func scheduleAppRefresh(now: Date = Date(), timeZone: TimeZone = .autoupdatingCurrent) {
         let request = BGAppRefreshTaskRequest(identifier: backgroundRefreshIdentifier)
-        request.earliestBeginDate = now.addingTimeInterval(2 * 3600)
+        request.earliestBeginDate = CoachRefreshPolicy.earliestBeginDate(after: now, timeZone: timeZone)
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {

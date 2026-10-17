@@ -29,6 +29,8 @@ final class AppRouter: ObservableObject {
     @Published private(set) var coachRequest: CoachRequest?
 
     nonisolated static let coachSettingsURL = URL(string: "shudo://coach/settings")!
+    /// The food sheet on Today (a coach text's Log food action).
+    nonisolated static let logFoodURL = URL(string: "shudo://capture/food")!
 
     private init() { }
 
@@ -36,7 +38,9 @@ final class AppRouter: ObservableObject {
         guard url.scheme?.lowercased() == "shudo" else { return }
         let destination = (url.host ?? url.pathComponents.dropFirst().first ?? "").lowercased()
         if destination == "capture" {
-            captureRequest = CaptureRequest(autoStartRecording: true)
+            // `shudo://capture` records; `shudo://capture/food` opens the food sheet.
+            let food = url.pathComponents.contains { $0.lowercased() == "food" }
+            captureRequest = CaptureRequest(autoStartRecording: !food)
         } else if destination == "auth" && url.path.lowercased() == "/callback" {
             authCallbackURL = url
         } else if let coach = Self.coachDestination(for: url) {
