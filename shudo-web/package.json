@@ -18,7 +18,7 @@
     "@supabase/ssr": "0.12.3",
     "@supabase/supabase-js": "2.110.7",
     "lucide-react": "1.25.0",
-    "next": "16.4.0",
+    "next": "16.4.3",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
@@ -30,7 +30,7 @@
     "brace-expansion": "file:vendor/brace-expansion-compat",
     "braces": "file:vendor/braces-compat",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.4.0",
+    "eslint-config-next": "16.4.3",
     "postcss": "8.5.28",
     "tailwindcss": "3.4.19",
     "tsx": "4.23.1",
