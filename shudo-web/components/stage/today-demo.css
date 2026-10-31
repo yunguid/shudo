@@ -1,0 +1,683 @@
+/* The Today demo's own rules, all scoped under .sh-demo. The screen is laid
+   out in the app's points (Design.swift) inside the kit's Phone; the kit's
+   stage, phone, thread, bubbles and count do the rest. */
+
+/* The page is the ground: a transparent stage, the phone cut by its top edge.
+   Wide: the phone a gutter in from each side and the bottom, its top 117px
+   past the stage (the status bar and title row, cut in the air under the
+   subtitle), so the figure is the first line in view. */
+.sh-demo .ss-stage {
+  overflow: hidden;
+  --sh-gutter: 25px;
+  /* The app's two small sizes (caption 11.5pt, meta 12pt); compact steps
+     them up so nothing renders under 10px at the phone's 0.76 scale */
+  --sh-small: 11.5px;
+  --sh-meta: 12px;
+}
+
+.sh-demo .sh-phone {
+  position: absolute;
+  top: -109px;
+  left: var(--sh-gutter);
+}
+
+.sh-demo .ss-stage[data-layout='compact'] {
+  --sh-gutter: 16px;
+  --sh-small: 13.5px;
+  --sh-meta: 13.5px;
+}
+
+.sh-demo .ss-stage[data-layout='compact'] .sh-phone {
+  top: -101px;
+}
+
+/* ---- The screen ---- */
+
+.sh-demo .sh-app {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 62px;
+  color: var(--ss-text-strong);
+  font-family: var(--ss-font);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+/* ---- Header: the diary page, dissolving into the thread ---- */
+
+.sh-demo .sh-head {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  padding: 4px 20px 8px;
+  background: var(--ss-canvas);
+}
+
+/* The canvas fading over the thread's top, as DayHeader's backdrop does */
+.sh-demo .sh-head::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: 26px;
+  background: linear-gradient(to bottom, var(--ss-canvas), rgba(14, 11, 9, 0));
+  pointer-events: none;
+}
+
+.sh-demo .sh-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.sh-demo .sh-title {
+  display: grid;
+  gap: 1px;
+}
+
+.sh-demo .sh-title__day {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 21px;
+  line-height: 1.25;
+  color: var(--ss-text-strong);
+}
+
+.sh-demo .sh-title__day svg {
+  align-self: center;
+  color: var(--ss-text-faint);
+}
+
+.sh-demo .sh-title__sub {
+  font-size: var(--sh-small);
+  color: var(--ss-text-faint);
+}
+
+.sh-demo .sh-seal {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #211a16;
+  box-shadow: 0 0 0 0.5px var(--ss-line);
+  color: var(--ss-text);
+  font-size: var(--sh-meta);
+  font-weight: 500;
+}
+
+.sh-demo .sh-figure {
+  display: flex;
+  align-items: last baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+.sh-demo .sh-remaining {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.sh-demo .sh-remaining__n {
+  font-size: 32px;
+  font-weight: 300;
+  line-height: 1.1;
+  color: var(--ss-text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.sh-demo .sh-remaining__label {
+  font-size: 14px;
+  color: var(--ss-text);
+}
+
+.sh-demo .sh-macros {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.sh-demo .sh-macros__protein {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.sh-demo .sh-macros__protein b {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ss-accent);
+}
+
+.sh-demo .sh-macros__protein span {
+  font-size: var(--sh-small);
+  color: var(--ss-text-faint);
+}
+
+.sh-demo .sh-macros__rest {
+  font-size: var(--sh-small);
+  color: var(--ss-text-faint);
+}
+
+.sh-demo .sh-macros__rest {
+  white-space: pre;
+}
+
+/* Two brushstrokes: calories in hinoki, protein in Pernambuco */
+.sh-demo .sh-strokes {
+  display: grid;
+  gap: 5px;
+  padding-top: 12px;
+}
+
+.sh-demo .sh-stroke {
+  position: relative;
+  display: block;
+  height: 2.5px;
+  border-radius: 2px;
+  background: rgba(244, 230, 208, 0.13);
+  overflow: hidden;
+}
+
+.sh-demo .sh-stroke[data-tone='protein'] {
+  background: rgba(210, 104, 66, 0.13);
+}
+
+.sh-demo .sh-stroke i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: inherit;
+  background: #f4e6d0;
+  /* The ring spring: about a second, no bounce */
+  transition: width 1s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.sh-demo .sh-stroke[data-tone='protein'] i {
+  background: var(--ss-accent);
+}
+
+/* ---- Thread ---- */
+
+/* Shudo's bubbles: walnut for the coach, lacquered heartwood for you, no
+   tails, 19pt corners; 16pt Merriweather. The thread runs 26px up under the
+   header so its rows dissolve into the fade. */
+.sh-demo .sh-thread {
+  --ss-thread-size: 16px;
+  --ss-me: linear-gradient(to bottom, #9e4329, #8a3720);
+  --ss-me-text: #f1e7d8;
+  --ss-them: #211a16;
+  --ss-them-text: #f1e7d8;
+  flex: 1 1 0;
+  margin-top: -26px;
+  padding: 26px 20px 10px;
+  letter-spacing: 0;
+  line-height: 1.35;
+}
+
+.sh-demo .sh-thread .ss-bubble {
+  max-width: 290px;
+  padding: 10px 15px;
+  border-radius: 19px;
+}
+
+.sh-demo .sh-thread .ss-bubble__tail {
+  display: none;
+}
+
+/* Between runs the app leaves a clear pause */
+.sh-demo .sh-thread .ss-bubble-row + .ss-bubble-row {
+  margin-top: 6px;
+}
+
+.sh-demo .sh-thread .ss-bubble-row[data-from='me'] + .ss-bubble-row[data-from='them'],
+.sh-demo .sh-thread .ss-bubble-row[data-from='them'] + .ss-bubble-row[data-from='me'],
+.sh-demo .sh-thread .sh-receipt-row + .ss-bubble-row {
+  margin-top: 12px;
+}
+
+/* Shudo thinking: three Pernambuco pads, not gray dots */
+.sh-demo .sh-thread .ss-bubble__dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--ss-accent);
+}
+
+/* The time between the day's chapters, with the pause above it */
+.sh-demo .sh-stamp {
+  margin: 30px 0 10px;
+  color: var(--ss-text-faint);
+  font-size: var(--sh-meta);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- The receipt: your meal, on your side ---- */
+
+/* A thread row like the kit's, so the Thread glides it with the bubbles */
+.sh-demo .sh-receipt-row {
+  position: relative;
+  top: 0;
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  margin-top: 6px;
+  will-change: transform;
+  transition: top var(--ss-scroll);
+}
+
+/* Walnut warmed by the faintest heartwood, a top-lit hairline edge. Arrives
+   as the app's ink: rising and clearing. */
+.sh-demo .sh-receipt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 300px;
+  padding: 13px 15px;
+  border-radius: 20px;
+  background: linear-gradient(rgba(154, 61, 34, 0.09), rgba(154, 61, 34, 0.09)), #17120f;
+  box-shadow: inset 0 0.5px 0 rgba(244, 230, 208, 0.1);
+  animation: sh-ink 0.55s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+@keyframes sh-ink {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+}
+
+/* Rows there from the start are the opening picture: no entrance */
+.sh-demo .sh-receipt-row[data-opening] .sh-receipt {
+  animation: none;
+}
+
+.sh-demo .sh-receipt__sub {
+  font-size: var(--sh-meta);
+  line-height: 1.3;
+  color: var(--ss-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shudo's card, joined to his text above (a tight top-left corner), as
+   ThreadCard draws it: walnut, 16pt inset, one quiet eyebrow */
+.sh-demo .sh-card-row {
+  position: relative;
+  top: 0;
+  display: flex;
+  flex: none;
+  margin-top: 6px;
+  will-change: transform;
+  transition: top var(--ss-scroll);
+}
+
+.sh-demo .sh-card {
+  display: grid;
+  gap: 5px;
+  width: 300px;
+  padding: 16px;
+  border-radius: 6px 19px 19px 19px;
+  background: #211a16;
+}
+
+.sh-demo .sh-card__eyebrow {
+  font-size: var(--sh-small);
+  font-weight: 600;
+  color: var(--ss-accent);
+}
+
+.sh-demo .sh-card__line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 16px;
+  color: var(--ss-text-strong);
+}
+
+.sh-demo .sh-card__value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sh-demo .sh-card__value b {
+  margin-left: 4px;
+  font-size: var(--sh-meta);
+  font-weight: 500;
+  color: var(--ss-accent);
+}
+
+.sh-demo .sh-thread .sh-card-row + .ss-bubble-row {
+  margin-top: 12px;
+}
+
+.sh-demo .sh-receipt__text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+}
+
+.sh-demo .sh-receipt__title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--ss-text);
+  transition: color 0.4s ease;
+}
+
+.sh-demo .sh-receipt[data-state='done'] .sh-receipt__title {
+  color: var(--ss-text-strong);
+}
+
+/* The working bar and the macro line share one slot the height of the line */
+.sh-demo .sh-receipt__detail {
+  position: relative;
+  display: grid;
+  height: 16px;
+  align-items: center;
+}
+
+.sh-demo .sh-receipt__working,
+.sh-demo .sh-receipt__macros {
+  grid-area: 1 / 1;
+  transition: opacity 0.35s ease;
+}
+
+/* The one processing line: a short bar where the numbers will land, breathing */
+.sh-demo .sh-receipt__working {
+  width: 112px;
+  height: 6px;
+  border-radius: 3px;
+  background: #2c231e;
+  animation: sh-breathe 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes sh-breathe {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sh-demo .sh-receipt[data-state='done'] .sh-receipt__working {
+  opacity: 0;
+  animation: none;
+}
+
+.sh-demo .sh-receipt__macros {
+  display: flex;
+  gap: 9px;
+  font-size: var(--sh-meta);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ss-text);
+  opacity: 0;
+}
+
+.sh-demo .sh-receipt__macros > span:first-child {
+  color: var(--ss-text-strong);
+}
+
+.sh-demo .sh-receipt__macros b {
+  margin-left: 2px;
+  font-weight: 500;
+}
+
+.sh-demo .sh-receipt__macros b[data-m='p'] {
+  color: var(--ss-accent);
+}
+
+.sh-demo .sh-receipt__macros b[data-m='c'] {
+  color: #8fa9ba;
+}
+
+.sh-demo .sh-receipt__macros b[data-m='f'] {
+  color: #aeb781;
+}
+
+.sh-demo .sh-receipt[data-state='done'] .sh-receipt__macros {
+  opacity: 1;
+}
+
+/* "695" over "kcal" at the trailing edge, inking in when the numbers land */
+.sh-demo .sh-receipt__number {
+  display: grid;
+  flex: none;
+  justify-items: end;
+  will-change: transform;
+  opacity: 0;
+  transform: translateY(6px);
+  filter: blur(3px);
+  transition: opacity 0.45s ease, transform 0.55s cubic-bezier(0.25, 0.8, 0.25, 1), filter 0.45s ease;
+}
+
+.sh-demo .sh-receipt[data-state='done'] .sh-receipt__number {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.sh-demo .sh-receipt__kcal {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--ss-text-strong);
+}
+
+.sh-demo .sh-receipt__unit {
+  font-size: var(--sh-meta);
+  color: var(--ss-text-faint);
+}
+
+/* ---- The resting message field ---- */
+
+.sh-demo .sh-compose {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: 50px;
+  margin: 0 16px 12px;
+  padding: 4px 8px 4px 16px;
+  border-radius: 24px;
+  background: rgba(244, 230, 208, 0.04);
+  box-shadow: inset 0 0 0 0.5px rgba(241, 231, 216, 0.12);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.sh-demo .sh-compose__text {
+  flex: 1;
+  min-width: 0;
+  color: var(--ss-text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sh-demo .sh-caret {
+  display: inline-block;
+  width: 2px;
+  height: 18px;
+  margin-left: 1px;
+  border-radius: 1px;
+  background: var(--ss-accent);
+  vertical-align: -3px;
+  animation: sh-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes sh-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.sh-demo .sh-compose__ph {
+  position: absolute;
+  left: 16px;
+  color: var(--ss-text-faint);
+  pointer-events: none;
+}
+
+/* The send circle, Pernambuco: it joins the field as soon as there are words */
+.sh-demo .sh-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(to bottom, #db7550, #d26842);
+  color: #1a0e08;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 0.18s ease, transform 0.25s cubic-bezier(0.3, 0.75, 0.1, 1), scale 0.12s ease;
+}
+
+.sh-demo .sh-send[data-show] {
+  opacity: 1;
+  transform: none;
+}
+
+.sh-demo .sh-send[data-pressed] {
+  scale: 0.9;
+}
+
+/* ---- The command band ---- */
+
+.sh-demo .sh-band {
+  position: relative;
+  flex: none;
+  height: 102px;
+}
+
+/* The well: milled out of the bottom-left corner, one metal edge on its
+   lip. 86pt square, the inner corner 25. */
+.sh-demo .sh-well {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 86px;
+  height: 86px;
+  border-radius: 0 25px 0 0;
+  background: #060403;
+  box-shadow:
+    inset -0.5px 0.5px 0 rgba(241, 231, 216, 0.22),
+    inset -1.5px 1.5px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Shudo's key: the walnut slab, a machined hairline, the pads a little up and in */
+.sh-demo .sh-key {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 20px 20px 20px 50px;
+  background: radial-gradient(circle at 55% 30%, #2b2219, #14100c 80%);
+  box-shadow: 0 0 0 0.5px rgba(241, 231, 216, 0.16);
+}
+
+.sh-demo .sh-pads {
+  display: grid;
+  grid-template-columns: repeat(3, 10.4px);
+  gap: 3px;
+  transform: translate(2px, -2px);
+}
+
+.sh-demo .sh-pads i {
+  display: block;
+  width: 10.4px;
+  height: 10.4px;
+  border-radius: 2.5px;
+  background: var(--sh-pad);
+  box-shadow: 0 0 2px var(--sh-pad);
+}
+
+.sh-demo .sh-pads i[data-row='0'] {
+  --sh-pad: #de9d43;
+}
+
+.sh-demo .sh-pads i[data-row='1'] {
+  --sh-pad: #fad597;
+}
+
+.sh-demo .sh-pads i[data-row='2'] {
+  --sh-pad: #f9e4ca;
+}
+
+/* Today · Body · Train on a flat walnut track beside the well, level with the key */
+.sh-demo .sh-tabs {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  left: 96px;
+  display: flex;
+  height: 54px;
+  padding: 4px;
+  border-radius: 27px;
+  background: #17120f;
+}
+
+.sh-demo .sh-tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 23px;
+  color: var(--ss-text);
+  font-size: var(--sh-meta);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.sh-demo .sh-tab svg {
+  display: block;
+  height: 21px;
+}
+
+.sh-demo .sh-tab[data-on] {
+  background: rgba(244, 230, 208, 0.08);
+}
+
+.sh-demo .sh-tab[data-on] svg {
+  color: var(--ss-accent);
+}
+
+.sh-demo .sh-tab[data-on] span {
+  color: var(--ss-text-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sh-demo .sh-receipt,
+  .sh-demo .sh-receipt__working {
+    animation: none;
+  }
+
+  .sh-demo .sh-stroke i,
+  .sh-demo .sh-receipt__number,
+  .sh-demo .sh-send {
+    transition-duration: 0.01s;
+  }
+}

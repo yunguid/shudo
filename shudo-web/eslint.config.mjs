@@ -21,6 +21,22 @@ export default defineConfig([
       '@typescript-eslint/no-require-imports': 'off',
     },
   },
+  {
+    // The vendored stageshow kit (components/stage/kit) keeps its upstream
+    // source: it drives DOM and refs directly for frame-accurate motion,
+    // which the React Compiler rules flag by design. Lint our own demo code
+    // around it in full.
+    files: ['components/stage/kit/**/*.{ts,tsx}'],
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    rules: {
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-expressions': 'off',
+    },
+  },
   globalIgnores([
     '.next/**',
     '.vercel/**',
